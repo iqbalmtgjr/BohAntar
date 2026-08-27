@@ -60,7 +60,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
   // Jarak minimum sebelum rute digambar ulang. Knob biaya: turunkan kalau garis
   // rutenya terasa tertinggal, naikkan kalau tagihan Routes API terasa.
-  static const double _jarakGambarUlangRuteMeter = 500;
+  // ponytail: 2 km, bukan 500 m — pada 500 m satu perjalanan 5 km memakan ~10
+  // panggilan berbayar hanya untuk memperhalus garis yang sudah benar. Turunkan
+  // lagi kalau driver mengeluh garisnya tertinggal.
+  static const double _jarakGambarUlangRuteMeter = 2000;
   LatLng? _orderPickupLatLng;
   LatLng? _orderDropoffLatLng;
   List<LatLng> _driverRoutePoints = [];         // Driver -> Pickup (biru)
@@ -547,8 +550,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       //
       // Setiap penggambaran adalah satu panggilan berbayar ke Routes API. Kalau
       // dipanggil pada tiap pembaruan posisi (tiap 30 m), satu perjalanan 5 km
-      // jadi sekitar 160 panggilan. Dengan ambang 500 m, jumlahnya turun ke
-      // sekitar 10 — dan garis di peta tetap terlihat mengikuti driver karena
+      // jadi sekitar 160 panggilan. Dengan ambang 2 km, jumlahnya turun ke dua
+      // atau tiga — dan garis di peta tetap terlihat mengikuti driver karena
       // penandanya sendiri bergerak tiap 30 m.
       final jemput = _orderPickupLatLng;
       if (_acceptedOrder != null && jemput != null && _perluGambarUlangRute(titik)) {

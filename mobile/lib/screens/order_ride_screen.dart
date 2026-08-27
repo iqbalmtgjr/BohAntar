@@ -67,6 +67,10 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   List<PlaceSuggestion> _suggestions = [];
   bool _loadingSuggestions = false;
   Timer? _debounceTimer;
+  // Rute adalah panggilan Routes API berbayar, dan _calculateFareFromDistance()
+  // dipanggil dari delapan tempat — tiap geseran pin memicu satu. Ditahan sampai
+  // pin berhenti bergerak.
+  Timer? _ruteDebounce;
 
   // Routing points
   List<LatLng> _routePoints = [];
@@ -106,6 +110,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     _statusTimer?.cancel();
     _radarController.dispose();
     _debounceTimer?.cancel();
+    _ruteDebounce?.cancel();
     super.dispose();
   }
 
@@ -327,7 +332,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     setState(() {
       _fare = _rincianTarif().total;
     });
-    _fetchRoute(); // Automatically draw OSRM polyline route on the map
+    // Tarif dihitung langsung (gratis, hitungan lokal); rutenya ditahan.
+    _ruteDebounce?.cancel();
+    _ruteDebounce = Timer(const Duration(milliseconds: 500), _fetchRoute);
   }
 
   Future<void> _pilihTempat(PlaceSuggestion saran) async {
@@ -786,8 +793,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                     final tempLatLng = _currentLatLng;
                     _currentLatLng = _destinationLatLng ?? _currentLatLng;
                     _destinationLatLng = tempLatLng;
-                    _calculateFareFromDistance();
-                    _fetchRoute();
+                    _calculateFareFromDistance(); // sudah menjadwalkan _fetchRoute
                   },
                   icon: const Icon(Icons.swap_vert, color: AppTheme.primaryBlue),
                 ),
