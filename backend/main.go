@@ -3847,7 +3847,11 @@ func subscriptionCreateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	successRedirectURL := origin + "/#/subscription"
 
-	externalID := fmt.Sprintf("sub-inv-%d-%s", time.Now().Unix(), input.Phone)
+	// Awalan "bohantar-" bukan hiasan: akun Xendit ini dipakai bersama Kasvo
+	// Indonesia, dan awalan inilah yang dipakai callback Kasvo untuk memutuskan
+	// payload mana yang diteruskan ke sini. Kalau diubah, ubah juga
+	// AdminLanggananController::xenditCallback di sisi Kasvo.
+	externalID := fmt.Sprintf("bohantar-sub-%d-%s", time.Now().Unix(), input.Phone)
 	xenditKey := getEnv("XENDIT_SECRET_KEY", "mock")
 
 	invoiceID := newID("inv")
@@ -3942,6 +3946,29 @@ func subscriptionInvoicesHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, 200, invoices)
 }
 
+// Xendit memakai PAID saat invoice dibayar dan SETTLED saat dananya sudah
+// diteruskan ke saldo. Keduanya berarti uangnya masuk; menerima PAID saja
+// membuat sebagian pembayaran diabaikan diam-diam.
+func statusLunas(s string) bool {
+	switch strings.ToUpper(strings.TrimSpace(s)) {
+	case "PAID", "SETTLED":
+		return true
+	}
+	return false
+}
+
+// Callback invoice Xendit membawa `amount` (nilai tagihan) dan `paid_amount`
+// (yang benar-benar dibayar). Yang menentukan kurang bayar adalah yang kedua —
+// membandingkan `amount` dengan nilai tersimpan selalu sama besar, jadi
+// pemeriksaannya tidak pernah menolak apa pun. `amount` hanya dipakai kalau
+// `paid_amount` tidak dikirim, misalnya oleh jalur mock lokal.
+func nominalDibayar(paidAmount, amount float64) float64 {
+	if paidAmount > 0 {
+		return paidAmount
+	}
+	return amount
+}
+
 func xenditWebhookHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
@@ -3968,17 +3995,19 @@ func xenditWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		ExternalID string  `json:"external_id"`
 		Status     string  `json:"status"`
 		Amount     float64 `json:"amount"`
+		PaidAmount float64 `json:"paid_amount"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		writeJSONResponse(w, 400, map[string]string{"error": "Invalid JSON"})
 		return
 	}
 
-	if payload.Status == "PAID" {
+	if statusLunas(payload.Status) {
 		inv, exists := dbGetSubscriptionInvoice(payload.ID)
 		// Nominal yang dibayar harus sama dengan tagihan; pembayaran kurang ditolak.
-		if exists && payload.Amount > 0 && payload.Amount < inv.Amount {
-			log.Printf("Webhook ditolak: invoice %s tertagih %.0f tapi dibayar %.0f", inv.ID, inv.Amount, payload.Amount)
+		dibayar := nominalDibayar(payload.PaidAmount, payload.Amount)
+		if exists && dibayar > 0 && dibayar < inv.Amount {
+			log.Printf("Webhook ditolak: invoice %s tertagih %.0f tapi dibayar %.0f", inv.ID, inv.Amount, dibayar)
 			writeJSONResponse(w, 400, map[string]string{"error": "Nominal pembayaran tidak sesuai tagihan"})
 			return
 		}
