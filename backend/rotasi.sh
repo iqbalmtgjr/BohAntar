@@ -78,10 +78,27 @@ echo "== 3/3  Password MySQL =="
 if [ "${1:-}" = "--db" ]; then
   DB_USER="$(nilai DB_USER)"
   DB_PASS_LAMA="$(nilai DB_PASSWORD)"
+
+  # Diperiksa SEBELUM menyentuh MySQL. Kalau barisnya tidak ada, password sudah
+  # terlanjur berganti tapi tidak ada tempat menyimpannya -- backend kehilangan
+  # akses dan nilai barunya hilang bersama variabel ini.
+  grep -q '^export DB_PASSWORD=' "$RUN" || {
+    echo "FATAL: baris DB_PASSWORD tidak ada di run.sh. Batal, MySQL tidak disentuh."
+    exit 1
+  }
+
   echo "Mengganti password untuk pengguna MySQL: $DB_USER"
   DB_PASS_BARU="$(openssl rand -hex 24)"
-  mysql -u"$DB_USER" -p"$DB_PASS_LAMA" -e \
-    "ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS_BARU'; FLUSH PRIVILEGES;"
+
+  # SET PASSWORD mengganti password akun yang sedang terhubung. Versi sebelumnya
+  # memakai ALTER USER dengan nama akun disebut eksplisit, dan MySQL menuntut
+  # privilege CREATE USER untuk itu -- user aplikasi tidak punya, jadi selalu
+  # gagal dengan ERROR 1227. Lewat stdin, bukan -e, supaya password barunya tidak
+  # muncul di daftar proses.
+  mysql -u"$DB_USER" -p"$DB_PASS_LAMA" <<SQL
+SET PASSWORD = '$DB_PASS_BARU';
+SQL
+
   setel DB_PASSWORD "$DB_PASS_BARU"
   unset DB_PASS_BARU DB_PASS_LAMA
 else
