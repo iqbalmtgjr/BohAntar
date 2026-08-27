@@ -45,9 +45,15 @@ setel JWT_SECRET "$(openssl rand -hex 32)"
 echo
 
 echo "== 2/3  Kredensial Xendit =="
+echo "PERHATIAN: akun Xendit ini dipakai bersama aplikasi Kasvo Indonesia."
+echo "  - Secret key boleh banyak per akun, jadi membuat key baru untuk bohAntar AMAN."
+echo "  - Callback token cuma SATU untuk seluruh akun. Menggantinya mematikan"
+echo "    webhook Kasvo juga, diam-diam. Kosongkan saja (tekan Enter) kecuali"
+echo "    config Kasvo sedang terbuka dan siap diganti berbarengan."
+echo
 echo "Buka dashboard Xendit di tab lain:"
 echo "  Settings > Developers > API Keys      -> buat Secret Key BARU (jangan hapus yang lama dulu)"
-echo "  Settings > Developers > Webhooks      -> salin/ganti Callback Token"
+echo "  Settings > Developers > Webhooks      -> hanya kalau Kasvo ikut diganti"
 echo
 read -rsp "Tempel XENDIT_SECRET_KEY baru (tidak akan terlihat): " XSK; echo
 read -rsp "Tempel XENDIT_CALLBACK_TOKEN baru (tidak akan terlihat): " XCT; echo
@@ -100,8 +106,11 @@ for i in 1 2 3 4 5; do
     echo
     echo "Langkah terakhir yang HARUS Anda lakukan sendiri:"
     echo "  1. Login ulang ke dashboard admin (sesi lama sudah mati)"
-    echo "  2. Setelah yakin pembayaran masih jalan, HAPUS secret key Xendit yang lama"
-    echo "  3. Hapus cadangan berisi kredensial lama: rm $CADANGAN"
+    echo "  2. Pindahkan Kasvo Indonesia ke secret key barunya sendiri. Key lama"
+    echo "     dipakai kedua aplikasi -- menghapusnya sekarang mematikan Kasvo."
+    echo "  3. Setelah bohAntar DAN Kasvo dua-duanya terbukti jalan dengan key"
+    echo "     masing-masing, baru hapus key lama yang bocor di dashboard Xendit."
+    echo "  4. Hapus cadangan berisi kredensial lama: rm $CADANGAN"
     exit 0
   fi
   sleep 10
