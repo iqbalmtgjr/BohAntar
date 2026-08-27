@@ -38,3 +38,22 @@ func TestNominalDibayar(t *testing.T) {
 		t.Errorf("nominalDibayar(0, 0) = %.0f, mau 0", got)
 	}
 }
+
+func TestWaktuInvoice(t *testing.T) {
+	// Bentuk yang benar-benar tersimpan di kolom VARCHAR: driver MySQL menuliskan
+	// time.Time sebagai literal datetime, bukan RFC3339.
+	if got := waktuInvoice("2026-08-27 13:14:32"); got[:19] != "2026-08-27T13:14:32" {
+		t.Errorf("waktuInvoice(datetime) = %q, mau berawalan 2026-08-27T13:14:32", got)
+	}
+
+	// Baris lama yang sempat tersimpan sebagai RFC3339 tetap terbaca.
+	if got := waktuInvoice("2026-08-27T13:14:32+07:00"); got != "2026-08-27T13:14:32+07:00" {
+		t.Errorf("waktuInvoice(rfc3339) = %q, mau utuh", got)
+	}
+
+	// Yang tak dikenal dikembalikan apa adanya, bukan dikosongkan -- lebih baik
+	// menampilkan teks aneh daripada menghilangkan tagihannya dari daftar.
+	if got := waktuInvoice("entah apa"); got != "entah apa" {
+		t.Errorf("waktuInvoice(sampah) = %q, mau apa adanya", got)
+	}
+}

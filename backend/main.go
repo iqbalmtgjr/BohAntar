@@ -1270,15 +1270,31 @@ func dbSaveSubscriptionInvoice(inv SubscriptionInvoice) error {
 	return err
 }
 
+// subscription_invoices.created_at bertipe VARCHAR(50), bukan DATETIME. parseTime=true
+// hanya menyentuh kolom waktu sungguhan, jadi memindainya ke time.Time SELALU gagal —
+// dan karena kegagalan itu cuma jadi "tidak ketemu", webhook Xendit tidak pernah bisa
+// mengaktifkan langganan siapa pun. Dibaca sebagai teks, lalu dinormalkan.
+func waktuInvoice(mentah string) string {
+	for _, pola := range []string{time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(pola, mentah); err == nil {
+			return t.Format(time.RFC3339)
+		}
+	}
+	return mentah
+}
+
 func dbGetSubscriptionInvoice(id string) (SubscriptionInvoice, bool) {
 	var inv SubscriptionInvoice
 	row := db.QueryRow("SELECT id, phone_number, amount, status, payment_url, created_at FROM subscription_invoices WHERE id = ?", id)
-	var createdAt time.Time
+	var createdAt string
 	err := row.Scan(&inv.ID, &inv.PhoneNumber, &inv.Amount, &inv.Status, &inv.PaymentURL, &createdAt)
 	if err != nil {
+		if err != sql.ErrNoRows {
+			log.Printf("Invoice %s gagal dibaca: %v", id, err)
+		}
 		return inv, false
 	}
-	inv.CreatedAt = createdAt.Format(time.RFC3339)
+	inv.CreatedAt = waktuInvoice(createdAt)
 	return inv, true
 }
 
@@ -1307,11 +1323,15 @@ func dbGetSubscriptionInvoices(phone string) ([]SubscriptionInvoice, error) {
 	var result []SubscriptionInvoice
 	for rows.Next() {
 		var inv SubscriptionInvoice
-		var createdAt time.Time
-		if err := rows.Scan(&inv.ID, &inv.PhoneNumber, &inv.PartnerName, &inv.Amount, &inv.Status, &inv.PaymentURL, &createdAt); err == nil {
-			inv.CreatedAt = createdAt.Format(time.RFC3339)
-			result = append(result, inv)
+		var createdAt string
+		if err := rows.Scan(&inv.ID, &inv.PhoneNumber, &inv.PartnerName, &inv.Amount, &inv.Status, &inv.PaymentURL, &createdAt); err != nil {
+			// Dulu baris gagal dilewati diam-diam, jadi daftar tagihan admin selalu
+			// kosong tanpa ada yang tahu sebabnya.
+			log.Printf("Baris subscription_invoices dilewati: %v", err)
+			continue
 		}
+		inv.CreatedAt = waktuInvoice(createdAt)
+		result = append(result, inv)
 	}
 	return result, nil
 }
@@ -4002,8 +4022,17 @@ func xenditWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !statusLunas(payload.Status) {
+		// Diam-diam melewatkan status yang tak dikenal pernah menghabiskan satu jam
+		// penelusuran. Sekarang meninggalkan jejak.
+		log.Printf("Webhook dilewati: status %q bukan pembayaran lunas (invoice %s)", payload.Status, payload.ID)
+	}
+
 	if statusLunas(payload.Status) {
 		inv, exists := dbGetSubscriptionInvoice(payload.ID)
+		if !exists {
+			log.Printf("Webhook: invoice %s tidak ditemukan, langganan tidak diaktifkan (external_id=%s)", payload.ID, payload.ExternalID)
+		}
 		// Nominal yang dibayar harus sama dengan tagihan; pembayaran kurang ditolak.
 		dibayar := nominalDibayar(payload.PaidAmount, payload.Amount)
 		if exists && dibayar > 0 && dibayar < inv.Amount {
