@@ -1,0 +1,6 @@
+# Salin file ini menjadi android/key.properties lalu isi sesuai keystore Anda.
+# JANGAN commit key.properties maupun file .jks — keduanya sudah di android/.gitignore.
+storePassword=password-keystore-anda
+keyPassword=password-key-anda
+keyAlias=upload
+storeFile=C:/Users/USER/keystore/bohantar-upload.jks

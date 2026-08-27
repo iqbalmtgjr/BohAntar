@@ -1,0 +1,538 @@
+/* Tema & mobile-first untuk seluruh panel web (Super Admin + bohRental + bohFood).
+   Semua di-scope ke .portal-ui; aksen tiap panel diatur .admin-portal /
+   .rental-portal / .food-portal di bawahnya. */
+
+/* ---------- TOKEN: MODE TERANG ---------- */
+.portal-ui {
+  --bg: #F7FAFF;
+  --bg-card: #FFFFFF;
+  --bg-input: #F2F7FE;
+  --bg-header: #F7FAFF;
+  --bg-hover: rgba(37, 99, 235, 0.03);
+  --border: #E3EBF8;
+  --text-primary: #0F172A;
+  --text-secondary: #47597A;
+  --text-muted: #8496AF;
+  --card-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 24px -14px rgba(37, 99, 235, 0.35);
+  background: var(--bg);
+  color: var(--text-primary);
+}
+body:has(.portal-ui) { background: #F7FAFF; }
+
+/* ---------- TOKEN: MODE GELAP ---------- */
+html[data-theme="dark"] .portal-ui {
+  --bg: #0B1220;
+  --bg-card: #131C2E;
+  --bg-input: #1B2740;
+  --bg-header: #16203A;
+  --bg-hover: rgba(148, 183, 236, 0.06);
+  --border: #24314A;
+  --text-primary: #EAF1FB;
+  --text-secondary: #9FB3D1;
+  --text-muted: #7387A6;
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 12px 26px -16px rgba(0, 0, 0, 0.85);
+}
+html[data-theme="dark"] body:has(.portal-ui) { background: #0B1220; }
+
+/* ---------- AKSEN PER PORTAL ---------- */
+.portal-ui.rental-portal {
+  --primary: #2563EB;
+  --primary-light: #3B82F6;
+  --primary-dark: #1D4ED8;
+  --primary-glow: rgba(37, 99, 235, 0.08);
+}
+html[data-theme="dark"] .portal-ui.rental-portal {
+  --primary: #60A5FA;
+  --primary-light: #93C5FD;
+  --primary-dark: #3B82F6;
+  --primary-glow: rgba(96, 165, 250, 0.14);
+}
+.portal-ui.food-portal {
+  --primary: #D97706;
+  --primary-light: #F59E0B;
+  --primary-dark: #B45309;
+  --primary-glow: rgba(217, 119, 6, 0.09);
+}
+html[data-theme="dark"] .portal-ui.food-portal {
+  --primary: #FBBF24;
+  --primary-light: #FCD34D;
+  --primary-dark: #F59E0B;
+  --primary-glow: rgba(251, 191, 36, 0.14);
+}
+/* Super Admin: indigo, sengaja beda dari biru mitra supaya sekali lihat
+   ketahuan sedang berada di panel yang mana. */
+.portal-ui.admin-portal {
+  --primary: #4F46E5;
+  --primary-light: #6366F1;
+  --primary-dark: #4338CA;
+  --primary-glow: rgba(79, 70, 229, 0.09);
+}
+html[data-theme="dark"] .portal-ui.admin-portal {
+  --primary: #818CF8;
+  --primary-light: #A5B4FC;
+  --primary-dark: #6366F1;
+  --primary-glow: rgba(129, 140, 248, 0.16);
+}
+html[data-theme="dark"] .portal-ui.admin-portal .btn-primary,
+html[data-theme="dark"] .portal-ui.admin-portal .filter-btn.active { color: #0B1220; }
+
+
+/* Di mode gelap aksennya cerah, jadi teks tombol dibalik jadi gelap
+   supaya kontrasnya tetap terbaca (teks putih di atas #60A5FA/#FBBF24 terlalu tipis). */
+html[data-theme="dark"] .portal-ui .btn-primary,
+html[data-theme="dark"] .portal-ui .filter-btn.active {
+  color: #0B1220;
+}
+
+/* default (desktop): label pendek & tombol brand bar disembunyikan */
+.portal-ui .nav-label-short { display: none; }
+/* Tombol khusus tab bar mobile (mis. "Lainnya") tidak punya tempat di sidebar desktop. */
+.portal-ui .nav-mobile-only { display: none !important; }
+.portal-ui .brandbar-btn {
+  display: none !important; /* !important: menang atas inline style komponen */
+  background: none;
+  border: none;
+  padding: 8px;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+.portal-ui .brandbar-btn.danger { color: var(--danger); }
+
+.portal-ui .card,
+.portal-ui .stat-card,
+.portal-ui .table-wrap { background: var(--bg-card); }
+
+/* blok khusus mobile: disembunyikan di desktop */
+.portal-ui .portal-mobile-only { display: none; }
+/* Menu cepat di dashboard mobile: umpan balik tekan ala aplikasi native. */
+.portal-ui .quick-menu-item { transition: transform 0.16s ease; -webkit-tap-highlight-color: transparent; }
+.portal-ui .quick-menu-item:active { transform: scale(0.94); }
+
+/* ---------- MOBILE & TABLET: app bar atas + tab bar bawah ---------- */
+@media (max-width: 1024px) {
+  .portal-ui { --brandbar-h: 56px; }
+
+  /* App bar menempel di atas layar. Dipakai position:fixed, bukan sticky:
+     sticky pernah membuat tab bar bawah (position:fixed, anak dari sidebar ini)
+     ikut tergeser sejauh scroll di Chromium sampai keluar layar. Induk yang
+     fixed tidak punya offset yang berubah saat scroll, jadi masalah itu tidak
+     muncul — dan fixed tidak membentuk containing block bagi anak fixed-nya,
+     sehingga tab bar tetap berpatokan ke viewport. */
+  .portal-ui .sidebar {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    /* .sidebar dasar memakai bottom:0 untuk sidebar setinggi layar. Saat position
+       kembali fixed, top+bottom membuatnya menutupi seluruh viewport dengan latar
+       kartu — layar jadi putih polos. Tingginya dikunci di app bar saja. */
+    bottom: auto;
+    height: var(--brandbar-h);
+    z-index: 1100;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+    border-bottom: 1px solid var(--border);
+  }
+  /* Tingginya dikunci, bukan hasil padding: ukuran logo berbeda antara breakpoint
+     768px dan 1024px, dan jarak aman konten di bawahnya harus pasti. */
+  .portal-ui .sidebar-brand { height: var(--brandbar-h); padding: 0 16px; }
+
+  /* nav dipindah jadi tab bar bawah, selalu tampil (tanpa hamburger) */
+  .portal-ui .sidebar-nav {
+    display: flex !important;
+    flex-direction: row;
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -6px 24px -14px rgba(15, 23, 42, 0.4);
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    gap: 2px;
+    z-index: 1100;
+  }
+  .portal-ui .sidebar-nav .nav-section-label { display: none !important; }
+  /* Menu sekunder (Jasa) disembunyikan dari tab bar agar tetap 5 slot simetris. */
+  .portal-ui .sidebar-nav .nav-item.nav-desktop-only { display: none !important; }
+  .portal-ui .sidebar-nav .nav-item.nav-mobile-only { display: flex !important; }
+  .portal-ui .sidebar-nav .nav-item {
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    min-height: 54px;
+    padding: 6px 2px;
+    margin: 0;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    border-radius: 12px;
+  }
+  .portal-ui .nav-label-full { display: none; }
+  .portal-ui .nav-label-short { display: inline; }
+  .portal-ui .sidebar-footer { display: none !important; }
+  .portal-ui .brandbar-btn { display: inline-flex !important; }
+  .portal-ui .main-content {
+    /* Sidebar keluar dari alur normal, jadi ruang app bar disediakan di sini. */
+    padding-top: var(--brandbar-h);
+    padding-bottom: calc(74px + env(safe-area-inset-bottom));
+  }
+
+  /* Tab tengah: center-docked FAB bulat. Warnanya ikut aksen portal, jadi FAB
+     bohRental biru sementara Super Admin indigo tanpa aturan tambahan. */
+  .portal-ui .sidebar-nav .nav-item.nav-center {
+    background: transparent !important;
+    color: var(--primary);
+    padding-bottom: 2px;
+  }
+  .portal-ui .sidebar-nav .nav-item.nav-center svg {
+    width: 54px;
+    height: 54px;
+    padding: 15px;
+    margin-top: -26px;
+    border-radius: 50%;
+    color: #fff;
+    background: linear-gradient(140deg, var(--primary-light) 0%, var(--primary) 55%, var(--primary-dark) 100%);
+    /* cincin sewarna bar = efek "menempel", lalu glow aksen di bawahnya */
+    box-shadow:
+      0 0 0 6px var(--bg-card),
+      0 10px 20px -8px color-mix(in srgb, var(--primary) 75%, transparent),
+      0 2px 6px -1px rgba(15, 23, 42, 0.12);
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .portal-ui .sidebar-nav .nav-item.nav-center:active svg { transform: scale(0.92); }
+  .portal-ui .sidebar-nav .nav-item.nav-center.active svg {
+    box-shadow:
+      0 0 0 6px var(--bg-card),
+      0 0 0 9px color-mix(in srgb, var(--primary) 16%, transparent),
+      0 12px 24px -8px color-mix(in srgb, var(--primary) 85%, transparent);
+  }
+  .portal-ui .sidebar-nav .nav-item.nav-center .nav-label-short {
+    font-weight: 700;
+    color: var(--primary);
+  }
+
+  /* Topbar desktop ditiadakan di mobile: brand bar sidebar sudah jadi app bar,
+     dan dua bar bertumpuk cuma memakan tinggi layar. */
+  .portal-ui .topbar { display: none !important; }
+}
+
+
+/* ---------- MOBILE ---------- */
+@media (max-width: 768px) {
+  .portal-ui .page { padding: 14px 14px 20px; }
+
+  /* Beranda rental: judul halaman & grid statistik desktop dilepas,
+     diganti kartu dompet + strip statistik */
+  .portal-ui .dash-header,
+  .portal-ui .portal-desktop-only { display: none !important; }
+  .portal-ui .portal-mobile-only { display: block; }
+  .portal-ui .page-header h1 { font-size: 19px; }
+  .portal-ui .page-header p { font-size: 12.5px; }
+  .portal-ui .page-header .btn { width: 100%; justify-content: center; }
+
+  /* Tap target & anti auto-zoom iOS */
+  .portal-ui .btn { min-height: 42px; padding: 10px 16px; }
+  .portal-ui .btn-sm { min-height: 36px; padding: 8px 12px; font-size: 12px; }
+  .portal-ui .input { font-size: 16px; padding: 11px 13px; }
+  .portal-ui .card { padding: 16px; border-radius: 14px; }
+
+  /* Statistik 2 kolom ringkas */
+  .portal-ui .stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .portal-ui .stat-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 14px;
+    border-radius: 14px;
+  }
+  .portal-ui .stat-icon { width: 36px; height: 36px; border-radius: 10px; }
+  .portal-ui .stat-icon svg { width: 18px; height: 18px; }
+  .portal-ui .stat-value { font-size: 16px; line-height: 1.25; }
+  .portal-ui .stat-label { font-size: 11px; }
+
+  /* Tabel -> kartu bertumpuk (pakai data-label tiap <td>) */
+  .portal-ui .table-wrap {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    overflow: visible;
+  }
+  .portal-ui .table-header {
+    padding: 0 2px 10px;
+    border-bottom: none;
+  }
+  .portal-ui .table-header h3 { font-size: 14px; }
+  .portal-ui table { min-width: 0 !important; display: block; }
+  .portal-ui thead { display: none; }
+  .portal-ui tbody { display: block; }
+  .portal-ui tbody tr {
+    display: block;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--card-shadow);
+    padding: 4px 14px;
+    margin-bottom: 10px;
+  }
+  .portal-ui tbody td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 0;
+    text-align: right;
+    border-bottom: 1px dashed var(--border);
+  }
+  .portal-ui tbody tr td:last-child { border-bottom: none; }
+  .portal-ui tbody td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    text-align: left;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+  }
+  .portal-ui tbody td[colspan] { display: block; text-align: center; }
+  .portal-ui tbody td[colspan]::before { display: none; }
+  .portal-ui tbody td .btn { flex: 1; justify-content: center; }
+  .portal-ui tr:hover td { background: transparent; }
+
+  /* Kalender: sel ringkas. Di lebar sesempit ini hanya muat satu keterangan,
+     dan plat nomor lebih berguna daripada ikon — jenis jadwalnya masih terbaca
+     dari warna serta garis tepi chip. Detail lengkap lewat day sheet. */
+  .portal-ui .calendar-cell { min-height: 54px !important; padding: 2px !important; }
+  .portal-ui .cal-chip-icon { display: none; }
+  .portal-ui .cal-chip { justify-content: center; padding: 3px 1px !important; }
+  /* !important wajib: ukuran font chip diset inline di komponennya. */
+  .portal-ui .cal-chip-label {
+    font-size: 8px !important;
+    letter-spacing: -0.3px;
+    font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  }
+
+  /* Modal jadi bottom sheet-ish */
+  .portal-ui .modal { border-radius: 16px; padding: 20px; }
+}
+
+/* ==================== Grid menu & bottom sheet "Lainnya" ====================
+   Tab bar bawah cuma muat 5 slot, sedangkan Super Admin punya 11 menu. Sisanya
+   dijangkau lewat sheet ini dan lewat grid yang sama di Dashboard. */
+
+.portal-ui .menu-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px 6px;
+}
+.portal-ui .menu-grid-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.16s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.portal-ui .menu-grid-item:active { transform: scale(0.94); }
+.portal-ui .menu-grid-ico {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: linear-gradient(140deg, var(--primary-light) 0%, var(--primary) 45%, var(--primary-dark) 100%);
+  box-shadow:
+    0 10px 18px -10px color-mix(in srgb, var(--primary) 95%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+.portal-ui .menu-grid-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #EF4444;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 20px;
+  text-align: center;
+  border: 2px solid var(--bg-card);
+}
+.portal-ui .menu-grid-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.25;
+}
+
+.portal-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(3px);
+  animation: sheetFade 0.2s ease-out;
+}
+.portal-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1210;
+  max-height: 82vh;
+  overflow-y: auto;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border-radius: 26px 26px 0 0;
+  padding: 8px 18px calc(22px + env(safe-area-inset-bottom));
+  box-shadow: 0 -18px 44px -22px rgba(15, 23, 42, 0.55);
+  animation: sheetUp 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.portal-sheet-grip {
+  width: 42px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+  margin: 4px auto 16px;
+}
+.portal-sheet-title { font-size: 14.5px; font-weight: 800; }
+.portal-sheet-sub { font-size: 11.5px; color: var(--text-muted); margin: 2px 0 18px; }
+.portal-sheet-logout {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 22px;
+  min-height: 46px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+@keyframes sheetFade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sheetUp { from { transform: translateY(100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .portal-sheet, .portal-sheet-backdrop { animation: none; }
+}
+
+/* Baris pagination di kaki tabel. Di mobile tabelnya berubah jadi kartu
+   bertumpuk, jadi pager-nya berdiri sendiri sebagai kartu terpisah. */
+.portal-ui .table-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-card);
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.portal-ui .table-pager > div:last-child { display: flex; align-items: center; gap: 12px; }
+
+@media (max-width: 768px) {
+  .portal-ui .table-pager {
+    justify-content: center;
+    text-align: center;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px;
+    box-shadow: var(--card-shadow);
+  }
+  .portal-ui .table-pager > div:last-child { width: 100%; justify-content: space-between; }
+  .portal-ui .table-pager .filter-btn { min-height: 38px; }
+}
+
+/* Panel filter (Mitra Disetujui & Pengajuan Mitra): satu baris di desktop,
+   bertumpuk penuh di mobile supaya kotak carinya tidak terjepit. */
+.portal-ui .filter-panel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+.portal-ui .filter-panel-search { margin-left: auto; min-width: 280px; }
+
+@media (max-width: 768px) {
+  .portal-ui .filter-panel { padding: 12px; gap: 12px; border-radius: 14px; }
+  .portal-ui .filter-panel > * { width: 100%; min-width: 0; }
+  /* Baris tombol di dalam panel dibungkus inline-style flex tanpa wrap, jadi di
+     layar sempit ia melebar melewati viewport. Dipaksa membungkus di sini. */
+  .portal-ui .filter-panel > *,
+  .portal-ui .filter-panel > * > div { flex-wrap: wrap; }
+  .portal-ui .filter-panel-search { margin-left: 0; min-width: 0; }
+  .portal-ui .filter-panel .btn { padding: 8px 12px; }
+
+  /* Bar performa di tabel-jadi-kartu: sel-nya jadi flex, sementara pembungkus
+     bar-nya tidak ikut melar sehingga bar 'flex:1' menyusut jadi nol. */
+  /* !important: lebar sel-nya dipatok 140px lewat inline style komponen. */
+  .portal-ui tbody td[data-label="Performa"] { width: auto !important; }
+  .portal-ui tbody td[data-label="Performa"] > div { flex: 1; }
+
+  /* Kotak cari: lebarnya dipatok 200px di index.css, kesempitan di HP. */
+  .portal-ui .search-bar { width: 100%; }
+  .portal-ui .search-bar input { width: 100%; min-width: 0; font-size: 16px; }
+
+  /* Baris filter halaman Pengguna/Pesanan: kotak carinya turun ke baris sendiri. */
+  .portal-ui .filter-bar { gap: 8px; }
+  .portal-ui .filter-bar > *:last-child { margin-left: 0 !important; width: 100%; }
+  .portal-ui .filter-btn { min-height: 36px; }
+}
+
+@media (max-width: 768px) {
+  /* Tabel yang sudah berada di dalam .card (mis. peringkat driver di Analitik)
+     tidak perlu jadi kartu lagi per baris — cukup garis pemisah, supaya tidak
+     terlihat kartu di dalam kartu. */
+  .portal-ui .card table tbody tr {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    box-shadow: none;
+    padding: 6px 0;
+    margin: 0;
+  }
+  .portal-ui .card table tbody tr:last-child { border-bottom: none; }
+}
+
+/* Delapan kartu statistik di Beranda: minmax 200px milik index.css memaksa 5
+   kolom di layar 1440 dan nominal pendapatan pecah baris. 240px menghasilkan
+   4 kolom yang lebih lega dan baris yang rata. */
+.portal-ui .stats-grid { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.portal-ui .stat-value { overflow-wrap: anywhere; }
+
+/* Di desktop kolom tabel kadang menyempit sampai nama & nominal pecah baris.
+   Kalau memang tidak muat, .table-wrap tetap bisa digeser mendatar. */
+@media (min-width: 1025px) {
+  .portal-ui .user-name,
+  .portal-ui .table-wrap td[data-label="Saldo"],
+  .portal-ui .table-wrap td[data-label="Tarif"],
+  .portal-ui .table-wrap td[data-label="Jumlah Bayar"] { white-space: nowrap; }
+}

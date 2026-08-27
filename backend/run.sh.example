@@ -1,0 +1,48 @@
+#!/bin/bash
+# Contoh run.sh untuk VPS. Salin ke server, isi nilainya, lalu ganti run.sh lama.
+# JANGAN commit file berisi nilai asli.
+
+export PORT=8080
+
+# ---- Wajib sejak perbaikan keamanan 24 Agustus 2026 ----
+
+# Mengaktifkan mode produksi. Tanpa ini, simulator pembayaran Xendit
+# (/api/xendit/mock-pay) tetap hidup dan siapa pun bisa mengaktifkan langganan gratis.
+export APP_ENV="production"
+
+# Kunci penandatangan token sesi. Minimal 32 karakter; server menolak start bila kosong.
+# Buat sekali di server dengan:  openssl rand -hex 32
+# Kalau nilainya berubah, semua sesi yang sedang berjalan langsung tidak berlaku.
+export JWT_SECRET="isi-dengan-hasil-openssl-rand-hex-32"
+
+# Dipakai backend untuk memverifikasi id_token dari login Google.
+# Nilainya sama persis dengan VITE_GOOGLE_CLIENT_ID di frontend.
+export GOOGLE_CLIENT_ID="1084290744073-iv00hm6io5q1lupniq7bd7mc8rs6kqq6.apps.googleusercontent.com"
+
+# Origin yang boleh membuka koneksi WebSocket chat dari browser. Wajib diisi di
+# produksi — kalau kosong, koneksi chat dari browser ditolak. Pisahkan dengan koma.
+# Aplikasi Flutter tidak terpengaruh karena tidak mengirim header Origin.
+export ALLOWED_ORIGINS="https://bohantar.indotechconsulting.com"
+
+# ---- Database ----
+export DB_USER="bohantar"
+export DB_PASSWORD="xxx"
+export DB_HOST="127.0.0.1"
+export DB_PORT="3306"
+export DB_NAME="bohantar"
+
+# ---- Pembayaran ----
+export XENDIT_SECRET_KEY="xxx"
+export XENDIT_CALLBACK_TOKEN="xxx"
+
+# ---- Opsional ----
+# Hanya dipakai saat akun admin pertama kali dibuat. Akun admin Anda sudah ada,
+# jadi baris ini boleh tetap dikomentari.
+# export ADMIN_PASSWORD=""
+
+# Path absolut, bukan ./bohantar-backend — supaya pgrep di script cron bisa
+# menemukan prosesnya. Dengan path relatif, cron mengira backend mati dan
+# menyalakan instance baru setiap menit.
+APP_BIN="/www/wwwroot/bohantar-backend/bohantar-backend"
+chmod +x "$APP_BIN"
+exec "$APP_BIN"

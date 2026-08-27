@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Redirecting...</title>
+    <script>
+        // Ambil token dari hash Google dan alihkan ke HashRouter internal React
+        window.location.href = '/#/auth/callback' + window.location.hash;
+    </script>
+</head>
+<body>
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; color: #4b5563;">
+        Mohon tunggu, sedang mengalihkan autentikasi...
+    </div>
+</body>
+</html>

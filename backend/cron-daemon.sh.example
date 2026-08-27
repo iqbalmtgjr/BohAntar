@@ -1,0 +1,34 @@
+#!/bin/bash
+# Cron daemon bohAntar — dijalankan tiap 1 menit.
+#
+# Semua konfigurasi ada di run.sh; script ini sengaja tidak memuat variabel apa pun.
+#
+# Setelah mengunggah binary baru, hentikan proses lama sekali:
+#     pkill -f /www/wwwroot/bohantar-backend/bohantar-backend
+
+APP_DIR="/www/wwwroot/bohantar-backend"
+CRON_LOG="$APP_DIR/cron-daemon.log"
+
+exec 2>>"$CRON_LOG"
+echo "[$(date '+%F %T')] cron jalan" >> "$CRON_LOG"
+
+if pgrep -f "$APP_DIR/bohantar-backend" > /dev/null; then
+    echo "[$(date '+%F %T')] sudah berjalan, tidak melakukan apa-apa" >> "$CRON_LOG"
+    exit 0
+fi
+
+cd "$APP_DIR" || { echo "[$(date '+%F %T')] GAGAL cd ke $APP_DIR" >> "$CRON_LOG"; exit 1; }
+chmod +x bohantar-backend
+
+# setsid melepaskan proses dari sesi cron. Tanpa ini, banyak panel hosting
+# membunuh seluruh process group begitu task cron selesai — backend ikut mati
+# beberapa detik setelah dinyalakan. < /dev/null mencegahnya menunggu input.
+setsid nohup bash run.sh > "$APP_DIR/backend.log" 2>&1 < /dev/null &
+
+sleep 3
+if pgrep -f "$APP_DIR/bohantar-backend" > /dev/null; then
+    echo "[$(date '+%F %T')] BERHASIL dinyalakan" >> "$CRON_LOG"
+else
+    echo "[$(date '+%F %T')] GAGAL — isi backend.log:" >> "$CRON_LOG"
+    tail -5 "$APP_DIR/backend.log" >> "$CRON_LOG"
+fi
