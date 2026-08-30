@@ -35,7 +35,37 @@ export DB_NAME="bohantar"
 export XENDIT_SECRET_KEY="xxx"
 export XENDIT_CALLBACK_TOKEN="xxx"
 
+# Akun Xendit ini dipakai bersama Kasvo Indonesia. Callback token cuma SATU untuk
+# seluruh akun, jadi menggantinya harus serempak di kedua aplikasi. Secret key
+# boleh banyak per akun, jadi tiap aplikasi sebaiknya punya sendiri.
+
+# ---- Peta ----
+# Cari alamat, geocoding, dan rute. BERBEDA dari kunci Maps SDK di AndroidManifest,
+# dan harus dibatasi ke IP VPS ini, bukan ke package aplikasi. Butuh Places API (New),
+# Geocoding API, dan Routes API aktif, dengan billing account hidup.
+# Kalau kosong, keempat endpoint /api/maps/* membalas 503 dan aplikasi kehilangan
+# pencarian alamat serta gambar rute.
+export GOOGLE_MAPS_API_KEY=""
+
+# ---- Notifikasi push ----
+# Path absolut ke service account JSON dari Firebase Console -> Project settings ->
+# Service accounts -> Generate new private key. INI RAHASIA SUNGGUHAN: chmod 600,
+# jangan pernah masuk repo atau APK.
+# Kalau kosong, backend mencatat "notifikasi push dimatikan" dan semua pemanggilan
+# kirimNotifikasi jadi no-op — aplikasi tetap normal, cuma senyap.
+export FCM_SERVICE_ACCOUNT="/www/wwwroot/bohantar-backend/fcm-service-account.json"
+
+# ---- Kepatuhan Google Play ----
+# Ditampilkan di halaman /privasi sebagai alamat permintaan hapus akun. Google Play
+# memverifikasi permintaan itu benar-benar sampai, jadi harus email yang dibaca orang.
+# Bawaannya admin@bohantar.com kalau kosong.
+export PRIVACY_CONTACT_EMAIL=""
+
 # ---- Opsional ----
+# Sub-akun xenPlatform. Kalau diisi, invoice diterbitkan atas nama sub-akun lewat
+# header for-user-id. Kosongkan selama bohAntar masih menumpang akun Kasvo.
+# export XENDIT_SUB_ACCOUNT_ID=""
+
 # Hanya dipakai saat akun admin pertama kali dibuat. Akun admin Anda sudah ada,
 # jadi baris ini boleh tetap dikomentari.
 # export ADMIN_PASSWORD=""

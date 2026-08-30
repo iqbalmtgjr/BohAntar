@@ -34,7 +34,6 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   
   // Dynamic User State
   double _walletBalance = 0.0;
-  bool _loadingProfile = true;
   String _userName = "";
   String _userBadge = "Silver";
   Map<String, String> _userAddresses = {};
@@ -122,13 +121,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           if (user['addresses'] != null) {
             _userAddresses = Map<String, String>.from(user['addresses']);
           }
-          _loadingProfile = false;
         });
       }
     } catch (e) {
       debugPrint("Error fetching profile: $e");
       setState(() {
-        _loadingProfile = false;
       });
     }
   }
@@ -1680,52 +1677,6 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
-  Widget _buildPlaceTile(String title, String subtitle, IconData icon, Color iconBgColor, VoidCallback onTap) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: isDark ? AppTheme.cardObsidianDark : Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: isDark ? Colors.blueGrey.shade800 : Colors.grey.shade100, width: 1),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.02),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            )
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: iconBgColor.withOpacity(0.12),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(icon, color: iconBgColor, size: 20),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  const SizedBox(height: 2),
-                  Text(subtitle, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                ],
-              ),
-            ),
-            const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.grey),
-          ],
-        ),
-      ),
-    );
-  }
 
   // ==========================================
   // 2. DRIVER LAYOUT (VIBRANT GOPARTNER UI)
@@ -1928,34 +1879,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
-  Widget _buildStatBox(String value, String label, Color color) {
-    final theme = Theme.of(context);
-    return Column(
-      children: [
-        Text(
-          value,
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w900,
-            color: color,
-            fontSize: 16,
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 12, color: Colors.grey, fontWeight: FontWeight.bold),
-        ),
-      ],
-    );
-  }
 
-  Widget _buildDivider(bool isDark) {
-    return Container(
-      width: 1,
-      height: 30,
-      color: isDark ? Colors.blueGrey.shade900 : Colors.grey.shade300,
-    );
-  }
 
   Widget _buildBottomPanel(bool isDark, ThemeData theme) {
     if (!_isOnline) {
