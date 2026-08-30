@@ -13,7 +13,12 @@ import 'dashboard_screen.dart';
 // OAuth client sendiri (didaftarkan dengan SHA-1), tapi id_token yang dikirim ke
 // backend harus beraudiens Web Client ID, karena backend mencocokkannya dengan
 // GOOGLE_CLIENT_ID. Nilai ini bukan rahasia, aman ditaruh di dalam APK.
-const String kGoogleServerClientId = 'GANTI_DENGAN_WEB_CLIENT_ID.apps.googleusercontent.com';
+// WAJIB sama persis dengan GOOGLE_CLIENT_ID di run.sh: backend menolak token
+// yang `aud`-nya berbeda (auth.go, verifyGoogleIDToken). Ini Web Client ID dari
+// proyek 1084290744073 — proyek yang sama dengan dashboard web, BUKAN proyek
+// Firebase boh-antar (1086050775839) yang hanya mengurus FCM. Client ID bersifat
+// publik, bukan rahasia.
+const String kGoogleServerClientId = '1084290744073-iv00hm6io5q1lupniq7bd7mc8rs6kqq6.apps.googleusercontent.com';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
