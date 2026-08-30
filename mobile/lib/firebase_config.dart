@@ -21,10 +21,10 @@ import 'package:firebase_core/firebase_core.dart';
 ///
 /// Pastikan aplikasi Android didaftarkan dengan package `com.bohantar.mobile`.
 const FirebaseOptions kFirebaseOptions = FirebaseOptions(
-  apiKey: 'GANTI_DENGAN_FIREBASE_API_KEY',
-  appId: 'GANTI_DENGAN_FIREBASE_APP_ID',
-  messagingSenderId: 'GANTI_DENGAN_MESSAGING_SENDER_ID',
-  projectId: 'GANTI_DENGAN_FIREBASE_PROJECT_ID',
+  apiKey: 'AIzaSyB3dmFGJILIsZjLvnaaOgJs3Vf2JWuH908',
+  appId: '1:1086050775839:android:88425eab0ea30a0d3c762a',
+  messagingSenderId: '1086050775839',
+  projectId: 'boh-antar',
 );
 
 /// Benar kalau nilai di atas masih placeholder. Dipakai untuk melewati

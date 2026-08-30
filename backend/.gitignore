@@ -3,3 +3,7 @@ uploads/
 bohantar-backend
 bohantar-backend.exe
 bohantar-backend-linux
+
+# Service account FCM — rahasia, jangan pernah masuk repo
+*-service-account.json
+fcm-*.json
