@@ -7,14 +7,26 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 )
 
-// ==================== PERANTARA GOOGLE MAPS ====================
+// ==================== PERANTARA LAYANAN PETA ====================
 //
-// Aplikasi tidak memanggil Google langsung. Semua permintaan berbayar — cari
-// alamat, detail tempat, geocoding balik, dan rute — lewat sini karena:
+// Dua penyedia, dipilih per kebutuhan, bukan karena selera:
+//
+//   - Cari alamat dan detail tempat: Google Places. OpenStreetMap tidak punya
+//     datanya di Sintang — Overpass cuma menemukan empat tempat bernama di
+//     seluruh kota, jadi penyedia gratis mana pun membalas nol. Kedua endpoint
+//     ini membalas 503 selama GOOGLE_MAPS_API_KEY belum dipasang, dan hidup
+//     sendiri begitu diisi tanpa perlu ubah kode.
+//   - Rute dan geocoding balik: OSRM dan Photon. Gratis, tanpa kunci, tanpa
+//     billing, dan sudah diuji benar di Sintang. Tidak ada alasan membayar
+//     Google untuk dua ini.
+//
+// Aplikasi tidak memanggil siapa pun langsung. Semua lewat sini karena:
 //
 //  1. Kunci API yang ditaruh di dalam APK bisa diambil siapa saja dengan `unzip`,
 //     lalu kuota berbayar Anda dihabiskan orang lain. Kunci di sini dikunci ke
@@ -24,8 +36,8 @@ import (
 //  3. Bentuk balasannya dinormalkan di sini. Kalau suatu hari pindah penyedia,
 //     yang berubah cuma berkas ini — aplikasi tidak perlu tahu.
 //
-// Kunci Maps SDK di aplikasi berbeda dan memang harus ada di sana untuk
-// menggambar peta; kunci itu dibatasi ke nama paket + SHA-1, bukan ke IP.
+// Aplikasi menggambar petanya dengan ubin OpenStreetMap lewat flutter_map, jadi
+// tidak ada lagi kunci Maps SDK di dalam APK.
 //
 // ponytail: tanpa cache. Penggambaran rute sudah dibatasi di sisi aplikasi
 // (lihat _jarakUntukGambarUlangRute), jadi satu perjalanan hanya beberapa
@@ -33,10 +45,14 @@ import (
 // rute mulai terasa.
 
 const (
-	urlAutocomplete  = "https://places.googleapis.com/v1/places:autocomplete"
-	urlPlaceDetails  = "https://places.googleapis.com/v1/places/"
-	urlGeocode       = "https://maps.googleapis.com/maps/api/geocode/json"
-	urlComputeRoutes = "https://routes.googleapis.com/directions/v2:computeRoutes"
+	urlAutocomplete = "https://places.googleapis.com/v1/places:autocomplete"
+	urlPlaceDetails = "https://places.googleapis.com/v1/places/"
+	urlPhotonRevers = "https://photon.komoot.io/reverse"
+	urlOSRMRoute    = "https://router.project-osrm.org/route/v1/driving/"
+
+	// Layanan gratis berbasis OpenStreetMap minta pemakainya memperkenalkan diri
+	// supaya bisa dihubungi kalau ada yang menyalahgunakan. Jangan dikosongkan.
+	userAgentPeta = "bohAntar/1.0 (https://bohantar.com)"
 )
 
 var mapsClient = &http.Client{Timeout: 12 * time.Second}
@@ -44,10 +60,11 @@ var mapsClient = &http.Client{Timeout: 12 * time.Second}
 func mapsAPIKey() string { return getEnv("GOOGLE_MAPS_API_KEY", "") }
 
 // mapsSiap menolak permintaan lebih awal kalau kunci belum dipasang, supaya
-// pesannya jelas ketimbang balasan aneh dari Google.
+// pesannya jelas ketimbang balasan aneh dari Google. Hanya dipakai dua endpoint
+// Places; rute dan geocoding balik tidak butuh kunci apa pun.
 func mapsSiap(w http.ResponseWriter) bool {
 	if mapsAPIKey() == "" {
-		writeJSONResponse(w, 503, map[string]string{"error": "Layanan peta belum dikonfigurasi di server"})
+		writeJSONResponse(w, 503, map[string]string{"error": "Pencarian alamat belum aktif. Tekan langsung titik tujuan di peta."})
 		return false
 	}
 	return true
@@ -63,8 +80,9 @@ func bacaKoordinat(r *http.Request, latKey, lngKey string) (float64, float64, bo
 	return lat, lng, true
 }
 
-// kirimKeGoogle menjalankan permintaan dan mengurai balasannya jadi map.
-func kirimKeGoogle(req *http.Request) (map[string]interface{}, error) {
+// kirimPermintaan menjalankan permintaan dan mengurai balasannya jadi map.
+func kirimPermintaan(req *http.Request) (map[string]interface{}, error) {
+	req.Header.Set("User-Agent", userAgentPeta)
 	resp, err := mapsClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("gagal menghubungi layanan peta: %w", err)
@@ -131,7 +149,7 @@ func mapsAutocompleteHandler(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("X-Goog-Api-Key", mapsAPIKey())
 	req.Header.Set("X-Goog-FieldMask", "suggestions.placePrediction.placeId,suggestions.placePrediction.text,suggestions.placePrediction.structuredFormat")
 
-	hasil, err := kirimKeGoogle(req)
+	hasil, err := kirimPermintaan(req)
 	if err != nil {
 		writeJSONResponse(w, 502, map[string]string{"error": err.Error()})
 		return
@@ -200,7 +218,7 @@ func mapsPlaceHandler(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("X-Goog-Api-Key", mapsAPIKey())
 	req.Header.Set("X-Goog-FieldMask", "location,displayName,formattedAddress")
 
-	hasil, err := kirimKeGoogle(req)
+	hasil, err := kirimPermintaan(req)
 	if err != nil {
 		writeJSONResponse(w, 502, map[string]string{"error": err.Error()})
 		return
@@ -226,33 +244,35 @@ func mapsPlaceHandler(w http.ResponseWriter, r *http.Request) {
 // ---------- GEOCODING BALIK ----------
 
 // mapsReverseHandler: GET /api/maps/reverse?lat=&lng=
-// Dipakai saat penumpang menggeser pin di peta.
+// Dipakai saat penumpang memindahkan pin di peta.
+//
+// Photon, bukan Geocoding API: gratis dan tanpa kunci. Di Sintang balasannya
+// paling banter nama jalan — tapi Google pun tidak jauh berbeda di sana, dan
+// yang benar-benar dipakai penumpang adalah titiknya, bukan tulisannya.
 func mapsReverseHandler(w http.ResponseWriter, r *http.Request) {
-	if !mapsSiap(w) {
-		return
-	}
 	lat, lng, ok := bacaKoordinat(r, "lat", "lng")
 	if !ok {
 		writeJSONResponse(w, 400, map[string]string{"error": "Koordinat tidak valid"})
 		return
 	}
 
-	endpoint := fmt.Sprintf("%s?latlng=%f,%f&language=id&key=%s", urlGeocode, lat, lng, url.QueryEscape(mapsAPIKey()))
+	endpoint := fmt.Sprintf("%s?lat=%f&lon=%f&limit=1", urlPhotonRevers, lat, lng)
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, endpoint, nil)
 	if err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyiapkan permintaan"})
 		return
 	}
-	hasil, err := kirimKeGoogle(req)
+	hasil, err := kirimPermintaan(req)
 	if err != nil {
 		writeJSONResponse(w, 502, map[string]string{"error": err.Error()})
 		return
 	}
 
 	alamat := ""
-	if daftar, ok := hasil["results"].([]interface{}); ok && len(daftar) > 0 {
+	if daftar, ok := hasil["features"].([]interface{}); ok && len(daftar) > 0 {
 		if m, ok := daftar[0].(map[string]interface{}); ok {
-			alamat, _ = m["formatted_address"].(string)
+			p, _ := m["properties"].(map[string]interface{})
+			alamat = rangkaiAlamat(p)
 		}
 	}
 	if alamat == "" {
@@ -263,17 +283,41 @@ func mapsReverseHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "address": alamat, "name": alamat})
 }
 
+// rangkaiAlamat menyusun satu baris alamat dari properti Photon, yang memberi
+// potongan terpisah (nama, jalan, kelurahan, kota) alih-alih satu kalimat jadi
+// seperti Google. Potongan kosong dan yang berulang dibuang — di kota kecil
+// nama tempat dan nama kelurahannya kerap sama persis.
+func rangkaiAlamat(p map[string]interface{}) string {
+	ambil := func(k string) string { s, _ := p[k].(string); return s }
+	jalan := strings.TrimSpace(ambil("street") + " " + ambil("housenumber"))
+
+	bagian := []string{}
+	for _, s := range []string{ambil("name"), jalan, ambil("district"), ambil("city"), ambil("county"), ambil("state")} {
+		if s != "" && !slices.Contains(bagian, s) {
+			bagian = append(bagian, s)
+		}
+	}
+	return strings.Join(bagian, ", ")
+}
+
 // ---------- RUTE ----------
 
 // mapsRouteHandler: GET /api/maps/route?from_lat=&from_lng=&to_lat=&to_lng=
 //
-// Mengembalikan polyline terkode apa adanya, bukan daftar titik: bentuk
-// terkodenya sekitar sepersepuluh ukuran JSON-nya, dan penumpang di Sintang
-// membayar kuota data untuk setiap byte-nya.
+// OSRM, bukan Routes API: gratis, tanpa kunci, dan kebetulan bentuk balasannya
+// sudah cocok — polyline terkode presisi 5, persis yang dibongkar decodePolyline
+// di aplikasi. Yang berubah cuma nama medannya.
+//
+// Polyline diteruskan terkode apa adanya, bukan sebagai daftar titik: ukurannya
+// sekitar sepersepuluh JSON-nya, dan penumpang di Sintang membayar kuota data
+// untuk setiap byte-nya.
+//
+// ponytail: server demo OSRM, batasnya "pemakaian wajar" dan profilnya cuma
+// mobil — tidak ada roda dua seperti TWO_WHEELER di Google, jadi gang sempit
+// yang sebenarnya bisa dilewati motor kadang diputar. Cukup untuk Sintang;
+// kalau mulai ditolak atau jalurnya terasa salah, pasang OSRM sendiri di VPS —
+// yang berubah hanya urlOSRMRoute.
 func mapsRouteHandler(w http.ResponseWriter, r *http.Request) {
-	if !mapsSiap(w) {
-		return
-	}
 	fLat, fLng, ok1 := bacaKoordinat(r, "from_lat", "from_lng")
 	tLat, tLng, ok2 := bacaKoordinat(r, "to_lat", "to_lng")
 	if !ok1 || !ok2 {
@@ -281,56 +325,37 @@ func mapsRouteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	titik := func(lat, lng float64) map[string]interface{} {
-		return map[string]interface{}{
-			"location": map[string]interface{}{
-				"latLng": map[string]float64{"latitude": lat, "longitude": lng},
-			},
-		}
-	}
-	badan := map[string]interface{}{
-		"origin":      titik(fLat, fLng),
-		"destination": titik(tLat, tLng),
-		// TWO_WHEELER memakai jalan yang memang bisa dilalui motor — jalur ojek
-		// di Sintang sering bukan jalan mobil.
-		"travelMode":        "TWO_WHEELER",
-		"routingPreference": "TRAFFIC_UNAWARE",
-		"languageCode":      "id",
-		"regionCode":        "ID",
-		"polylineQuality":   "OVERVIEW",
-	}
-
-	buf, _ := json.Marshal(badan)
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, urlComputeRoutes, bytes.NewReader(buf))
+	// OSRM menulis koordinat terbalik dari kebiasaan: bujur dulu, baru lintang.
+	endpoint := fmt.Sprintf("%s%f,%f;%f,%f?overview=simplified&geometries=polyline",
+		urlOSRMRoute, fLng, fLat, tLng, tLat)
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, endpoint, nil)
 	if err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyiapkan permintaan"})
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Goog-Api-Key", mapsAPIKey())
-	req.Header.Set("X-Goog-FieldMask", "routes.polyline.encodedPolyline,routes.distanceMeters,routes.duration")
 
-	hasil, err := kirimKeGoogle(req)
+	hasil, err := kirimPermintaan(req)
 	if err != nil {
 		writeJSONResponse(w, 502, map[string]string{"error": err.Error()})
 		return
 	}
 
+	// OSRM membalas 200 sambil bilang "NoRoute" di badan, jadi kode di dalamnya
+	// yang menentukan, bukan status HTTP-nya.
 	rute, _ := hasil["routes"].([]interface{})
-	if len(rute) == 0 {
+	if kode, _ := hasil["code"].(string); kode != "Ok" || len(rute) == 0 {
 		writeJSONResponse(w, 404, map[string]string{"error": "Tidak ada rute yang bisa dilalui"})
 		return
 	}
 	m, _ := rute[0].(map[string]interface{})
-	poly, _ := m["polyline"].(map[string]interface{})
-	encoded, _ := poly["encodedPolyline"].(string)
-	jarak, _ := m["distanceMeters"].(float64)
-	durasi, _ := m["duration"].(string) // contoh: "930s"
+	encoded, _ := m["geometry"].(string)
+	jarak, _ := m["distance"].(float64)
+	detik, _ := m["duration"].(float64)
 
 	writeJSONResponse(w, 200, map[string]interface{}{
 		"status":     "success",
 		"polyline":   encoded,
 		"distance_m": jarak,
-		"duration":   durasi,
+		"duration":   fmt.Sprintf("%.0fs", detik), // bentuk "930s", sama seperti sebelumnya
 	})
 }

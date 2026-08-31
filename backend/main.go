@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -253,6 +254,9 @@ var (
 type wsClient struct {
 	conn *websocket.Conn
 	mu   sync.Mutex
+	// Siapa yang sedang membuka layar chat ini. Dipakai notifikasiChat untuk
+	// tidak mendengungkan HP orang yang sedang membaca pesannya.
+	phone string
 }
 
 func (c *wsClient) send(msg []byte) error {
@@ -2787,7 +2791,7 @@ func chatWebSocketHandler(w http.ResponseWriter, r *http.Request) {
 		log.Printf("WS upgrade error: %v", err)
 		return
 	}
-	client := &wsClient{conn: conn}
+	client := &wsClient{conn: conn, phone: sPhone}
 	defer func() {
 		conn.Close()
 		removeWSConn(orderID, client)
@@ -2814,7 +2818,66 @@ func chatWebSocketHandler(w http.ResponseWriter, r *http.Request) {
 		dbSaveChatMessage(msg)
 		mj, _ := json.Marshal(map[string]interface{}{"type": "message", "message": msg})
 		broadcastToRoom(orderID, mj)
+		notifikasiChat(orderID, sPhone, sName, msg.Content)
 	}
+}
+
+// notifikasiChat memberi tahu peserta lain bahwa ada pesan masuk.
+//
+// broadcastToRoom hanya sampai ke koneksi yang sedang terbuka, jadi tanpa ini
+// pesan yang dikirim saat lawan bicara menutup layar chat hilang begitu saja
+// sampai ia membukanya sendiri — dan driver menunggu di depan gerbang.
+//
+// Pesanannya dibaca ulang, bukan memakai salinan dari awal koneksi: penumpang
+// bisa membuka chat sebelum ada driver, dan salinan lama masih kosong nomornya.
+func notifikasiChat(orderID, pengirimPhone, pengirimNama, isi string) {
+	o, ada := dbGetOrder(orderID)
+	if !ada {
+		return
+	}
+	terbuka := teleponDiRuang(orderID)
+	judul := pengirimNama
+	if judul == "" {
+		judul = "Pesan baru"
+	}
+	for _, tujuan := range penerimaChat(o, pengirimPhone, terbuka) {
+		notifikasiKe(tujuan, judul, isi, map[string]string{
+			"tipe":     "chat",
+			"order_id": orderID,
+		})
+	}
+}
+
+// penerimaChat memilih siapa yang perlu diberi tahu: peserta pesanan yang bukan
+// pengirim dan tidak sedang membuka layar chatnya.
+//
+// Dipisah dari notifikasiChat supaya bisa diuji tanpa basis data — aturannya
+// pendek tapi salah satunya diam-diam merugikan: keliru sedikit saja, notifikasi
+// balik ke pengirimnya sendiri atau berdengung di tangan orang yang sedang
+// membaca.
+func penerimaChat(o Order, pengirim string, sedangTerbuka map[string]bool) []string {
+	tujuan := []string{}
+	for _, phone := range []string{o.RiderPhone, o.DriverPhone} {
+		if phone == "" || phone == pengirim || sedangTerbuka[phone] {
+			continue
+		}
+		if slices.Contains(tujuan, phone) {
+			continue
+		}
+		tujuan = append(tujuan, phone)
+	}
+	return tujuan
+}
+
+// teleponDiRuang mendaftar nomor yang koneksi chatnya sedang terbuka.
+func teleponDiRuang(orderID string) map[string]bool {
+	wsMutex.RLock()
+	defer wsMutex.RUnlock()
+	hadir := map[string]bool{}
+	for _, c := range wsConnections[orderID] {
+		hadir[c.phone] = true
+	}
+	return hadir
 }
 
 func broadcastToRoom(orderID string, msg []byte) {

@@ -23,17 +23,12 @@
         android:name="${applicationName}"
         android:usesCleartextTraffic="false"
         android:icon="@mipmap/ic_launcher">
-        <!-- Kunci Maps SDK. Kunci ini memang harus ada di dalam APK untuk
-             menggambar peta, jadi WAJIB dibatasi di Google Cloud Console ke
-             package com.bohantar.mobile + sidik SHA-1 keystore rilis dan debug.
-             Tanpa pembatasan itu, siapa pun bisa mengambilnya dengan `unzip`
-             dan menghabiskan kuota berbayar Anda.
+        <!-- Tidak ada kunci Maps SDK di sini: peta digambar dari ubin
+             OpenStreetMap lewat flutter_map, yang tidak butuh kunci maupun akun
+             berbayar. Lihat mobile/lib/widgets/peta.dart.
 
-             Kunci untuk Places, Geocoding, dan Routes BERBEDA dan tidak ada di
-             sini — ketiganya lewat backend, lihat backend/maps.go. -->
-        <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="GANTI_DENGAN_MAPS_SDK_API_KEY" />
+             Kunci untuk Places (cari alamat) ada di backend dan dikunci ke IP
+             VPS, tidak pernah ikut ke dalam APK. Lihat backend/maps.go. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"

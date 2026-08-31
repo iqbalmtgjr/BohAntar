@@ -40,11 +40,13 @@ export XENDIT_CALLBACK_TOKEN="xxx"
 # boleh banyak per akun, jadi tiap aplikasi sebaiknya punya sendiri.
 
 # ---- Peta ----
-# Cari alamat, geocoding, dan rute. BERBEDA dari kunci Maps SDK di AndroidManifest,
-# dan harus dibatasi ke IP VPS ini, bukan ke package aplikasi. Butuh Places API (New),
-# Geocoding API, dan Routes API aktif, dengan billing account hidup.
-# Kalau kosong, keempat endpoint /api/maps/* membalas 503 dan aplikasi kehilangan
-# pencarian alamat serta gambar rute.
+# Hanya untuk cari alamat (Places API New). Gambar peta, rute, dan geocoding balik
+# sudah pindah ke OpenStreetMap/OSRM/Photon — gratis, tanpa kunci, tanpa billing.
+# Kunci ini opsional: kalau kosong, cuma /api/maps/autocomplete dan /api/maps/place
+# yang membalas 503, dan penumpang memilih tujuan dengan mengetuk peta. Sisanya
+# tetap jalan.
+# Kalau diisi: batasi ke IP VPS ini (bukan ke package aplikasi) dan aktifkan
+# Places API (New) dengan billing account hidup.
 export GOOGLE_MAPS_API_KEY=""
 
 # ---- Notifikasi push ----

@@ -36,7 +36,10 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.6.0
   shared_preferences: ^2.5.5
-  google_maps_flutter: ^2.9.0
+  # Peta digambar dari ubin OpenStreetMap: gratis, tanpa kunci API, tanpa
+  # billing. Google Maps SDK menagih per pemuatan peta dan wajib kartu kredit.
+  flutter_map: ^8.3.2
+  latlong2: ^0.10.1
 
   geolocator: ^14.0.3
   web_socket_channel: ^3.0.1

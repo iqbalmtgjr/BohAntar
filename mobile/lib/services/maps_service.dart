@@ -1,19 +1,18 @@
 import 'dart:convert';
 import 'dart:math';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:http/http.dart' as http;
 import 'api_service.dart';
 
-/// Semua permintaan peta yang berbayar lewat backend, bukan langsung ke Google.
+/// Semua permintaan alamat dan rute lewat backend, bukan langsung ke penyedianya.
 ///
 /// Kunci API yang ditaruh di dalam APK bisa diambil siapa saja dengan `unzip`,
-/// lalu kuota berbayar dihabiskan orang lain. Kunci Maps SDK memang tetap ada di
-/// AndroidManifest karena dibutuhkan untuk menggambar peta, tapi kunci itu
-/// dibatasi ke nama paket + SHA-1 dan tidak bisa dipakai memanggil Places,
-/// Geocoding, atau Routes.
+/// lalu kuota berbayar dihabiskan orang lain — jadi kunci Places disimpan di VPS
+/// dan dikunci ke IP-nya. Peta sendiri digambar dari ubin OpenStreetMap yang
+/// tidak butuh kunci apa pun, lihat widgets/peta.dart.
 ///
 /// Bentuk balasan sudah dinormalkan backend, jadi berkas ini tidak tahu-menahu
-/// soal bentuk JSON Google.
+/// penyedia mana yang sedang dipakai — lihat backend/maps.go kalau penasaran.
 class MapsService {
   static final MapsService _instance = MapsService._internal();
   factory MapsService() => _instance;
@@ -80,7 +79,7 @@ class MapsService {
     );
   }
 
-  /// Alamat untuk satu titik, dipakai saat pin di peta digeser.
+  /// Alamat untuk satu titik, dipakai saat titik di peta dipindahkan.
   Future<String?> alamatDariTitik(LatLng titik) async {
     final uri = Uri.parse('$_base/api/maps/reverse').replace(queryParameters: {
       'lat': '${titik.latitude}',
@@ -143,7 +142,9 @@ class Rute {
   const Rute({required this.titik, required this.meter});
 }
 
-/// Membongkar polyline terkode Google jadi daftar titik.
+/// Membongkar polyline terkode jadi daftar titik. Google dan OSRM memakai
+/// pengkodean yang sama persis, jadi bagian ini tidak ikut berubah waktu
+/// penyedia rutenya diganti.
 ///
 /// Backend meneruskan bentuk terkodenya apa adanya karena ukurannya sekitar
 /// sepersepuluh JSON berisi daftar koordinat, dan penumpang di Sintang membayar

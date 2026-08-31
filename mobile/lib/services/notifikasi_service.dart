@@ -1,6 +1,6 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import '../firebase_config.dart';
 import 'api_service.dart';
 
@@ -30,6 +30,10 @@ class NotifikasiService {
 
   bool _siap = false;
 
+  /// Dipasang di MaterialApp supaya pesan chat bisa muncul dari mana saja tanpa
+  /// menitipkan BuildContext ke seluruh aplikasi.
+  static final pesanKey = GlobalKey<ScaffoldMessengerState>();
+
   /// Dipanggil sekali saat aplikasi mulai. Aman dipanggil berulang.
   Future<void> mulai() async {
     if (_siap) return;
@@ -40,10 +44,39 @@ class NotifikasiService {
     try {
       await Firebase.initializeApp(options: kFirebaseOptions);
       FirebaseMessaging.onBackgroundMessage(_pesanLatarBelakang);
+      FirebaseMessaging.onMessage.listen(_pesanSaatAplikasiTerbuka);
       _siap = true;
     } catch (e) {
       debugPrint('Firebase gagal disiapkan, notifikasi dilewati: $e');
     }
+  }
+
+  /// Android sengaja tidak menampilkan notifikasi selama aplikasinya terbuka —
+  /// tanpa ini, pesan chat yang masuk saat penumpang sedang menatap peta tidak
+  /// muncul di mana pun, dan itu justru saat yang paling sering terjadi.
+  ///
+  /// Hanya chat yang ditampilkan. Orderan baru dan perubahan status sudah
+  /// menggambar layarnya sendiri lewat polling tiap 2–3 detik, jadi menampilkan
+  /// keduanya cuma menumpuk pemberitahuan yang sama dua kali.
+  ///
+  /// ponytail: SnackBar, bukan notifikasi sistem — menampilkan notifikasi
+  /// sungguhan saat aplikasi terbuka butuh paket flutter_local_notifications
+  /// sendiri. Tambahkan kalau ternyata SnackBar-nya terlalu mudah terlewat.
+  void _pesanSaatAplikasiTerbuka(RemoteMessage pesan) {
+    if (pesan.data['tipe'] != 'chat') return;
+    final isi = pesan.notification?.body ?? '';
+    final pengirim = pesan.notification?.title ?? 'Pesan baru';
+    if (isi.isEmpty) return;
+
+    // ponytail: tidak melompat ke layar chatnya. ChatScreen menuntut enam data
+    // peserta yang harus diambil dulu dari pesanannya; pemakainya toh sedang
+    // memegang layar yang punya tombol chat.
+    pesanKey.currentState
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text('$pengirim: $isi'),
+        duration: const Duration(seconds: 5),
+      ));
   }
 
   /// Dipanggil setelah login berhasil: token perangkat hanya berguna kalau

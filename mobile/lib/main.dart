@@ -21,6 +21,9 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'bohAntar',
       debugShowCheckedModeBanner: false,
+      // Dipakai NotifikasiService untuk memunculkan pesan chat yang masuk saat
+      // aplikasi sedang terbuka, dari layar mana pun.
+      scaffoldMessengerKey: NotifikasiService.pesanKey,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,

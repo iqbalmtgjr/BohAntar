@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile/screens/chat_screen.dart';
@@ -10,6 +11,7 @@ import 'package:mobile/services/api_service.dart';
 import 'package:mobile/services/maps_service.dart';
 import 'package:mobile/services/notifikasi_service.dart';
 import 'package:mobile/theme.dart';
+import 'package:mobile/widgets/peta.dart';
 import 'package:mobile/widgets/decorative_background.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -46,22 +48,30 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   Map<String, dynamic>? _acceptedOrder;
 
   // Driver map states
-  GoogleMapController? _driverMapController;
+  final MapController _driverMapController = MapController();
+  // Menggeser peta sebelum ia sempat tergambar sekali melempar galat, dan
+  // pesanan bisa masuk sebelum layar petanya terpasang.
+  bool _petaSiap = false;
   // Titik awal peta sebelum GPS terbaca. Begitu _mulaiPantauPosisi() jalan,
   // isinya selalu posisi sungguhan.
-  LatLng _driverLatLng = const LatLng(-0.02012, 109.33878); // Default: Pontianak
+  LatLng _driverLatLng = const LatLng(-0.0784, 111.4933); // Default: kota Sintang
   StreamSubscription<Position>? _posisiSub;
-  // Titik saat rute terakhir digambar, untuk menahan panggilan Routes API.
+  // Titik saat rute terakhir digambar, untuk menahan panggilan layanan rute.
   LatLng? _titikRuteTerakhir;
   // Dialog izin lokasi latar belakang cukup sekali per sesi; menanyakannya tiap
   // kali driver menekan online akan terasa seperti gangguan.
   bool _izinLatarSudahDitanya = false;
 
-  // Jarak minimum sebelum rute digambar ulang. Knob biaya: turunkan kalau garis
-  // rutenya terasa tertinggal, naikkan kalau tagihan Routes API terasa.
+  void _pindahPeta(LatLng titik, double zoom) {
+    if (_petaSiap) _driverMapController.move(titik, zoom);
+  }
+
+  // Jarak minimum sebelum rute digambar ulang. Knob: turunkan kalau garis
+  // rutenya terasa tertinggal, naikkan kalau layanan rute mulai menolak.
   // ponytail: 2 km, bukan 500 m — pada 500 m satu perjalanan 5 km memakan ~10
-  // panggilan berbayar hanya untuk memperhalus garis yang sudah benar. Turunkan
-  // lagi kalau driver mengeluh garisnya tertinggal.
+  // panggilan hanya untuk memperhalus garis yang sudah benar. Rutenya sekarang
+  // gratis (OSRM), tapi itu server umum yang dipakai bersama, jadi ambangnya
+  // tetap. Turunkan lagi kalau driver mengeluh garisnya tertinggal.
   static const double _jarakGambarUlangRuteMeter = 2000;
   LatLng? _orderPickupLatLng;
   LatLng? _orderDropoffLatLng;
@@ -76,6 +86,13 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   Timer? _countdownTimer;
   int _countdownSeconds = 15;
   int _currentTabIndex = 0;
+  // Tab driver terpisah dari tab penumpang: keduanya hidup di state yang sama,
+  // tapi satu akun hanya memakai salah satunya.
+  int _driverTabIndex = 0;
+  // Disimpan di state, bukan dibuat di dalam build. Peta driver memanggil
+  // setState tiap 3 detik, dan Future yang dibuat di build ikut dibuat ulang
+  // setiap kali — riwayat pesanan akan ditarik dua puluh kali per menit.
+  Future<Map<String, dynamic>>? _pendapatanFuture;
 
   @override
   void initState() {
@@ -260,6 +277,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               _currentIncomingOrder = order;
               _hasIncomingOrder = true;
               _countdownSeconds = 15;
+              // Kartu orderan hidup di tab peta dan hitung mundurnya cuma 15
+              // detik. Driver yang sedang membuka tab Pendapatan akan kehilangan
+              // orderan tanpa pernah melihatnya, jadi tabnya ditarik kembali.
+              _driverTabIndex = 0;
             });
             _startIncomingOrderCountdown();
 
@@ -311,9 +332,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         if (dropoffLatLng != null) {
           final avgLat = (pickupLatLng.latitude + dropoffLatLng.latitude) / 2;
           final avgLng = (pickupLatLng.longitude + dropoffLatLng.longitude) / 2;
-          _driverMapController?.animateCamera(CameraUpdate.newLatLngZoom(LatLng(avgLat, avgLng), 13.5));
+          _pindahPeta(LatLng(avgLat, avgLng), 13.5);
         } else {
-          _driverMapController?.animateCamera(CameraUpdate.newLatLngZoom(pickupLatLng, 14.5));
+          _pindahPeta(pickupLatLng, 14.5);
         }
       });
 
@@ -456,9 +477,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           // Fit map to show driver, pickup and dropoff
           final avgLat = (pickupLatLng.latitude + dropoffLatLng.latitude) / 2;
           final avgLng = (pickupLatLng.longitude + dropoffLatLng.longitude) / 2;
-          _driverMapController?.animateCamera(CameraUpdate.newLatLngZoom(LatLng(avgLat, avgLng), 13.5));
+          _pindahPeta(LatLng(avgLat, avgLng), 13.5);
         } else {
-          _driverMapController?.animateCamera(CameraUpdate.newLatLngZoom(pickupLatLng, 14.0));
+          _pindahPeta(pickupLatLng, 14.0);
         }
       });
 
@@ -478,7 +499,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           _orderPickupLatLng = parsed;
         });
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          _driverMapController?.animateCamera(CameraUpdate.newLatLngZoom(parsed, 14.0));
+          _pindahPeta(parsed, 14.0);
         });
         _fetchDriverRoute(_driverLatLng, parsed);
       }
@@ -545,7 +566,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
       // Rute digambar ulang jauh lebih jarang daripada posisi diperbarui.
       //
-      // Setiap penggambaran adalah satu panggilan berbayar ke Routes API. Kalau
+      // Setiap penggambaran adalah satu panggilan ke layanan rute umum. Kalau
       // dipanggil pada tiap pembaruan posisi (tiap 30 m), satu perjalanan 5 km
       // jadi sekitar 160 panggilan. Dengan ambang 2 km, jumlahnya turun ke dua
       // atau tiga — dan garis di peta tetap terlihat mengikuti driver karena
@@ -865,7 +886,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   children: [
                     const Text('Lokasi kamu', style: TextStyle(color: Colors.grey, fontSize: 11)),
                     Text(
-                      _userAddresses["Rumah"] ?? "Jl. Merdeka No. 10, Pontianak",
+                      _userAddresses["Rumah"] ?? "Jl. Merdeka No. 10, Sintang",
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -942,7 +963,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     ),
                   ],
                 ),
-                ElevatedButton(
+                if (widget.role == 'rider')
+                  ElevatedButton(
                   onPressed: _showTopUpDialog,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppTheme.primaryBlue,
@@ -1264,9 +1286,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 4),
-                    const Text(
-                      "0812 3456 7890",
-                      style: TextStyle(color: Colors.grey, fontSize: 13),
+                    Text(
+                      widget.phone.isNotEmpty ? widget.phone : "-",
+                      style: const TextStyle(color: Colors.grey, fontSize: 13),
                     ),
                     const SizedBox(height: 6),
                     Container(
@@ -1347,29 +1369,38 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           ),
           const SizedBox(height: 24),
           
+          // Layar Akun ini dipakai dua peran. Yang menunjuk tab penumpang akan
+          // jadi tombol mati kalau ditekan driver — nomor tabnya tidak ada di
+          // sana — jadi tujuannya dipilih, bukan dibiarkan.
           _buildAkunMenuItem(Icons.receipt, "Pesanan saya", () {
             setState(() {
-              _currentTabIndex = 1;
+              if (widget.role == 'rider') {
+                _currentTabIndex = 1;
+              } else {
+                _driverTabIndex = 1;
+              }
             });
           }, isDark),
-          _buildAkunMenuItem(Icons.location_on, "Alamat tersimpan", () {
-            _showSavedAddressesDialog();
-          }, isDark),
-          _buildAkunMenuItem(Icons.payment, "Metode pembayaran", () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Metode pembayaran PayAntar (Default).")),
-            );
-          }, isDark),
-          _buildAkunMenuItem(Icons.card_giftcard, "Promo saya", () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("Tidak ada kode promo aktif saat ini.")),
-            );
-          }, isDark),
-          _buildAkunMenuItem(Icons.help, "Bantuan", () {
-            setState(() {
-              _currentTabIndex = 2;
-            });
-          }, isDark),
+          if (widget.role == 'rider') ...[
+            _buildAkunMenuItem(Icons.location_on, "Alamat tersimpan", () {
+              _showSavedAddressesDialog();
+            }, isDark),
+            _buildAkunMenuItem(Icons.payment, "Metode pembayaran", () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Metode pembayaran PayAntar (Default).")),
+              );
+            }, isDark),
+            _buildAkunMenuItem(Icons.card_giftcard, "Promo saya", () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Tidak ada kode promo aktif saat ini.")),
+              );
+            }, isDark),
+            _buildAkunMenuItem(Icons.help, "Bantuan", () {
+              setState(() {
+                _currentTabIndex = 2;
+              });
+            }, isDark),
+          ],
           _buildAkunMenuItem(Icons.settings, "Pengaturan", () {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text("Pengaturan akun sedang dipersiapkan.")),
@@ -1687,63 +1718,127 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
-      body: Stack(
+      // IndexedStack, bukan if/else seperti sisi penumpang: peta yang dibuang
+      // tiap pindah tab akan mengunduh ubinnya lagi saat kembali — itu kuota
+      // driver — dan _petaSiap tertinggal true sementara controllernya sudah
+      // lepas, jadi _pindahPeta berikutnya menembak peta yang tidak ada.
+      body: IndexedStack(
+        index: _driverTabIndex,
         children: [
-          // Peta driver. Penanda Google memakai ikon bawaan, bukan widget
-          // Flutter, jadi label "Jemput"/"Tujuan" pindah ke gelembung info yang
-          // muncul saat penandanya ditekan.
+          _buildDriverPeta(theme, isDark),
+          _buildPendapatanBody(theme, isDark),
+          _buildAkunBody(theme, isDark),
+        ],
+      ),
+      bottomNavigationBar: _buildDriverBottomNavBar(isDark),
+    );
+  }
+
+  Widget _buildDriverBottomNavBar(bool isDark) {
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.cardObsidianDark : Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06),
+            blurRadius: 10,
+            offset: const Offset(0, -3),
+          ),
+        ],
+      ),
+      child: BottomNavigationBar(
+        currentIndex: _driverTabIndex,
+        onTap: (index) {
+          setState(() {
+            _driverTabIndex = index;
+            // Ditarik saat tabnya dibuka, bukan di initState: driver yang tidak
+            // pernah membukanya tidak perlu membayar kuotanya.
+            if (index == 1) _pendapatanFuture ??= ApiService().getOrders();
+          });
+        },
+        type: BottomNavigationBarType.fixed,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        selectedItemColor: AppTheme.primaryBlue,
+        unselectedItemColor: Colors.grey.shade400,
+        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal, fontSize: 11),
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.map_outlined),
+            activeIcon: Icon(Icons.map),
+            label: 'Beranda',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.account_balance_wallet_outlined),
+            activeIcon: Icon(Icons.account_balance_wallet),
+            label: 'Pendapatan',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_outline),
+            activeIcon: Icon(Icons.person),
+            label: 'Akun',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDriverPeta(ThemeData theme, bool isDark) {
+    return Stack(
+        children: [
+          // Peta driver. Label "Jemput"/"Tujuan" muncul saat penandanya ditekan
+          // lama, menggantikan gelembung info bawaan Google.
           Positioned.fill(
-            child: GoogleMap(
-              initialCameraPosition: CameraPosition(
-                target: _orderPickupLatLng ?? _driverLatLng,
-                zoom: 14,
+            child: FlutterMap(
+              mapController: _driverMapController,
+              options: MapOptions(
+                initialCenter: _orderPickupLatLng ?? _driverLatLng,
+                initialZoom: 14,
+                onMapReady: () => _petaSiap = true,
               ),
-              onMapCreated: (c) => _driverMapController = c,
-              myLocationEnabled: true,
-              myLocationButtonEnabled: false,
-              zoomControlsEnabled: false,
-              mapToolbarEnabled: false,
-              polylines: {
+              children: [
+                ubinOSM,
                 // Ruas 1: driver menuju titik jemput (biru)
                 if (_driverRoutePoints.isNotEmpty)
-                  Polyline(
-                    polylineId: const PolylineId('ke-jemput'),
-                    points: _driverRoutePoints,
-                    color: AppTheme.primaryBlue,
-                    width: 5,
-                  ),
+                  PolylineLayer(polylines: [
+                    Polyline(
+                      points: _driverRoutePoints,
+                      color: AppTheme.primaryBlue,
+                      strokeWidth: 5,
+                    ),
+                  ]),
                 // Ruas 2: titik jemput menuju tujuan (hijau)
                 if (_dropoffRoutePoints.isNotEmpty)
-                  Polyline(
-                    polylineId: const PolylineId('ke-tujuan'),
-                    points: _dropoffRoutePoints,
-                    color: Colors.green.shade600,
-                    width: 4,
-                  ),
-              },
-              markers: {
-                if (_isOnline)
-                  Marker(
-                    markerId: const MarkerId('driver'),
-                    position: _driverLatLng,
-                    icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-                    infoWindow: const InfoWindow(title: 'Posisi Anda'),
-                  ),
-                if (_orderPickupLatLng != null)
-                  Marker(
-                    markerId: const MarkerId('jemput'),
-                    position: _orderPickupLatLng!,
-                    icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-                    infoWindow: const InfoWindow(title: 'Jemput penumpang'),
-                  ),
-                if (_orderDropoffLatLng != null)
-                  Marker(
-                    markerId: const MarkerId('tujuan'),
-                    position: _orderDropoffLatLng!,
-                    icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-                    infoWindow: const InfoWindow(title: 'Tujuan'),
-                  ),
-              },
+                  PolylineLayer(polylines: [
+                    Polyline(
+                      points: _dropoffRoutePoints,
+                      color: Colors.green.shade600,
+                      strokeWidth: 4,
+                    ),
+                  ]),
+                MarkerLayer(markers: [
+                  if (_isOnline)
+                    penandaPeta(
+                      titik: _driverLatLng,
+                      warna: AppTheme.primaryBlue,
+                      judul: 'Posisi Anda',
+                    ),
+                  if (_orderPickupLatLng != null)
+                    penandaPeta(
+                      titik: _orderPickupLatLng!,
+                      warna: Colors.green,
+                      judul: 'Jemput penumpang',
+                    ),
+                  if (_orderDropoffLatLng != null)
+                    penandaPeta(
+                      titik: _orderDropoffLatLng!,
+                      warna: Colors.red,
+                      judul: 'Tujuan',
+                    ),
+                ]),
+                sumberPeta,
+              ],
             ),
           ),
 
@@ -1875,11 +1970,183 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             child: _buildBottomPanel(isDark, theme),
           ),
         ],
-      ),
     );
   }
 
 
+
+  // ==========================================
+  // 3. PENDAPATAN DRIVER
+  // ==========================================
+
+  /// Setoran hari ini dan riwayat pesanan yang sudah diantar.
+  ///
+  /// Tidak ada endpoint pendapatan di backend, dan tidak perlu dibuat:
+  /// `GET /api/orders` sudah mengembalikan pesanan sebagai driver sekaligus
+  /// sebagai penumpang, jadi yang dikerjakan di sini hanya menyaring dan
+  /// menjumlahkan. Yang diterima driver adalah `fare - komisi`; komisi itu
+  /// bagian aplikator dan tidak pernah masuk ke tangan driver, jadi menampilkan
+  /// `fare` saja akan menjanjikan lebih dari yang benar-benar didapat.
+  Widget _buildPendapatanBody(ThemeData theme, bool isDark) {
+    return RefreshIndicator(
+      onRefresh: () async {
+        setState(() => _pendapatanFuture = ApiService().getOrders());
+        await _pendapatanFuture;
+      },
+      child: FutureBuilder<Map<String, dynamic>>(
+        future: _pendapatanFuture,
+        builder: (context, snapshot) {
+          if (_pendapatanFuture == null || snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final pesan = snapshot.hasError ? "Riwayat gagal dimuat. Tarik ke bawah untuk mencoba lagi." : null;
+
+          final semua = (snapshot.data?['orders'] as List?) ?? [];
+          final selesai = semua.where((o) => o['driver_phone'] == widget.phone && o['status'] == 'completed').toList()
+            ..sort((a, b) => _waktuSelesai(b).compareTo(_waktuSelesai(a)));
+
+          final hariIni = selesai.where((o) => _hariIni(_waktuSelesai(o))).toList();
+          final total = hariIni.fold<double>(0, (jumlah, o) => jumlah + _bagianDriver(o));
+
+          return ListView(
+            // Wajib, kalau tidak daftar yang pendek atau kosong tidak bisa
+            // ditarik untuk menyegarkan.
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.fromLTRB(20, 60, 20, 24),
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [AppTheme.primaryBlue, Color(0xFF1D4ED8)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Pendapatan hari ini', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                    const SizedBox(height: 6),
+                    Text(
+                      _rupiah(total),
+                      style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      '${hariIni.length} pesanan selesai hari ini · sudah dipotong komisi',
+                      style: const TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Riwayat pesanan',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 15,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 8),
+              if (pesan != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 40),
+                  child: Text(
+                    pesan,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.grey),
+                  ),
+                )
+              else if (selesai.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 40),
+                  child: Column(
+                    children: [
+                      Icon(Icons.receipt_long, size: 56, color: Colors.grey),
+                      SizedBox(height: 12),
+                      Text(
+                        'Belum ada pesanan yang selesai',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                ...selesai.map((o) => _buildRiwayatTile(o, isDark)),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildRiwayatTile(dynamic o, bool isDark) {
+    final waktu = _waktuSelesai(o);
+    String dua(int n) => n.toString().padLeft(2, '0');
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.cardObsidianDark : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.withOpacity(0.18)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  o['service'] ?? 'Layanan',
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+              Text(
+                _rupiah(_bagianDriver(o)),
+                style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.primaryBlue, fontSize: 15),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${o['pickup'] ?? '-'} → ${o['dropoff'] ?? '-'}',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${dua(waktu.day)}/${dua(waktu.month)}/${waktu.year} · ${dua(waktu.hour)}:${dua(waktu.minute)}',
+            style: TextStyle(color: Colors.grey.shade500, fontSize: 11),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Waktu selesai dipakai, bukan waktu dibuat: pesanan yang dipesan menjelang
+  /// tengah malam dan selesai lewat tengah malam masuk setoran hari berikutnya,
+  /// sama seperti hitungan driver sendiri.
+  DateTime _waktuSelesai(dynamic o) =>
+      DateTime.tryParse((o['updated_at'] ?? o['created_at'] ?? '') as String)?.toLocal() ??
+      DateTime.fromMillisecondsSinceEpoch(0);
+
+  double _bagianDriver(dynamic o) => ((o['fare'] as num?)?.toDouble() ?? 0) - ((o['komisi'] as num?)?.toDouble() ?? 0);
+
+  bool _hariIni(DateTime t) {
+    final kini = DateTime.now();
+    return t.year == kini.year && t.month == kini.month && t.day == kini.day;
+  }
+
+  static String _rupiah(double nilai) =>
+      'Rp ${nilai.toStringAsFixed(0).replaceAllMapped(RegExp(r"(\d{1,3})(?=(\d{3})+(?!\d))"), (m) => "${m[1]}.")}';
 
   Widget _buildBottomPanel(bool isDark, ThemeData theme) {
     if (!_isOnline) {
