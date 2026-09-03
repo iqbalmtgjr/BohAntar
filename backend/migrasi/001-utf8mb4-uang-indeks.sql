@@ -176,8 +176,10 @@ CREATE INDEX idx_invoices_mitra ON subscription_invoices (phone_number, created_
 -- tahu ke mana ia hilang. Daftar di bawah persis yang ditulis kode hari
 -- ini — tidak ada nilai lain yang pernah masuk.
 --
--- Butuh MySQL 8.0.16 ke atas. Versi lama menerima perintahnya lalu
--- mengabaikannya diam-diam; tidak merusak apa pun.
+-- Butuh MySQL 8.0.16+ atau MariaDB 10.2.1+. Produksi memakai MariaDB
+-- 10.11, jadi batasan ini benar-benar dipaksa. Versi yang lebih tua
+-- menerima perintahnya lalu mengabaikannya diam-diam; tidak merusak apa
+-- pun, tapi juga tidak menjaga apa pun.
 -- ---------------------------------------------------------------------
 ALTER TABLE orders
   ADD CONSTRAINT chk_orders_status CHECK (
