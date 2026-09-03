@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -179,6 +180,69 @@ func requireRole(roles ...string) func(http.HandlerFunc) http.HandlerFunc {
 
 // requireAuth hanya menuntut token valid, tanpa membatasi role.
 func requireAuth(next http.HandlerFunc) http.HandlerFunc { return requireRole()(next) }
+
+// ==================== REM PERCOBAAN MASUK ====================
+//
+// /api/auth/login menerima email dan password tanpa ada yang menghitung tebakan
+// yang gagal: satu skrip bisa mencoba ribuan password semalaman, termasuk
+// terhadap akun super admin. Yang dihitung hanya percobaan yang GAGAL, jadi
+// pengguna sah tidak pernah ikut terkunci.
+//
+// ponytail: hitungannya di memori proses ini saja dan hilang saat restart —
+// backendnya satu binary di satu mesin. Pindahkan ke Redis kalau suatu hari
+// ada lebih dari satu instance.
+
+const (
+	batasGagalLogin   = 10
+	jendelaGagalLogin = 15 * time.Minute
+)
+
+var (
+	gagalLoginMu sync.Mutex
+	gagalLogin   = map[string][]time.Time{}
+)
+
+// alamatPemanggil mengambil IP asli penelepon. Backend hanya bisa dihubungi
+// lewat reverse proxy, jadi RemoteAddr selalu 127.0.0.1 dan X-Forwarded-For
+// yang dipasang proxy itulah satu-satunya pembeda antar penelepon.
+func alamatPemanggil(r *http.Request) string {
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		return strings.TrimSpace(strings.Split(xff, ",")[0])
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// terlaluSeringGagal menjawab apakah alamat ini sudah kehabisan jatah tebakan.
+// Sekalian membuang catatan yang sudah lewat jendela, supaya petanya tidak
+// tumbuh selamanya tanpa perlu goroutine penyapu sendiri.
+func terlaluSeringGagal(ip string) bool {
+	gagalLoginMu.Lock()
+	defer gagalLoginMu.Unlock()
+	batas := time.Now().Add(-jendelaGagalLogin)
+	for k, riwayat := range gagalLogin {
+		hidup := riwayat[:0]
+		for _, t := range riwayat {
+			if t.After(batas) {
+				hidup = append(hidup, t)
+			}
+		}
+		if len(hidup) == 0 {
+			delete(gagalLogin, k)
+		} else {
+			gagalLogin[k] = hidup
+		}
+	}
+	return len(gagalLogin[ip]) >= batasGagalLogin
+}
+
+func catatGagalLogin(ip string) {
+	gagalLoginMu.Lock()
+	defer gagalLoginMu.Unlock()
+	gagalLogin[ip] = append(gagalLogin[ip], time.Now())
+}
 
 // ==================== KEPEMILIKAN ====================
 

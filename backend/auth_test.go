@@ -214,3 +214,47 @@ func TestNormalizePhone(t *testing.T) {
 		}
 	}
 }
+
+// Rem login dijaga satu tes saja: sepuluh tebakan salah dari satu alamat masih
+// dilayani, yang kesebelas ditolak — dan alamat lain tidak ikut terkena.
+func TestRemLoginMenutupSetelahSepuluhGagal(t *testing.T) {
+	gagalLoginMu.Lock()
+	gagalLogin = map[string][]time.Time{}
+	gagalLoginMu.Unlock()
+
+	for i := 0; i < batasGagalLogin; i++ {
+		if terlaluSeringGagal("1.2.3.4") {
+			t.Fatalf("percobaan ke-%d sudah ditolak, seharusnya masih boleh", i+1)
+		}
+		catatGagalLogin("1.2.3.4")
+	}
+	if !terlaluSeringGagal("1.2.3.4") {
+		t.Fatal("percobaan ke-11 lolos, rem tidak menutup")
+	}
+	if terlaluSeringGagal("5.6.7.8") {
+		t.Fatal("alamat lain ikut terkunci")
+	}
+
+	// Catatan yang sudah lewat jendela harus dilupakan, bukan mengunci selamanya.
+	gagalLoginMu.Lock()
+	gagalLogin["1.2.3.4"] = []time.Time{time.Now().Add(-jendelaGagalLogin - time.Minute)}
+	gagalLoginMu.Unlock()
+	if terlaluSeringGagal("1.2.3.4") {
+		t.Fatal("catatan kedaluwarsa masih menghitung")
+	}
+}
+
+// alamatPemanggil harus membedakan penelepon lewat X-Forwarded-For: tanpa itu
+// semua permintaan tampak datang dari reverse proxy di 127.0.0.1 dan satu
+// penyerang mengunci seluruh pengguna.
+func TestAlamatPemanggilBacaForwardedFor(t *testing.T) {
+	r := httptest.NewRequest("POST", "/api/auth/login", nil)
+	r.RemoteAddr = "127.0.0.1:54321"
+	if got := alamatPemanggil(r); got != "127.0.0.1" {
+		t.Fatalf("tanpa header seharusnya 127.0.0.1, dapat %q", got)
+	}
+	r.Header.Set("X-Forwarded-For", "203.0.113.9, 10.0.0.1")
+	if got := alamatPemanggil(r); got != "203.0.113.9" {
+		t.Fatalf("seharusnya IP klien pertama, dapat %q", got)
+	}
+}

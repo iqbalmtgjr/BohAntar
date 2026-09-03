@@ -4205,8 +4205,14 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
 		return
 	}
+	ip := alamatPemanggil(r)
+	if terlaluSeringGagal(ip) {
+		writeJSONResponse(w, 429, map[string]string{"error": "Terlalu banyak percobaan masuk yang gagal. Coba lagi 15 menit lagi."})
+		return
+	}
 	u, hash, found := dbFindUserByEmail(strings.ToLower(strings.TrimSpace(input.Email)))
 	if !found || !checkPassword(hash, input.Password) {
+		catatGagalLogin(ip)
 		writeJSONResponse(w, 401, map[string]string{"error": "Email atau password salah"})
 		return
 	}
