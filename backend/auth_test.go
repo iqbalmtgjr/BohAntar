@@ -256,28 +256,40 @@ func TestAlamatPemanggilTidakBisaDipalsukan(t *testing.T) {
 		t.Fatalf("tanpa header seharusnya 127.0.0.1, dapat %q", got)
 	}
 
-	// Nginx menambahkan alamat sungguhan ke UJUNG; yang di depan dikirim
-	// penelepon. Mengambil yang pertama berarti mempercayai karangannya.
+	// X-Forwarded-For tidak boleh mengubah apa pun: pada jalur /api/ server
+	// ini proxy meneruskannya apa adanya, jadi seluruh isinya karangan
+	// penelepon — entri pertama maupun terakhir.
 	r.Header.Set("X-Forwarded-For", "1.1.1.1, 203.0.113.9")
-	if got := alamatPemanggil(r); got != "203.0.113.9" {
-		t.Fatalf("seharusnya entri terakhir yang ditambahkan proxy, dapat %q", got)
+	if got := alamatPemanggil(r); got != "127.0.0.1" {
+		t.Fatalf("X-Forwarded-For seharusnya diabaikan, dapat %q", got)
 	}
 
-	// X-Real-IP diisi nginx dari alamat sambungan, jadi ia yang menang.
+	// X-Real-IP diisi nginx dari alamat sambungan, jadi hanya ia yang dipakai.
 	r.Header.Set("X-Real-IP", "198.51.100.7")
 	if got := alamatPemanggil(r); got != "198.51.100.7" {
-		t.Fatalf("X-Real-IP seharusnya didahulukan, dapat %q", got)
+		t.Fatalf("X-Real-IP seharusnya dipakai, dapat %q", got)
 	}
 
 	// Penyerang yang mengganti-ganti alamat karangan tetap jatuh ke ember
-	// yang sama, karena yang dihitung alamat dari proxy.
+	// yang sama — inilah yang gagal di produksi 3 September 2026.
 	for _, karangan := range []string{"9.9.9.9", "8.8.8.8", "7.7.7.7"} {
 		p := httptest.NewRequest("POST", "/api/auth/login", nil)
 		p.RemoteAddr = "127.0.0.1:1"
 		p.Header.Set("X-Real-IP", "203.0.113.50")
-		p.Header.Set("X-Forwarded-For", karangan+", 203.0.113.50")
+		p.Header.Set("X-Forwarded-For", karangan)
 		if got := alamatPemanggil(p); got != "203.0.113.50" {
 			t.Fatalf("alamat karangan %q lolos jadi %q", karangan, got)
+		}
+	}
+
+	// Tanpa X-Real-IP, alamat karangan tetap tidak boleh memisahkan ember:
+	// semua jatuh ke alamat proxy. Tumpul, tapi tidak bisa dilewati.
+	for _, karangan := range []string{"9.9.9.9", "8.8.8.8", "7.7.7.7"} {
+		p := httptest.NewRequest("POST", "/api/auth/login", nil)
+		p.RemoteAddr = "127.0.0.1:1"
+		p.Header.Set("X-Forwarded-For", karangan)
+		if got := alamatPemanggil(p); got != "127.0.0.1" {
+			t.Fatalf("tanpa X-Real-IP, %q lolos jadi %q", karangan, got)
 		}
 	}
 }
