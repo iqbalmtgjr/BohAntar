@@ -26,12 +26,31 @@
 -- merchant membuat INSERT-nya ditolak dengan "Incorrect string value" —
 -- pesan penggunanya hilang, dan penyebabnya tidak kelihatan dari aplikasi.
 --
--- Foreign key dimatikan sementara karena kolom induk dan anak harus sama
--- charset-nya, sementara keduanya tidak bisa berubah dalam satu perintah.
+-- Foreign key harus dilepas dulu, bukan sekadar dimatikan dengan
+-- SET FOREIGN_KEY_CHECKS = 0: sebagian versi MySQL tetap menolak mengubah
+-- charset kolom yang sedang dipakai foreign key, dengan atau tanpa saklar
+-- itu (ERROR 1833). Nama yang dilepas dan dipasang kembali sama persis
+-- dengan yang dibuat MySQL sendiri, supaya database hasil migrasi ini dan
+-- database yang lahir baru dari initDB tetap kembar.
+--
+-- Kalau perintah DROP di bawah mengeluh namanya tidak ada, periksa dulu
+-- nama sungguhan di servermu, lalu sesuaikan:
+--   SELECT constraint_name, table_name, column_name, referenced_table_name
+--   FROM information_schema.key_column_usage
+--   WHERE table_schema = 'bohantar' AND referenced_table_name IS NOT NULL;
 -- ---------------------------------------------------------------------
-SET FOREIGN_KEY_CHECKS = 0;
-
 ALTER DATABASE bohantar CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+ALTER TABLE food_menus            DROP FOREIGN KEY food_menus_ibfk_1;
+ALTER TABLE food_merchants        DROP FOREIGN KEY food_merchants_ibfk_1;
+ALTER TABLE partner_subscriptions DROP FOREIGN KEY partner_subscriptions_ibfk_1;
+ALTER TABLE rental_bookings       DROP FOREIGN KEY rental_bookings_ibfk_1;
+ALTER TABLE rental_bookings       DROP FOREIGN KEY rental_bookings_ibfk_2;
+ALTER TABLE rental_car_schedules  DROP FOREIGN KEY rental_car_schedules_ibfk_1;
+ALTER TABLE rental_cars           DROP FOREIGN KEY rental_cars_ibfk_1;
+ALTER TABLE rental_services       DROP FOREIGN KEY rental_services_ibfk_1;
+ALTER TABLE rental_settings       DROP FOREIGN KEY rental_settings_ibfk_1;
+ALTER TABLE subscription_invoices DROP FOREIGN KEY subscription_invoices_ibfk_1;
 
 ALTER TABLE users                 CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ALTER TABLE user_addresses        CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -51,7 +70,21 @@ ALTER TABLE partner_subscriptions CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8m
 ALTER TABLE subscription_invoices CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ALTER TABLE tarif                 CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
-SET FOREIGN_KEY_CHECKS = 1;
+-- Dipasang kembali dengan nama, kolom, dan perilaku hapus yang sama persis
+-- seperti sebelumnya. Kalau salah satu ditolak, berarti ada baris yatim yang
+-- menunjuk pengguna atau mobil yang sudah tidak ada — cari dan bereskan dulu,
+-- jangan dipaksa lewat SET FOREIGN_KEY_CHECKS = 0, karena itu cuma menyimpan
+-- kerusakannya untuk ditemukan orang lain nanti.
+ALTER TABLE food_merchants        ADD CONSTRAINT food_merchants_ibfk_1        FOREIGN KEY (owner_phone)    REFERENCES users(phone_number)   ON DELETE CASCADE;
+ALTER TABLE food_menus            ADD CONSTRAINT food_menus_ibfk_1            FOREIGN KEY (merchant_id)    REFERENCES food_merchants(id)    ON DELETE CASCADE;
+ALTER TABLE rental_cars           ADD CONSTRAINT rental_cars_ibfk_1           FOREIGN KEY (owner_phone)    REFERENCES users(phone_number)   ON DELETE CASCADE;
+ALTER TABLE rental_bookings       ADD CONSTRAINT rental_bookings_ibfk_1       FOREIGN KEY (car_id)         REFERENCES rental_cars(id)       ON DELETE CASCADE;
+ALTER TABLE rental_bookings       ADD CONSTRAINT rental_bookings_ibfk_2       FOREIGN KEY (customer_phone) REFERENCES users(phone_number)   ON DELETE CASCADE;
+ALTER TABLE rental_car_schedules  ADD CONSTRAINT rental_car_schedules_ibfk_1  FOREIGN KEY (car_id)         REFERENCES rental_cars(id)       ON DELETE CASCADE;
+ALTER TABLE rental_settings       ADD CONSTRAINT rental_settings_ibfk_1       FOREIGN KEY (owner_phone)    REFERENCES users(phone_number)   ON DELETE CASCADE;
+ALTER TABLE rental_services       ADD CONSTRAINT rental_services_ibfk_1       FOREIGN KEY (owner_phone)    REFERENCES users(phone_number)   ON DELETE CASCADE;
+ALTER TABLE partner_subscriptions ADD CONSTRAINT partner_subscriptions_ibfk_1 FOREIGN KEY (phone_number)   REFERENCES users(phone_number)   ON DELETE CASCADE;
+ALTER TABLE subscription_invoices ADD CONSTRAINT subscription_invoices_ibfk_1 FOREIGN KEY (phone_number)   REFERENCES users(phone_number)   ON DELETE CASCADE;
 
 
 -- ---------------------------------------------------------------------
