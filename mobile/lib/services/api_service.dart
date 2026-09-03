@@ -259,6 +259,25 @@ class ApiService {
     );
   }
 
+  /// Memberi tahu server bahwa driver berhenti bekerja. Tanpa ini ia masih
+  /// dibangunkan notifikasi orderan sampai sepuluh menit setelah offline.
+  Future<void> setDriverOffline() async {
+    if (_token == null) return;
+    try {
+      await http.post(
+        Uri.parse('$baseUrl/api/driver/offline'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $_token',
+        },
+      );
+    } catch (e) {
+      // Gagal memberi tahu server bukan alasan menahan tombolnya: penanda waktu
+      // posisi akan basi sendiri dalam sepuluh menit.
+      debugPrint('Gagal mengirim status offline: $e');
+    }
+  }
+
   // Create Order (Rider)
   // Ongkos tidak dikirim: server menghitungnya sendiri dari koordinat dan
   // membalikkannya di `order['fare']`. Angka yang ditampilkan sebelum memesan
@@ -369,6 +388,38 @@ class ApiService {
   }
 
   // Monitor Order Status (Rider & Driver)
+  /// Mengirim penilaian penumpang untuk driver. Hanya diterima setelah
+  /// perjalanan selesai, dan satu pesanan tetap satu suara.
+  Future<Map<String, dynamic>> rateOrder(String orderId, int stars, String review) async {
+    if (_token == null) {
+      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+    }
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/orders/$orderId/rate'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_token',
+      },
+      body: jsonEncode({'stars': stars, 'review': review}),
+    );
+    return _handleResponse(response);
+  }
+
+  /// Membatalkan pesanan. Backend hanya mengizinkannya sebelum penumpang naik.
+  Future<Map<String, dynamic>> cancelOrder(String orderId) async {
+    if (_token == null) {
+      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+    }
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/orders/$orderId/cancel'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_token',
+      },
+    );
+    return _handleResponse(response);
+  }
+
   Future<Map<String, dynamic>> getOrderStatus(String orderId) async {
     if (_token == null) {
       throw Exception('Otorisasi diperlukan. Silakan login kembali.');

@@ -17,12 +17,17 @@ class OrderRideScreen extends StatefulWidget {
   final String riderName;
   final String riderPhone;
 
+  /// Diisi saat penumpang kembali ke pesanan yang sedang berjalan. Kalau ada,
+  /// layar ini langsung membuka pelacakan alih-alih formulir pemesanan baru.
+  final String? initialOrderId;
+
   const OrderRideScreen({
     super.key,
     required this.initialService,
     this.initialDestination,
     required this.riderName,
     required this.riderPhone,
+    this.initialOrderId,
   });
 
   @override
@@ -93,6 +98,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   void initState() {
     super.initState();
     _selectedService = widget.initialService;
+    if (widget.initialOrderId != null) {
+      _muatPesananBerjalan(widget.initialOrderId!);
+    }
     if (widget.initialDestination != null) {
       _destinationController.text = widget.initialDestination!;
       // Tujuan yang dibawa dari layar lain cuma teks, belum punya koordinat.
@@ -117,6 +125,117 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     _debounceTimer?.cancel();
     _ruteDebounce?.cancel();
     super.dispose();
+  }
+
+  /// Membuka kembali pesanan yang sedang berjalan, bukan formulir kosong.
+  ///
+  /// Penumpang yang menutup layar ini kehilangan peta, status, dan tombol chat
+  /// sekaligus — padahal drivernya sedang di jalan menuju dia.
+  Future<void> _muatPesananBerjalan(String id) async {
+    try {
+      final res = await ApiService().getOrderStatus(id);
+      final o = res['order'];
+      if (o == null || !mounted) return;
+
+      final tujuanLat = (o['dropoff_lat'] as num?)?.toDouble();
+      final tujuanLng = (o['dropoff_lng'] as num?)?.toDouble();
+      final jemputLat = (o['pickup_lat'] as num?)?.toDouble();
+      final jemputLng = (o['pickup_lng'] as num?)?.toDouble();
+
+      setState(() {
+        _orderId = id;
+        _orderStatus = o['status'] == 'pending' ? 'searching' : o['status'];
+        _selectedService = o['service'] ?? _selectedService;
+        _fare = (o['fare'] as num?)?.toDouble() ?? 0;
+        _driverName = o['driver_name'] ?? '';
+        _driverPhone = o['driver_phone'] ?? '';
+        _pickupController.text = o['pickup'] ?? '';
+        _destinationController.text = o['dropoff'] ?? '';
+        if (jemputLat != null && jemputLng != null) {
+          _currentLatLng = LatLng(jemputLat, jemputLng);
+          _gpsTerbaca = true;
+        }
+        if (tujuanLat != null && tujuanLng != null) {
+          _destinationLatLng = LatLng(tujuanLat, tujuanLng);
+        }
+      });
+
+      if (_orderStatus == 'searching') _radarController.repeat();
+      _fitMapBounds();
+      _fetchRoute();
+      _startPollingStatus();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+      );
+    }
+  }
+
+  /// Mengirim bintang dan ulasan ke server.
+  ///
+  /// Dulu tombolnya hanya menutup layar — bintangnya tidak pernah sampai ke mana
+  /// pun, dan rating setiap driver tetap 5,0 selamanya.
+  Future<void> _kirimPenilaian() async {
+    final id = _orderId;
+    if (id == null) {
+      Navigator.pop(context, true);
+      return;
+    }
+    try {
+      await ApiService().rateOrder(id, _ratingStars, _reviewController.text.trim());
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Terima kasih atas penilaiannya.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      // Penilaian yang gagal terkirim bukan alasan menahan penumpang di layar
+      // ini; perjalanannya sendiri sudah selesai dan terbayar.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+      );
+    }
+    if (mounted) Navigator.pop(context, true);
+  }
+
+  /// Membatalkan pesanan atas permintaan penumpang. Backend menolak setelah
+  /// penumpang naik — sesudah titik itu drivernya sudah bekerja.
+  Future<void> _batalkanPesanan() async {
+    final id = _orderId;
+    if (id == null) return;
+
+    final yakin = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Batalkan pesanan?'),
+        content: const Text('Driver yang sedang menuju ke Anda akan diberi tahu.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Tidak')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Batalkan', style: TextStyle(color: AppTheme.errorColor)),
+          ),
+        ],
+      ),
+    );
+    if (yakin != true) return;
+
+    try {
+      await ApiService().cancelOrder(id);
+      if (!mounted) return;
+      _statusTimer?.cancel();
+      _radarController.stop();
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceAll('Exception: ', '')),
+          backgroundColor: AppTheme.errorColor,
+        ),
+      );
+    }
   }
 
   Future<void> _getCurrentLocation() async {
@@ -579,6 +698,21 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               _orderStatus = 'completed';
               _driverLatLng = null;
             });
+          } else if (status == 'cancelled' || status == 'expired') {
+            // Bisa datang dari admin yang menutup pesanan tersangkut, atau dari
+            // batas 15 menit tanpa driver. Radar yang berputar selamanya lebih
+            // buruk daripada kabar buruk yang jelas.
+            timer.cancel();
+            _radarController.stop();
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(status == 'expired'
+                    ? 'Belum ada driver yang menerima. Silakan pesan lagi.'
+                    : 'Pesanan ini dibatalkan.'),
+              ),
+            );
+            Navigator.pop(context, true);
           }
         }
       } catch (e) {
@@ -1262,14 +1396,11 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             textAlign: TextAlign.center,
           ),
           const Divider(height: 32),
+          // Dulu tombol ini hanya mengembalikan layar ke formulir dan
+          // menghentikan polling — pesanannya tetap hidup di server, tetap
+          // ditawarkan ke driver, dan penumpang tidak tahu apa-apa.
           OutlinedButton(
-            onPressed: () {
-              setState(() {
-                _orderStatus = "input";
-                _inputStep = 0;
-              });
-              _statusTimer?.cancel();
-            },
+            onPressed: _batalkanPesanan,
             style: OutlinedButton.styleFrom(
               side: const BorderSide(color: AppTheme.primaryBlue),
               foregroundColor: AppTheme.primaryBlue,
@@ -1419,6 +1550,20 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           // Tombol "Simulasi Selesai (Dev)" dihapus: hanya driver yang boleh
           // menutup pesanan, dan backend memang menolak permintaan dari
           // penumpang — jadi tombol itu tidak pernah bisa berhasil.
+
+          // Hanya sampai sebelum dijemput. Sesudah penumpang naik, drivernya
+          // sudah bekerja, dan backend memang menolak pembatalannya.
+          if (_orderStatus == "accepted") ...[
+            const Divider(height: 28),
+            TextButton(
+              onPressed: _batalkanPesanan,
+              style: TextButton.styleFrom(
+                foregroundColor: AppTheme.errorColor,
+                minimumSize: const Size(double.infinity, 40),
+              ),
+              child: const Text("Batalkan pesanan"),
+            ),
+          ],
         ],
       ),
     );
@@ -1543,9 +1688,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               const SizedBox(height: 32),
               
               ElevatedButton(
-                onPressed: () {
-                  Navigator.pop(context, true);
-                },
+                onPressed: _kirimPenilaian,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryBlue,
                   minimumSize: const Size(double.infinity, 50),

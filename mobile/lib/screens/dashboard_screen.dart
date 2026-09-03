@@ -46,6 +46,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   Timer? _riderActiveOrderTimer;
   Map<String, dynamic>? _currentIncomingOrder;
   Map<String, dynamic>? _acceptedOrder;
+  // Pesanan yang sudah ditolak driver ini, supaya tidak ditawarkan lagi tiap
+  // tiga detik. Cukup bertahan selama sesi — pesanan yang benar-benar dilewatkan
+  // semua driver akan kedaluwarsa sendiri di server.
+  final Set<String> _pesananDitolak = {};
 
   // Driver map states
   final MapController _driverMapController = MapController();
@@ -113,6 +117,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       vsync: this,
       duration: const Duration(seconds: 15),
     );
+
+    // Setelah kedua controller siap: pemulihan memakai keduanya.
+    if (widget.role != 'rider') {
+      _pulihkanPesananBerjalan();
+    }
   }
 
   @override
@@ -124,6 +133,41 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     _riderActiveOrderTimer?.cancel();
     _posisiSub?.cancel();
     super.dispose();
+  }
+
+  /// Mengambil kembali pesanan yang sedang dijalankan saat aplikasi dibuka.
+  ///
+  /// Tanpa ini, HP yang mati atau aplikasi yang tertutup di tengah perjalanan
+  /// membuat pesanannya lenyap dari layar driver — sementara di server statusnya
+  /// tetap berjalan selamanya, karena tidak ada yang bisa menekan Selesai lagi.
+  ///
+  /// Tidak perlu endpoint baru: GET /api/orders sudah mengembalikan pesanan
+  /// sebagai driver, tinggal disaring.
+  Future<void> _pulihkanPesananBerjalan() async {
+    try {
+      final response = await ApiService().getOrders();
+      if (response['status'] != 'success') return;
+
+      final daftar = (response['orders'] as List?) ?? [];
+      final berjalan = daftar.cast<dynamic>().where((o) =>
+          o['driver_phone'] == widget.phone &&
+          (o['status'] == 'accepted' || o['status'] == 'picked_up'));
+      if (berjalan.isEmpty || !mounted) return;
+
+      setState(() {
+        _acceptedOrder = berjalan.first;
+        // Driver yang punya perjalanan belum selesai memang sedang bekerja.
+        // Tanpa ini kartu pesanannya tidak tergambar sama sekali, karena panel
+        // bawah menampilkan layar "Anda Sedang Offline" lebih dulu.
+        _isOnline = true;
+      });
+      _radarController.repeat();
+      _startDriverPolling();
+      _mulaiPantauPosisi();
+      _setupDriverOrderRouting();
+    } catch (e) {
+      debugPrint('Gagal memulihkan pesanan berjalan: $e');
+    }
   }
 
   Future<void> _fetchUserProfile() async {
@@ -243,7 +287,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         _stopDriverPolling();
         _hasIncomingOrder = false;
         _currentIncomingOrder = null;
-        _acceptedOrder = null;
+        // _acceptedOrder sengaja TIDAK dihapus. Offline berarti berhenti
+        // menerima orderan baru, bukan meninggalkan penumpang yang sudah
+        // dijemput — dan tanpa tombol Selesai, pesanannya tersangkut selamanya.
         _countdownTimer?.cancel();
       }
     });
@@ -254,6 +300,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       _mulaiPantauPosisi();
     } else {
       _hentikanPantauPosisi();
+      // Server menebak siapa yang siaga dari waktu posisi terakhir, jadi berhenti
+      // mengirim posisi saja tidak cukup: tanpa kabar ini, driver yang sudah
+      // pulang masih dibangunkan orderan sampai sepuluh menit sesudahnya.
+      ApiService().setDriverOffline();
     }
   }
 
@@ -270,7 +320,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       try {
         final response = await ApiService().getActiveOrders();
         if (response['status'] == 'success') {
-          final List ordersList = response['orders'] ?? [];
+          final List ordersList = (response['orders'] as List? ?? [])
+              .where((o) => !_pesananDitolak.contains(o['id']))
+              .toList();
           if (ordersList.isNotEmpty) {
             final order = ordersList.first;
             setState(() {
@@ -691,6 +743,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   void _rejectOrder() {
     _countdownTimer?.cancel();
     setState(() {
+      // Tanpa daftar ini, polling tiga detik berikutnya mengembalikan pesanan
+      // yang sama dan kartunya muncul lagi dengan hitung mundur baru. Driver
+      // tidak punya cara melewatkan orderan selain offline.
+      final id = _currentIncomingOrder?['id'];
+      if (id != null) _pesananDitolak.add(id as String);
       _hasIncomingOrder = false;
       _currentIncomingOrder = null;
     });
@@ -1648,6 +1705,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     initialService: service,
                     riderName: _userName.isNotEmpty ? _userName : widget.name,
                     riderPhone: widget.phone,
+                    // Tanpa id ini yang terbuka adalah formulir pemesanan
+                    // kosong, bukan pelacakan — dan penumpang kehilangan peta,
+                    // status, serta tombol chat pesanan yang sedang jalan.
+                    initialOrderId: _riderActiveOrder!['id'],
                   ),
                 ),
               ).then((_) => _fetchUserProfile());
@@ -2149,7 +2210,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       'Rp ${nilai.toStringAsFixed(0).replaceAllMapped(RegExp(r"(\d{1,3})(?=(\d{3})+(?!\d))"), (m) => "${m[1]}.")}';
 
   Widget _buildBottomPanel(bool isDark, ThemeData theme) {
-    if (!_isOnline) {
+    // Perjalanan yang sedang berlangsung diperiksa lebih dulu daripada status
+    // online. Driver yang mematikan tombolnya di tengah jalan tetap harus bisa
+    // menekan Selesai — kalau tidak, pesanannya tidak pernah bisa ditutup.
+    if (!_isOnline && _acceptedOrder == null) {
       // 1. OFFLINE PANEL
       return Container(
         padding: const EdgeInsets.all(24),

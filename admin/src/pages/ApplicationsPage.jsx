@@ -31,9 +31,28 @@ export default function ApplicationsPage() {
 
   useEffect(() => { load(); }, []);
 
-  const approve = async (id) => {
-    setActionLoading(id + "_approve");
-    await api.approveDriver(id);
+  const approve = async (app) => {
+    // Menyetujui pengaju yang nomornya sudah punya akun akan MENIMPA peran
+    // lamanya: penumpang yang jadi driver berhenti bisa memesan, tanpa
+    // pemberitahuan apa pun ke dia. Admin berhak tahu sebelum menekan tombol.
+    if (app.existing_role && app.existing_role !== "driver") {
+      const lanjut = window.confirm(
+        `Nomor ${app.phone_number} sudah punya akun dengan peran "${app.existing_role}". ` +
+        "Menyetujui akan mengubah perannya jadi driver, dan dia tidak bisa lagi memesan sebagai penumpang. Lanjutkan?"
+      );
+      if (!lanjut) return;
+    }
+
+    setActionLoading(app.id + "_approve");
+    const res = await api.approveDriver(app.id);
+    if (res && res.error) {
+      window.alert("Gagal menyetujui: " + res.error);
+    } else if (res && res.initial_password) {
+      // Password awal hanya ada untuk akun yang baru dibuat. Driver tidak bisa
+      // masuk tanpa ini, jadi ditampilkan lewat prompt() supaya bisa disalin dan
+      // tidak hilang sendiri seperti toast.
+      window.prompt("Password awal driver — salin & sampaikan sekarang, tidak ditampilkan lagi:", res.initial_password);
+    }
     setActionLoading(null); load(filter);
   };
   const reject = async (id) => {
@@ -103,7 +122,7 @@ export default function ApplicationsPage() {
                   <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Dikirim: {new Date(app.created_at).toLocaleString("id-ID")}</div>
                   {app.status === "pending" && (
                     <div style={{ display: "flex", gap: 8 }}>
-                      <button className="btn btn-success" style={{ flex: 1, justifyContent: "center" }} onClick={() => approve(app.id)} disabled={actionLoading === app.id + "_approve"}>
+                      <button className="btn btn-success" style={{ flex: 1, justifyContent: "center" }} onClick={() => approve(app)} disabled={actionLoading === app.id + "_approve"}>
                         {actionLoading === app.id + "_approve" ? <span className="spinner" /> : <><CheckCircle size={14} /> Setujui</>}
                       </button>
                       <button className="btn btn-danger" style={{ flex: 1, justifyContent: "center" }} onClick={() => reject(app.id)} disabled={actionLoading === app.id + "_reject"}>

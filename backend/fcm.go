@@ -227,8 +227,10 @@ func notifikasiDriverSiaga(o Order) {
 	}
 	go func() {
 		batas := time.Now().Add(-10 * time.Minute).Format(time.RFC3339)
+		// is_driver_active ikut jadi syarat: driver yang dinonaktifkan admin tidak
+		// perlu lagi dibangunkan orderan yang tidak boleh ia terima.
 		rows, err := db.Query(
-			"SELECT COALESCE(fcm_token, '') FROM users WHERE role = 'driver' AND COALESCE(fcm_token, '') != '' AND COALESCE(driver_loc_at, '') > ?",
+			"SELECT COALESCE(fcm_token, '') FROM users WHERE role = 'driver' AND is_driver_active = 1 AND COALESCE(fcm_token, '') != '' AND COALESCE(driver_loc_at, '') > ?",
 			batas,
 		)
 		if err != nil {

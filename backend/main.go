@@ -23,6 +23,35 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Berapa lama pesanan boleh menunggu driver sebelum dianggap batal sendiri.
+//
+// ponytail: 15 menit, angka tunggal tanpa pengaturan. Di Sintang penumpang yang
+// tidak dapat driver dalam seperempat jam sudah mencari cara lain. Naikkan kalau
+// ternyata driver sering baru sempat membuka aplikasi setelah lewat batas ini.
+// Satu baris per pesanan, bukan per penilaian: order_id jadi kunci utama supaya
+// satu perjalanan tetap satu suara meski penumpang mengubah pikirannya.
+//
+// Ditaruh sebagai konstanta, bukan langsung di dalam daftar tabel initDB, supaya
+// tes bisa memakai definisi yang sama persis alih-alih menyalinnya.
+const skemaOrderRatings = `CREATE TABLE IF NOT EXISTS order_ratings (
+	order_id VARCHAR(50) PRIMARY KEY,
+	driver_phone VARCHAR(20),
+	rider_phone VARCHAR(20),
+	stars INT,
+	review TEXT,
+	created_at VARCHAR(50),
+	INDEX idx_driver (driver_phone)
+)`
+
+const batasPesananMenunggu = 15 * time.Minute
+
+// Seberapa jauh dari driver sebuah orderan masih ditampilkan di papan.
+//
+// ponytail: 25 km, satu angka datar tanpa pengaturan. Sintang dan sekitarnya
+// masuk seluruhnya, sementara orderan di kabupaten sebelah tidak lagi ikut
+// terunduh tiap tiga detik. Naikkan kalau layanannya melebar keluar kota.
+const radiusPapanOrderKM = 25.0
+
 // ==================== STRUCTS ====================
 
 type PartnerSubscription struct {
@@ -316,6 +345,7 @@ func main() {
 	initAuth()
 	initDB()
 	go pruneOTPs()
+	go kedaluwarsakanPesanan()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", homeHandler)
@@ -338,6 +368,7 @@ func main() {
 	mux.HandleFunc("/api/orders/active", requireRole("driver")(getActiveOrdersHandler))
 	mux.HandleFunc("/api/orders/", orderRouterHandler)
 	mux.HandleFunc("/api/driver/location", requireRole("driver")(driverLocationHandler))
+	mux.HandleFunc("/api/driver/offline", requireRole("driver")(driverOfflineHandler))
 	mux.HandleFunc("/api/users/delete", requireAuth(hapusAkunSendiri))
 	mux.HandleFunc("/api/users/fcm-token", requireAuth(fcmTokenHandler))
 	// Seluruh rute peta wajib bertoken: tiap panggilan membelanjakan kuota
@@ -514,6 +545,7 @@ func initDB() {
 			rating DOUBLE,
 			password VARCHAR(100) DEFAULT ''
 		)`,
+		skemaOrderRatings,
 		`CREATE TABLE IF NOT EXISTS user_addresses (
 			phone_number VARCHAR(20),
 			address_type VARCHAR(50),
@@ -694,6 +726,22 @@ func initDB() {
 
 	// Kolom password kini menyimpan hash bcrypt (60 karakter), bukan teks biasa.
 	_, _ = db.Exec("ALTER TABLE users MODIFY COLUMN password VARCHAR(255) DEFAULT ''")
+	// Email adalah identitas login — loginHandler dan login Google sama-sama
+	// mencari akun lewat kolom ini — tapi kolomnya tidak pernah dijamin unik.
+	// Dua akun beremail sama membuat salah satunya tidak bisa masuk sama sekali,
+	// dan yang mana tidak bisa ditebak: dbFindUserByEmail memakai QueryRow tanpa
+	// ORDER BY, jadi MySQL bebas memilih.
+	//
+	// Email kosong dijadikan NULL lebih dulu: indeks unik MySQL mengizinkan
+	// banyak NULL, tapi menolak banyak string kosong — dan driver lama bisa
+	// terlanjur punya email kosong.
+	_, _ = db.Exec("UPDATE users SET email = NULL WHERE email = ''")
+	if _, err := db.Exec("CREATE UNIQUE INDEX uniq_users_email ON users (email)"); err != nil {
+		// "Duplicate key name" cuma berarti indeksnya sudah ada dari boot lalu.
+		if !strings.Contains(err.Error(), "Duplicate key name") {
+			log.Printf("PERINGATAN: indeks unik email gagal dipasang (%v). Cari kembarannya dengan: SELECT email, COUNT(*) c FROM users WHERE email IS NOT NULL GROUP BY email HAVING c > 1;", err)
+		}
+	}
 	// Komisi aplikator dikunci saat pesanan dibuat, bukan dihitung ulang saat
 	// laporan dibaca: mengubah persentase besok tidak boleh menulis ulang
 	// pendapatan bulan lalu, dan driver berhak tahu angka bersihnya saat menerima.
@@ -896,7 +944,7 @@ func seedUsersToDB() {
 func dbGetUser(phone string) (User, bool) {
 	var u User
 	var isDriverActive bool
-	row := db.QueryRow("SELECT phone_number, name, email, role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users WHERE phone_number = ?", phone)
+	row := db.QueryRow("SELECT phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users WHERE phone_number = ?", phone)
 	err := row.Scan(&u.PhoneNumber, &u.Name, &u.Email, &u.Role, &u.CreatedAt, &u.Balance, &u.Badge, &isDriverActive, &u.TotalOrders, &u.Rating)
 	if err != nil {
 		return u, false
@@ -910,7 +958,7 @@ func dbGetUser(phone string) (User, bool) {
 // dbSetPassword, supaya tidak ikut terhapus setiap kali profil user disimpan.
 func dbSaveUser(u User) error {
 	_, err := db.Exec(`
-		INSERT INTO users (phone_number, name, email, role, created_at, balance, badge, is_driver_active, total_orders, rating)
+		INSERT INTO users (phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			name = VALUES(name),
@@ -940,7 +988,7 @@ func dbFindUserByEmail(email string) (User, string, bool) {
 	var hash string
 	var isDriverActive bool
 	err := db.QueryRow(`
-		SELECT phone_number, name, email, role, created_at, balance, badge, is_driver_active, total_orders, rating, COALESCE(password, '')
+		SELECT phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating, COALESCE(password, '')
 		FROM users WHERE email = ?`, email).
 		Scan(&u.PhoneNumber, &u.Name, &u.Email, &u.Role, &u.CreatedAt, &u.Balance, &u.Badge, &isDriverActive, &u.TotalOrders, &u.Rating, &hash)
 	if err != nil {
@@ -971,9 +1019,9 @@ func dbGetUsers(roleFilter string, page, limit int) ([]User, int, error) {
 	var rows *sql.Rows
 	offset := (page - 1) * limit
 	if roleFilter != "" {
-		rows, err = db.Query("SELECT phone_number, name, email, role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users WHERE role = ? LIMIT ? OFFSET ?", roleFilter, limit, offset)
+		rows, err = db.Query("SELECT phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users WHERE role = ? LIMIT ? OFFSET ?", roleFilter, limit, offset)
 	} else {
-		rows, err = db.Query("SELECT phone_number, name, email, role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users LIMIT ? OFFSET ?", limit, offset)
+		rows, err = db.Query("SELECT phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users LIMIT ? OFFSET ?", limit, offset)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -1062,6 +1110,65 @@ func dbSaveOrder(o Order) error {
 		o.Fare, o.Komisi, o.PaymentMethod, o.Service, o.Status, o.DriverPhone, o.DriverName, o.CreatedAt, o.UpdatedAt,
 		o.PackageType, o.PackageQuantity, o.PackageWeight, o.PackageNotes, o.Insurance, o.SpecialHandling)
 	return err
+}
+
+// dbClaimOrder menandai pesanan diterima HANYA kalau saat itu masih pending,
+// dan mengembalikan false kalau sudah keburu diambil orang lain.
+//
+// Syaratnya sengaja dititipkan ke MySQL, bukan diperiksa lebih dulu di Go:
+// semua driver dibangunkan notifikasi di detik yang sama dan polling tiap tiga
+// detik, jadi dua orang menekan Terima dalam milidetik yang sama itu wajar.
+// Dengan baca-periksa-tulis biasa keduanya lolos — yang menulis belakangan
+// menang, sementara yang pertama tetap diberi tahu "berhasil" lalu berangkat
+// menjemput penumpang yang bukan miliknya.
+func dbClaimOrder(orderID, driverPhone, driverName, updatedAt string) (bool, error) {
+	res, err := db.Exec(`
+		UPDATE orders SET status = 'accepted', driver_phone = ?, driver_name = ?, updated_at = ?
+		WHERE id = ? AND status = 'pending'`,
+		driverPhone, driverName, updatedAt, orderID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// dbSaldoTertahan menjumlahkan tarif pesanan dompet penumpang yang belum
+// selesai — uang yang sudah dijanjikan tapi belum berpindah.
+//
+// ponytail: dihitung ulang tiap pemesanan, bukan disimpan di kolom sendiri.
+// Satu penumpang tidak pernah punya banyak pesanan berjalan, jadi jumlahnya
+// selalu sedikit. Pasang kolom saldo tertahan kalau suatu hari ada penumpang
+// dengan puluhan pesanan sekaligus.
+func dbSaldoTertahan(riderPhone string) (float64, error) {
+	var total sql.NullFloat64
+	err := db.QueryRow(`
+		SELECT SUM(fare) FROM orders
+		WHERE rider_phone = ? AND payment_method = 'wallet'
+		  AND status IN ('pending', 'accepted', 'picked_up')`, riderPhone).Scan(&total)
+	if err != nil {
+		return 0, err
+	}
+	return total.Float64, nil
+}
+
+// dbCancelOrder membatalkan pesanan hanya kalau statusnya masih salah satu dari
+// yang diizinkan, dan mengembalikan false kalau sudah terlanjur berpindah.
+func dbCancelOrder(orderID string, statusBoleh []string, updatedAt string) (bool, error) {
+	args := []interface{}{updatedAt, orderID}
+	tanda := make([]string, len(statusBoleh))
+	for i, s := range statusBoleh {
+		tanda[i] = "?"
+		args = append(args, s)
+	}
+	res, err := db.Exec(
+		"UPDATE orders SET status = 'cancelled', updated_at = ? WHERE id = ? AND status IN ("+strings.Join(tanda, ",")+")",
+		args...)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
 }
 
 func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, error) {
@@ -1629,7 +1736,7 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Cek apakah nomor HP sudah dipakai akun lain
 	var existingEmail string
-	if err := db.QueryRow("SELECT email FROM users WHERE phone_number = ?", phone).Scan(&existingEmail); err == nil {
+	if err := db.QueryRow("SELECT COALESCE(email, '') FROM users WHERE phone_number = ?", phone).Scan(&existingEmail); err == nil {
 		writeJSONResponse(w, 400, map[string]string{"error": "Nomor handphone ini sudah terdaftar dengan akun lain."})
 		return
 	}
@@ -1896,9 +2003,25 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// Saldo hanya relevan untuk pembayaran dompet, dan diperiksa di muka supaya
 	// driver tidak menempuh perjalanan yang ternyata tak terbayar di ujung.
-	if metode == "wallet" && u.Balance < fare {
-		writeJSONResponse(w, 402, map[string]string{"error": "Saldo PayAntar tidak cukup. Pilih pembayaran tunai atau isi saldo dulu."})
-		return
+	//
+	// Yang dibandingkan adalah saldo dikurangi tarif pesanan dompet lain yang
+	// belum selesai. Tanpa itu, saldo Rp20.000 lolos untuk tiga pesanan
+	// Rp20.000 sekaligus, dan kegagalannya baru muncul saat driver sudah
+	// mengantar — pesanannya lalu tersangkut karena Selesai ditolak 402.
+	if metode == "wallet" {
+		tertahan, err := dbSaldoTertahan(u.PhoneNumber)
+		if err != nil {
+			writeJSONResponse(w, 500, map[string]string{"error": "Gagal memeriksa saldo"})
+			return
+		}
+		if u.Balance-tertahan < fare {
+			pesan := "Saldo PayAntar tidak cukup. Pilih pembayaran tunai atau isi saldo dulu."
+			if tertahan > 0 {
+				pesan = fmt.Sprintf("Saldo PayAntar tidak cukup: Rp%.0f sudah dipakai pesanan lain yang belum selesai. Pilih pembayaran tunai atau isi saldo dulu.", tertahan)
+			}
+			writeJSONResponse(w, 402, map[string]string{"error": pesan})
+			return
+		}
 	}
 	oid := newID("order")
 	now := time.Now().Format(time.RFC3339)
@@ -1925,8 +2048,31 @@ func getActiveOrdersHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
 		return
 	}
-	result, _ := dbGetPendingOrders()
-	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "orders": result})
+	semua, _ := dbGetPendingOrders()
+	lat, lng, _, adaLokasi := dbGetDriverLocation(callerPhone(r))
+
+	hasil := make([]map[string]interface{}, 0, len(semua))
+	for _, o := range semua {
+		// Papan orderan disaring sejauh driver, bukan disiarkan ke seluruh
+		// provinsi. Driver yang belum pernah mengirim posisinya tetap melihat
+		// semuanya — menyembunyikan orderan dari driver yang siap kerja lebih
+		// merugikan daripada memperlihatkan beberapa yang jauh.
+		if adaLokasi && jarakKM(lat, lng, o.PickupLat, o.PickupLng) > radiusPapanOrderKM {
+			continue
+		}
+
+		var m map[string]interface{}
+		b, _ := json.Marshal(o)
+		_ = json.Unmarshal(b, &m)
+		// Nama, nomor, dan catatan penumpang belum jadi urusan siapa pun sebelum
+		// pesanannya diterima. Alamat dan koordinat tetap dikirim: tanpa itu
+		// driver tidak bisa menilai apakah orderannya masuk akal untuk diambil.
+		delete(m, "rider_name")
+		delete(m, "rider_phone")
+		delete(m, "package_notes")
+		hasil = append(hasil, m)
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "orders": hasil})
 }
 
 func orderRouterHandler(w http.ResponseWriter, r *http.Request) {
@@ -1946,6 +2092,10 @@ func orderRouterHandler(w http.ResponseWriter, r *http.Request) {
 		completeOrder(w, r, orderID)
 	case "status":
 		getOrderStatus(w, r, orderID)
+	case "cancel":
+		cancelOrder(w, r, orderID)
+	case "rate":
+		rateOrder(w, r, orderID)
 	default:
 		writeJSONResponse(w, 404, map[string]string{"error": "Action not found"})
 	}
@@ -1986,25 +2136,179 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		writeJSONResponse(w, 403, map[string]string{"error": "Hanya Driver yang bisa menerima orderan"})
 		return
 	}
+	// Sebelumnya is_driver_active hanya disimpan, tidak pernah jadi syarat —
+	// menonaktifkan driver bermasalah lewat dashboard tidak berefek apa pun.
+	if !driver.IsDriverActive {
+		writeJSONResponse(w, 403, map[string]string{"error": "Akun driver Anda sedang dinonaktifkan. Hubungi admin bohAntar."})
+		return
+	}
 	o, oe := dbGetOrder(orderID)
 	if !oe {
 		writeJSONResponse(w, 404, map[string]string{"error": "Pesanan tidak ditemukan"})
 		return
 	}
-	if o.Status != "pending" {
-		writeJSONResponse(w, 400, map[string]string{"error": "Pesanan sudah diambil oleh driver lain"})
+	now := time.Now().Format(time.RFC3339)
+	menang, err := dbClaimOrder(orderID, driver.PhoneNumber, driver.Name, now)
+	if err != nil {
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan pesanan"})
+		return
+	}
+	if !menang {
+		writeJSONResponse(w, 409, map[string]string{"error": "Pesanan sudah diambil oleh driver lain"})
 		return
 	}
 	o.Status = "accepted"
 	o.DriverPhone = driver.PhoneNumber
 	o.DriverName = driver.Name
-	o.UpdatedAt = time.Now().Format(time.RFC3339)
-	dbSaveOrder(o)
+	o.UpdatedAt = now
 	notifikasiKe(o.RiderPhone, "Driver ditemukan", driver.Name+" sedang menuju titik jemput Anda.", map[string]string{
 		"tipe":     "pesanan_diterima",
 		"order_id": o.ID,
 	})
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Pesanan berhasil diterima", "order": o})
+}
+
+// rateOrder menyimpan penilaian penumpang untuk driver pada satu pesanan.
+//
+// Sebelumnya layar penilaian di aplikasi hanya menutup dirinya sendiri: bintang
+// dan ulasannya tidak dikirim ke mana pun, dan rating semua driver tetap 5,0
+// selamanya. Tombol yang berpura-pura bekerja lebih buruk daripada tidak ada.
+func rateOrder(w http.ResponseWriter, r *http.Request, orderID string) {
+	if r.Method != http.MethodPost {
+		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
+		return
+	}
+	phone, ok := extractPhone(r)
+	if !ok {
+		writeJSONResponse(w, 401, map[string]string{"error": "Token otorisasi diperlukan"})
+		return
+	}
+	var input struct {
+		Stars  int    `json:"stars"`
+		Review string `json:"review"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.Stars < 1 || input.Stars > 5 {
+		writeJSONResponse(w, 400, map[string]string{"error": "Bintang harus antara 1 sampai 5"})
+		return
+	}
+
+	o, exists := dbGetOrder(orderID)
+	if !exists {
+		writeJSONResponse(w, 404, map[string]string{"error": "Pesanan tidak ditemukan"})
+		return
+	}
+	if o.RiderPhone != phone {
+		denyOwnership(w)
+		return
+	}
+	if o.Status != "completed" {
+		writeJSONResponse(w, 400, map[string]string{"error": "Penilaian hanya bisa diberikan setelah perjalanan selesai"})
+		return
+	}
+	if o.DriverPhone == "" {
+		writeJSONResponse(w, 400, map[string]string{"error": "Pesanan ini tidak punya driver untuk dinilai"})
+		return
+	}
+
+	// Kunci utamanya order_id, jadi menilai dua kali memperbarui nilai yang sama
+	// alih-alih menumpuk suara — satu perjalanan tetap satu suara.
+	if _, err := db.Exec(`
+		INSERT INTO order_ratings (order_id, driver_phone, rider_phone, stars, review, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+		ON DUPLICATE KEY UPDATE stars = VALUES(stars), review = VALUES(review), created_at = VALUES(created_at)`,
+		o.ID, o.DriverPhone, o.RiderPhone, input.Stars, strings.TrimSpace(input.Review), time.Now().Format(time.RFC3339)); err != nil {
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan penilaian"})
+		return
+	}
+
+	// Rata-ratanya dihitung ulang dari seluruh penilaian, bukan digeser sedikit
+	// demi sedikit: penilaian yang diperbaiki penumpang ikut terhitung benar,
+	// dan tidak ada galat pembulatan yang menumpuk.
+	rata := 5.0
+	if err := db.QueryRow("SELECT AVG(stars) FROM order_ratings WHERE driver_phone = ?", o.DriverPhone).Scan(&rata); err == nil {
+		_, _ = db.Exec("UPDATE users SET rating = ? WHERE phone_number = ?", rata, o.DriverPhone)
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Terima kasih atas penilaiannya", "rating_driver": rata})
+}
+
+// cancelOrder membatalkan pesanan atas permintaan penumpangnya sendiri.
+//
+// Batasnya di "picked_up": setelah penumpang naik, membatalkan berarti driver
+// sudah bekerja tanpa dibayar. Sesudah titik itu yang berlaku adalah tombol
+// Selesai, bukan pembatalan.
+//
+// Admin boleh membatalkan kapan pun sebelum selesai — itu satu-satunya cara
+// menutup pesanan yang tersangkut karena HP driver mati.
+func cancelOrder(w http.ResponseWriter, r *http.Request, orderID string) {
+	if r.Method != http.MethodPost {
+		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
+		return
+	}
+	phone, ok := extractPhone(r)
+	if !ok {
+		writeJSONResponse(w, 401, map[string]string{"error": "Token otorisasi diperlukan"})
+		return
+	}
+	o, exists := dbGetOrder(orderID)
+	if !exists {
+		writeJSONResponse(w, 404, map[string]string{"error": "Pesanan tidak ditemukan"})
+		return
+	}
+
+	admin := isAdmin(r)
+	if o.RiderPhone != phone && !admin {
+		denyOwnership(w)
+		return
+	}
+
+	// Penumpang berhenti di picked_up; admin boleh sampai sebelum selesai.
+	boleh := []string{"pending", "accepted"}
+	if admin {
+		boleh = append(boleh, "picked_up")
+	}
+	// Syaratnya dititipkan ke MySQL supaya pembatalan tidak menang atas driver
+	// yang menekan Terima di saat yang sama, atau sebaliknya.
+	batal, err := dbCancelOrder(orderID, boleh, time.Now().Format(time.RFC3339))
+	if err != nil {
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal membatalkan pesanan"})
+		return
+	}
+	if !batal {
+		writeJSONResponse(w, 409, map[string]string{"error": "Pesanan sudah tidak bisa dibatalkan karena statusnya " + o.Status})
+		return
+	}
+
+	// Driver yang sudah berangkat harus tahu, kalau tidak ia menunggu di titik
+	// jemput untuk penumpang yang tidak akan datang.
+	if o.DriverPhone != "" {
+		notifikasiKe(o.DriverPhone, "Pesanan dibatalkan", "Penumpang membatalkan perjalanan ini.", map[string]string{
+			"tipe":     "dibatalkan",
+			"order_id": o.ID,
+		})
+	}
+	o.Status = "cancelled"
+	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Pesanan dibatalkan", "order": o})
+}
+
+// kedaluwarsakanPesanan menandai pesanan yang tidak pernah diambil siapa pun.
+//
+// Tanpa ini daftar pending tumbuh selamanya: setiap driver mengunduh seluruh
+// isinya tiap tiga detik, dan pesanan basi terus ditawarkan berbulan-bulan
+// setelah penumpangnya menyerah dan pulang.
+func kedaluwarsakanPesanan() {
+	for range time.Tick(time.Minute) {
+		batas := time.Now().Add(-batasPesananMenunggu).Format(time.RFC3339)
+		res, err := db.Exec(
+			"UPDATE orders SET status = 'expired', updated_at = ? WHERE status = 'pending' AND created_at < ?",
+			time.Now().Format(time.RFC3339), batas)
+		if err != nil {
+			log.Printf("Gagal menandai pesanan kedaluwarsa: %v", err)
+			continue
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			log.Printf("%d pesanan kedaluwarsa karena tidak diambil dalam %s", n, batasPesananMenunggu)
+		}
+	}
 }
 
 func pickupOrder(w http.ResponseWriter, r *http.Request, orderID string) {
@@ -2440,6 +2744,28 @@ func dbGetDriverLocation(phone string) (lat, lng float64, at string, ok bool) {
 // Hanya driver yang boleh mengirim, dan hanya untuk dirinya sendiri: nomornya
 // diambil dari token, tidak pernah dari badan permintaan. Kalau tidak, driver
 // mana pun bisa memalsukan posisi driver lain.
+// driverOfflineHandler menyatakan driver berhenti bekerja, seketika.
+//
+// Siapa yang siaga ditebak dari driver_loc_at dalam sepuluh menit terakhir, jadi
+// tombol offline di aplikasi dulu tidak berarti apa-apa: driver yang sudah
+// pulang tetap dibangunkan orderan sampai sepuluh menit sesudahnya. Mengosongkan
+// penanda waktunya membuat tebakan itu langsung berhenti — tanpa kolom baru.
+//
+// Konsekuensinya penanda driver hilang dari peta penumpang, bukan membeku di
+// posisi lama. Itu memang lebih jujur: driver yang offline berhenti melaporkan
+// posisi, jadi titik terakhirnya cuma menyesatkan.
+func driverOfflineHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
+		return
+	}
+	if _, err := db.Exec("UPDATE users SET driver_loc_at = '' WHERE phone_number = ?", callerPhone(r)); err != nil {
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan status"})
+		return
+	}
+	writeJSONResponse(w, 200, map[string]string{"status": "success"})
+}
+
 func driverLocationHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
@@ -2525,6 +2851,11 @@ func adminDriverRegisterHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Disamakan bentuknya seperti jalur pendaftaran lain. Tanpa ini, pengaju yang
+	// mengetik 08xx dapat akun kedua yang terpisah dari akun +628xx miliknya
+	// sendiri — token, pesanan, dan lokasinya berpisah di dua baris.
+	app.PhoneNumber = normalizePhone(app.PhoneNumber)
+	app.Email = strings.ToLower(strings.TrimSpace(app.Email))
 	app.ID = newID("app")
 	app.Status = "pending"
 	app.CreatedAt = time.Now().Format(time.RFC3339)
@@ -2539,7 +2870,27 @@ func adminDriverApplicationsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	sf := r.URL.Query().Get("status")
 	result, _ := dbGetApplications(sf)
-	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "total": len(result), "applications": result})
+
+	// Menyetujui pengaju yang nomornya sudah punya akun akan MENIMPA peran
+	// lamanya — penumpang yang jadi driver berhenti bisa memesan. Admin harus
+	// tahu itu sebelum menekan setujui, bukan sesudahnya, jadi peran yang ada
+	// sekarang ikut dikirim.
+	//
+	// ponytail: satu query per pengajuan. Daftarnya puluhan baris, bukan ribuan,
+	// jadi JOIN-nya belum sepadan dengan kerumitannya.
+	daftar := make([]map[string]interface{}, 0, len(result))
+	for _, app := range result {
+		var baris map[string]interface{}
+		b, _ := json.Marshal(app)
+		_ = json.Unmarshal(b, &baris)
+
+		var peran string
+		if err := db.QueryRow("SELECT role FROM users WHERE phone_number = ?", app.PhoneNumber).Scan(&peran); err == nil {
+			baris["existing_role"] = peran
+		}
+		daftar = append(daftar, baris)
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "total": len(daftar), "applications": daftar})
 }
 
 func adminDriverApproveHandler(w http.ResponseWriter, r *http.Request) {
@@ -2561,17 +2912,41 @@ func adminDriverApproveHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if action == "approve" {
+		// Email adalah identitas login. Kalau sudah dipakai nomor lain, akun yang
+		// dibuat di bawah akan menabrak indeks unik — dan pada database yang
+		// indeksnya belum sempat terpasang, salah satu dari kedua akun itu
+		// diam-diam jadi tidak bisa masuk sama sekali.
+		if app.Email != "" {
+			var pemilik string
+			if err := db.QueryRow("SELECT phone_number FROM users WHERE email = ?", app.Email).Scan(&pemilik); err == nil && pemilik != app.PhoneNumber {
+				writeJSONResponse(w, 409, map[string]string{"error": "Email " + app.Email + " sudah dipakai akun " + pemilik + ". Perbaiki email pengajuannya lebih dulu."})
+				return
+			}
+		}
 		app.Status = "approved"
 		dbSaveApplication(app)
 
+		// Password awal hanya dibuat untuk akun yang benar-benar baru. Penumpang
+		// yang naik jadi driver sudah punya password sendiri, dan menimpanya
+		// berarti mengunci dia keluar dari akunnya sendiri.
+		initialPass := ""
 		if eu, ok := dbGetUser(app.PhoneNumber); ok {
 			eu.Role = "driver"
 			eu.IsDriverActive = true
 			dbSaveUser(eu)
 		} else {
 			dbSaveUser(User{PhoneNumber: app.PhoneNumber, Name: app.Name, Email: app.Email, Role: "driver", CreatedAt: time.Now().Format(time.RFC3339), Balance: 0, Badge: "Silver", IsDriverActive: true})
+			// Tanpa ini driver yang sudah disetujui tidak bisa masuk sama sekali:
+			// login memeriksa password terhadap hash kosong, dan itu selalu gagal.
+			// Google Sign-In pun hanya menolong kalau email di formulir kebetulan
+			// sama persis dengan akun Google-nya.
+			initialPass = randomPassword()
+			if err := dbSetPassword(app.PhoneNumber, initialPass); err != nil {
+				writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyiapkan password driver"})
+				return
+			}
 		}
-		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Driver berhasil diapprove", "application": app})
+		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Driver berhasil diapprove", "application": app, "initial_password": initialPass})
 	} else if action == "reject" {
 		app.Status = "rejected"
 		dbSaveApplication(app)
