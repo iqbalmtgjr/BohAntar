@@ -479,10 +479,20 @@ func initDB() {
 	}
 	defer dbRoot.Close()
 
-	_, err = dbRoot.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", dbName))
+	// Charset ditentukan sekali di tingkat database, bukan diulang di tiap
+	// CREATE TABLE: tabel mewarisi charset database tempat ia dibuat. utf8mb3
+	// tidak muat karakter 4 byte, jadi satu emoji di pesan chat atau nama
+	// merchant membuat INSERT-nya ditolak dan pesan penggunanya hilang.
+	_, err = dbRoot.Exec(fmt.Sprintf(
+		"CREATE DATABASE IF NOT EXISTS %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", dbName))
 	if err != nil {
 		log.Fatalf("Gagal membuat database %s: %v", dbName, err)
 	}
+	// Database yang sudah telanjur lahir sebagai utf8mb3 diperbaiki di sini.
+	// Ini hanya mengubah bawaan untuk tabel BARU; tabel lama dikonversi lewat
+	// migrasi/001-utf8mb4-uang-indeks.sql.
+	_, _ = dbRoot.Exec(fmt.Sprintf(
+		"ALTER DATABASE %s CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci", dbName))
 
 	// loc=Local wajib menyertai parseTime: tanpa itu kolom DATETIME dibaca sebagai
 	// UTC padahal isinya jam lokal, sehingga tiap perbandingan dengan time.Now()
@@ -517,8 +527,8 @@ func initDB() {
 	_, _ = db.Exec("ALTER TABLE rental_car_schedules ADD COLUMN status VARCHAR(20) DEFAULT 'active'")
 	// Denda keterlambatan dikunci saat sewa ditutup, bukan dihitung ulang tiap dibaca,
 	// supaya nilai di laporan tidak berubah sendiri seiring waktu.
-	_, _ = db.Exec("ALTER TABLE rental_car_schedules ADD COLUMN late_fee DOUBLE DEFAULT 0")
-	_, _ = db.Exec("ALTER TABLE rental_bookings ADD COLUMN late_fee DOUBLE DEFAULT 0")
+	_, _ = db.Exec("ALTER TABLE rental_car_schedules ADD COLUMN late_fee DECIMAL(12,2) NOT NULL DEFAULT 0")
+	_, _ = db.Exec("ALTER TABLE rental_bookings ADD COLUMN late_fee DECIMAL(12,2) NOT NULL DEFAULT 0")
 	// Toleransi keterlambatan: menit gratis sebelum denda mulai dihitung.
 	_, _ = db.Exec("ALTER TABLE rental_settings ADD COLUMN late_fee_grace_minutes INT DEFAULT 0")
 	// Catatan mitra saat menerima/menolak pesanan dari aplikasi.
@@ -538,11 +548,11 @@ func initDB() {
 			email VARCHAR(100),
 			role VARCHAR(30),
 			created_at VARCHAR(50),
-			balance DOUBLE,
+			balance DECIMAL(14,2) NOT NULL DEFAULT 0,
 			badge VARCHAR(20),
 			is_driver_active BOOLEAN,
 			total_orders INT,
-			rating DOUBLE,
+			rating DECIMAL(3,2) NOT NULL DEFAULT 0,
 			password VARCHAR(100) DEFAULT ''
 		)`,
 		skemaOrderRatings,
@@ -562,7 +572,7 @@ func initDB() {
 			pickup_lng DOUBLE,
 			dropoff_lat DOUBLE,
 			dropoff_lng DOUBLE,
-			fare DOUBLE,
+			fare DECIMAL(12,2) NOT NULL DEFAULT 0,
 			service VARCHAR(20),
 			status VARCHAR(20),
 			driver_phone VARCHAR(20),
@@ -617,7 +627,7 @@ func initDB() {
 			merchant_id VARCHAR(50) NOT NULL,
 			name VARCHAR(100) NOT NULL,
 			description TEXT,
-			price DOUBLE NOT NULL,
+			price DECIMAL(12,2) NOT NULL,
 			category VARCHAR(50),
 			image_url TEXT,
 			is_available BOOLEAN DEFAULT TRUE,
@@ -631,7 +641,7 @@ func initDB() {
 			plate_number VARCHAR(20) NOT NULL UNIQUE,
 			transmission VARCHAR(20) NOT NULL,
 			seats INT DEFAULT 5,
-			price_per_day DOUBLE NOT NULL,
+			price_per_day DECIMAL(12,2) NOT NULL,
 			image_url TEXT,
 			status VARCHAR(20) DEFAULT 'active',
 			vehicle_type VARCHAR(20) DEFAULT 'car',
@@ -645,7 +655,7 @@ func initDB() {
 			customer_phone VARCHAR(20) NOT NULL,
 			start_time DATETIME NOT NULL,
 			end_time DATETIME NOT NULL,
-			total_price DOUBLE NOT NULL,
+			total_price DECIMAL(12,2) NOT NULL,
 			status VARCHAR(20) DEFAULT 'pending',
 			notes VARCHAR(500) DEFAULT '',
 			created_at VARCHAR(50),
@@ -666,7 +676,7 @@ func initDB() {
 		`CREATE TABLE IF NOT EXISTS rental_settings (
 			owner_phone VARCHAR(20) PRIMARY KEY,
 			late_fee_mode VARCHAR(10) DEFAULT 'off',
-			late_fee_value DOUBLE DEFAULT 0,
+			late_fee_value DECIMAL(12,2) NOT NULL DEFAULT 0,
 			late_fee_grace_minutes INT DEFAULT 0,
 			updated_at VARCHAR(50),
 			FOREIGN KEY (owner_phone) REFERENCES users(phone_number) ON DELETE CASCADE
@@ -675,7 +685,7 @@ func initDB() {
 			id VARCHAR(50) PRIMARY KEY,
 			owner_phone VARCHAR(20) NOT NULL,
 			name VARCHAR(100) NOT NULL,
-			price DOUBLE DEFAULT 0,
+			price DECIMAL(12,2) NOT NULL DEFAULT 0,
 			created_at VARCHAR(50),
 			FOREIGN KEY (owner_phone) REFERENCES users(phone_number) ON DELETE CASCADE
 		)`,
@@ -702,7 +712,7 @@ func initDB() {
 		`CREATE TABLE IF NOT EXISTS subscription_invoices (
 			id VARCHAR(100) PRIMARY KEY,
 			phone_number VARCHAR(20),
-			amount DOUBLE,
+			amount DECIMAL(12,2) NOT NULL DEFAULT 0,
 			status VARCHAR(20),
 			payment_url TEXT,
 			created_at VARCHAR(50),
@@ -711,9 +721,9 @@ func initDB() {
 		// Ongkos dan bagi hasil per layanan, diatur super admin lewat dashboard.
 		`CREATE TABLE IF NOT EXISTS tarif (
 			layanan VARCHAR(32) PRIMARY KEY,
-			base DOUBLE NOT NULL,
-			per_km DOUBLE NOT NULL,
-			komisi_persen DOUBLE NOT NULL DEFAULT 20,
+			base DECIMAL(12,2) NOT NULL,
+			per_km DECIMAL(12,2) NOT NULL,
+			komisi_persen DECIMAL(5,2) NOT NULL DEFAULT 20,
 			updated_at VARCHAR(50)
 		)`,
 	}
@@ -723,7 +733,6 @@ func initDB() {
 			log.Fatalf("Gagal inisialisasi tabel: %v", err)
 		}
 	}
-
 	// Kolom password kini menyimpan hash bcrypt (60 karakter), bukan teks biasa.
 	_, _ = db.Exec("ALTER TABLE users MODIFY COLUMN password VARCHAR(255) DEFAULT ''")
 	// Email adalah identitas login — loginHandler dan login Google sama-sama
@@ -745,7 +754,7 @@ func initDB() {
 	// Komisi aplikator dikunci saat pesanan dibuat, bukan dihitung ulang saat
 	// laporan dibaca: mengubah persentase besok tidak boleh menulis ulang
 	// pendapatan bulan lalu, dan driver berhak tahu angka bersihnya saat menerima.
-	_, _ = db.Exec("ALTER TABLE orders ADD COLUMN komisi DOUBLE DEFAULT 0")
+	_, _ = db.Exec("ALTER TABLE orders ADD COLUMN komisi DECIMAL(12,2) NOT NULL DEFAULT 0")
 	// Pesanan lama semuanya dibayar dari dompet, jadi baris yang sudah ada
 	// memang 'wallet'. Pesanan baru selalu menyebutkan metodenya sendiri.
 	_, _ = db.Exec("ALTER TABLE orders ADD COLUMN payment_method VARCHAR(10) DEFAULT 'wallet'")
@@ -757,6 +766,46 @@ func initDB() {
 	_, _ = db.Exec("ALTER TABLE users ADD COLUMN driver_loc_at VARCHAR(50) DEFAULT ''")
 	// Token perangkat untuk notifikasi push. Satu per pemasangan aplikasi.
 	_, _ = db.Exec("ALTER TABLE users ADD COLUMN fcm_token VARCHAR(255) DEFAULT ''")
+
+	// Indeks dan batasan nilai dipisahkan dari CREATE TABLE karena tabelnya
+	// sudah telanjur ada di produksi: `CREATE TABLE IF NOT EXISTS` tidak
+	// menyentuh tabel yang sudah lahir, jadi keduanya tidak akan pernah
+	// terpasang di sana kalau ditulis di dalam definisi tabel.
+	//
+	// Errornya sengaja dibuang: pada mesin yang sudah dijalankan sekali,
+	// "Duplicate key name" dan "Duplicate check constraint name" adalah
+	// jawaban yang normal, bukan kegagalan.
+	//
+	// Isi daftar ini sama persis dengan migrasi/001-utf8mb4-uang-indeks.sql —
+	// berkas itu untuk database yang sudah hidup, daftar ini untuk mesin baru.
+	penguat := []string{
+		// orders tabel terpanas: driver menariknya tiap tiga detik, penumpang
+		// membuka riwayatnya, goroutine kedaluwarsa menyapu yang pending.
+		"CREATE INDEX idx_orders_status ON orders (status, created_at)",
+		"CREATE INDEX idx_orders_driver ON orders (driver_phone)",
+		"CREATE INDEX idx_orders_rider ON orders (rider_phone)",
+		"CREATE INDEX idx_chat_order ON chat_messages (order_id)",
+		"CREATE INDEX idx_users_role ON users (role, is_driver_active)",
+		"CREATE INDEX idx_driver_apps_status ON driver_applications (status, created_at)",
+		"CREATE INDEX idx_partner_apps_status ON partner_applications (status, created_at)",
+		"CREATE INDEX idx_bookings_mobil ON rental_bookings (car_id, start_time, end_time)",
+		"CREATE INDEX idx_schedules_mobil ON rental_car_schedules (car_id, start_time, end_time)",
+		"CREATE INDEX idx_invoices_mitra ON subscription_invoices (phone_number, created_at)",
+
+		// Tanpa batasan ini, 'cancelled' yang salah ketik jadi 'canceled'
+		// diterima tanpa keluhan, lalu pesanannya lenyap dari setiap filter.
+		// Daftarnya persis yang ditulis kode; tidak ada nilai lain yang pernah
+		// masuk. Butuh MySQL 8.0.16+; versi lama mengabaikannya diam-diam.
+		"ALTER TABLE orders ADD CONSTRAINT chk_orders_status CHECK (status IN ('pending','accepted','picked_up','completed','cancelled','expired'))",
+		"ALTER TABLE orders ADD CONSTRAINT chk_orders_payment CHECK (payment_method IN ('wallet','cash'))",
+		"ALTER TABLE users ADD CONSTRAINT chk_users_role CHECK (role IN ('rider','driver','admin','food_merchant','rental_partner'))",
+		"ALTER TABLE order_ratings ADD CONSTRAINT chk_rating_bintang CHECK (stars BETWEEN 1 AND 5)",
+		"ALTER TABLE tarif ADD CONSTRAINT chk_tarif_masuk_akal CHECK (base >= 0 AND per_km >= 0 AND komisi_persen BETWEEN 0 AND 100)",
+	}
+	for _, p := range penguat {
+		_, _ = db.Exec(p)
+	}
+
 	seedTarif()
 
 	var count int
@@ -958,8 +1007,8 @@ func dbGetUser(phone string) (User, bool) {
 // dbSetPassword, supaya tidak ikut terhapus setiap kali profil user disimpan.
 func dbSaveUser(u User) error {
 	_, err := db.Exec(`
-		INSERT INTO users (phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO users (phone_number, name, email, role, created_at, balance, badge, is_driver_active, total_orders, rating)
+		VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			name = VALUES(name),
 			email = VALUES(email),
