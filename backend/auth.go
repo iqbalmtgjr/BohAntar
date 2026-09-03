@@ -203,11 +203,24 @@ var (
 )
 
 // alamatPemanggil mengambil IP asli penelepon. Backend hanya bisa dihubungi
-// lewat reverse proxy, jadi RemoteAddr selalu 127.0.0.1 dan X-Forwarded-For
-// yang dipasang proxy itulah satu-satunya pembeda antar penelepon.
+// lewat reverse proxy, jadi RemoteAddr selalu 127.0.0.1 dan header dari proxy
+// itulah satu-satunya pembeda antar penelepon.
+//
+// X-Real-IP didahulukan karena nginx mengisinya dari alamat sambungan
+// sungguhan; penelepon tidak bisa mengarangnya.
+//
+// X-Forwarded-For dipakai hanya sebagai cadangan, dan yang diambil entri
+// TERAKHIR. Nginx MENAMBAHKAN alamat klien ke ujung header yang dikirim
+// klien, jadi entri pertamanya justru karangan penelepon — mengambil yang
+// pertama membuat rem ini bisa dilewati cukup dengan mengganti satu header
+// tiap percobaan, yang persis membatalkan gunanya.
 func alamatPemanggil(r *http.Request) string {
+	if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" {
+		return ip
+	}
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.Split(xff, ",")[0])
+		bagian := strings.Split(xff, ",")
+		return strings.TrimSpace(bagian[len(bagian)-1])
 	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host

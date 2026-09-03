@@ -244,17 +244,40 @@ func TestRemLoginMenutupSetelahSepuluhGagal(t *testing.T) {
 	}
 }
 
-// alamatPemanggil harus membedakan penelepon lewat X-Forwarded-For: tanpa itu
-// semua permintaan tampak datang dari reverse proxy di 127.0.0.1 dan satu
-// penyerang mengunci seluruh pengguna.
-func TestAlamatPemanggilBacaForwardedFor(t *testing.T) {
+// alamatPemanggil harus membedakan penelepon lewat header dari proxy: tanpa
+// itu semua permintaan tampak datang dari reverse proxy di 127.0.0.1 dan satu
+// penyerang mengunci seluruh pengguna. Yang lebih berbahaya sebaliknya: kalau
+// alamatnya boleh dikarang penelepon, remnya bisa dilewati cukup dengan
+// mengganti satu header tiap percobaan.
+func TestAlamatPemanggilTidakBisaDipalsukan(t *testing.T) {
 	r := httptest.NewRequest("POST", "/api/auth/login", nil)
 	r.RemoteAddr = "127.0.0.1:54321"
 	if got := alamatPemanggil(r); got != "127.0.0.1" {
 		t.Fatalf("tanpa header seharusnya 127.0.0.1, dapat %q", got)
 	}
-	r.Header.Set("X-Forwarded-For", "203.0.113.9, 10.0.0.1")
+
+	// Nginx menambahkan alamat sungguhan ke UJUNG; yang di depan dikirim
+	// penelepon. Mengambil yang pertama berarti mempercayai karangannya.
+	r.Header.Set("X-Forwarded-For", "1.1.1.1, 203.0.113.9")
 	if got := alamatPemanggil(r); got != "203.0.113.9" {
-		t.Fatalf("seharusnya IP klien pertama, dapat %q", got)
+		t.Fatalf("seharusnya entri terakhir yang ditambahkan proxy, dapat %q", got)
+	}
+
+	// X-Real-IP diisi nginx dari alamat sambungan, jadi ia yang menang.
+	r.Header.Set("X-Real-IP", "198.51.100.7")
+	if got := alamatPemanggil(r); got != "198.51.100.7" {
+		t.Fatalf("X-Real-IP seharusnya didahulukan, dapat %q", got)
+	}
+
+	// Penyerang yang mengganti-ganti alamat karangan tetap jatuh ke ember
+	// yang sama, karena yang dihitung alamat dari proxy.
+	for _, karangan := range []string{"9.9.9.9", "8.8.8.8", "7.7.7.7"} {
+		p := httptest.NewRequest("POST", "/api/auth/login", nil)
+		p.RemoteAddr = "127.0.0.1:1"
+		p.Header.Set("X-Real-IP", "203.0.113.50")
+		p.Header.Set("X-Forwarded-For", karangan+", 203.0.113.50")
+		if got := alamatPemanggil(p); got != "203.0.113.50" {
+			t.Fatalf("alamat karangan %q lolos jadi %q", karangan, got)
+		}
 	}
 }
