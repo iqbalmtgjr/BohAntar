@@ -256,9 +256,9 @@ func TestAlamatPemanggilTidakBisaDipalsukan(t *testing.T) {
 		t.Fatalf("tanpa header seharusnya 127.0.0.1, dapat %q", got)
 	}
 
-	// X-Forwarded-For tidak boleh mengubah apa pun: pada jalur /api/ server
-	// ini proxy meneruskannya apa adanya, jadi seluruh isinya karangan
-	// penelepon — entri pertama maupun terakhir.
+	// X-Forwarded-For tidak boleh mengubah apa pun: isinya cuma bisa
+	// dipercaya kalau proxy di depan menambahkan alamat asli ke ujungnya, dan
+	// backend tidak punya cara memastikan itu.
 	r.Header.Set("X-Forwarded-For", "1.1.1.1, 203.0.113.9")
 	if got := alamatPemanggil(r); got != "127.0.0.1" {
 		t.Fatalf("X-Forwarded-For seharusnya diabaikan, dapat %q", got)
@@ -271,7 +271,7 @@ func TestAlamatPemanggilTidakBisaDipalsukan(t *testing.T) {
 	}
 
 	// Penyerang yang mengganti-ganti alamat karangan tetap jatuh ke ember
-	// yang sama — inilah yang gagal di produksi 3 September 2026.
+	// yang sama, karena yang dihitung alamat dari nginx.
 	for _, karangan := range []string{"9.9.9.9", "8.8.8.8", "7.7.7.7"} {
 		p := httptest.NewRequest("POST", "/api/auth/login", nil)
 		p.RemoteAddr = "127.0.0.1:1"

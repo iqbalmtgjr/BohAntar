@@ -209,19 +209,20 @@ var (
 // X-Real-IP didahulukan karena nginx mengisinya dari alamat sambungan
 // sungguhan; penelepon tidak bisa mengarangnya.
 //
-// X-Forwarded-For sengaja TIDAK dipakai sama sekali. Dari dalam backend
-// tidak ada cara mengetahui apakah proxy menambahkan alamat asli ke ujung
-// header itu atau meneruskan header klien apa adanya — dan pada jalur /api/
-// server ini, ternyata diteruskan apa adanya. Kalau begitu setiap entrinya
-// karangan penelepon, yang pertama maupun yang terakhir, dan rem yang
-// memercayainya bisa dilewati cukup dengan mengganti satu header tiap
-// percobaan. Terbukti begitu di produksi 3 September 2026.
+// X-Forwarded-For sengaja TIDAK dipakai sama sekali. Isinya baru bisa
+// dipercaya kalau kita tahu proxy di depan MENAMBAHKAN alamat asli ke
+// ujungnya; proxy yang meneruskan header klien apa adanya membuat setiap
+// entri jadi karangan penelepon, yang pertama maupun yang terakhir. Dari
+// dalam backend perbedaan itu tidak kelihatan, dan menebaknya salah berarti
+// rem ini bisa dilewati cukup dengan mengganti satu header tiap percobaan.
 //
-// Kalau X-Real-IP tidak ada, seluruh penelepon jatuh ke satu ember yang
-// sama. Itu memang tumpul — sepuluh kegagalan siapa pun menutup pintu bagi
+// Nginx di server ini memasang X-Real-IP pada blok location /api, jadi
+// mengabaikan X-Forwarded-For tidak menghilangkan apa pun. Kalau suatu hari
+// header itu hilang dari konfigurasi, seluruh penelepon jatuh ke satu ember
+// yang sama: tumpul, karena sepuluh kegagalan siapa pun menutup pintu bagi
 // semua orang selama lima belas menit — tapi gagal ke arah yang menutup
-// jauh lebih baik daripada gagal ke arah yang membuka. Pastikan blok
-// location /api/ di nginx memuat:
+// jauh lebih baik daripada gagal ke arah yang membuka. Yang harus tetap ada
+// di blok itu:
 //
 //	proxy_set_header X-Real-IP $remote_addr;
 func alamatPemanggil(r *http.Request) string {
