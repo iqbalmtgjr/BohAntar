@@ -46,7 +46,9 @@ bersihkan() {
   [ -n "$ORDER_ID" ] && sql "DELETE FROM order_ratings WHERE order_id='$ORDER_ID';
                              DELETE FROM chat_messages WHERE order_id='$ORDER_ID';
                              DELETE FROM orders WHERE id='$ORDER_ID';" >/dev/null 2>&1
-  sql "DELETE FROM users WHERE phone_number IN ('+62${RIDER_PHONE#0}','+62${DRIVER_PHONE#0}');" >/dev/null 2>&1
+  # Nama ikut jadi syarat: kalau nomor acaknya ternyata sudah dipakai orang
+  # sungguhan, pendaftaran gagal dan baris itu bukan milik kita — jangan dihapus.
+  sql "DELETE FROM users WHERE phone_number IN ('+62${RIDER_PHONE#0}','+62${DRIVER_PHONE#0}') AND name LIKE '%$CAP';" >/dev/null 2>&1
   echo
   echo "Dibersihkan. Lulus: $lulus, gagal: $gagal"
   [ "$gagal" -eq 0 ] || exit 1
