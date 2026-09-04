@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -19,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	mysql "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
 )
 
@@ -39,8 +40,9 @@ const skemaOrderRatings = `CREATE TABLE IF NOT EXISTS order_ratings (
 	rider_phone VARCHAR(20),
 	stars INT,
 	review TEXT,
-	created_at VARCHAR(50),
-	INDEX idx_driver (driver_phone)
+	created_at DATETIME,
+	INDEX idx_driver (driver_phone),
+	FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
 )`
 
 const batasPesananMenunggu = 15 * time.Minute
@@ -464,6 +466,75 @@ func main() {
 
 // ==================== DB LAYER ====================
 
+// Nomor kesalahan yang cuma berarti "sudah dikerjakan boot sebelumnya".
+// Dicocokkan lewat nomor, bukan teks pesan: MariaDB di produksi menulis kalimat
+// yang berbeda dari MySQL di mesin pengembang untuk kesalahan yang sama.
+var kesalahanSudahAda = map[uint16]bool{
+	1050: true, // tabel sudah ada
+	1060: true, // kolom sudah ada
+	1061: true, // nama indeks sudah dipakai
+	1091: true, // yang hendak dihapus memang tidak ada
+	1826: true, // nama foreign key sudah dipakai
+	3822: true, // nama CHECK sudah dipakai
+}
+
+// migrasiSkema menjalankan satu perintah skema yang memang boleh sudah pernah
+// berjalan. Kesalahan "sudah ada" didiamkan karena itu keadaan normal pada boot
+// kedua dan seterusnya; sisanya dicatat lengkap dengan perintahnya.
+//
+// Sebelumnya semua perintah ini ditulis `_, _ = db.Exec(...)`. Kolom yang gagal
+// ditambah karena itu tidak meninggalkan jejak sama sekali, dan yang pertama
+// tahu adalah query yang memakainya — gagal di produksi, jauh dari sini, dengan
+// pesan yang tidak menyebut sebabnya.
+func migrasiSkema(perintah string) {
+	if _, err := db.Exec(perintah); err != nil {
+		var e *mysql.MySQLError
+		if errors.As(err, &e) && kesalahanSudahAda[e.Number] {
+			return
+		}
+		log.Printf("PERINGATAN: migrasi skema gagal (%v) — perintah: %s", err, perintah)
+	}
+}
+
+// waktuKeDB mengubah cap waktu RFC3339 — bentuk yang dipakai seluruh field waktu
+// di struct dan seluruh JSON yang dikirim ke aplikasi — menjadi nilai yang bisa
+// disimpan kolom DATETIME.
+//
+// Kolom waktu dulu VARCHAR berisi teks RFC3339 apa adanya, offset "+07:00" ikut
+// tersimpan. DATETIME tidak menyimpan offset, jadi nilainya diserahkan sebagai
+// time.Time dan driver yang mengubahnya — bukan sebagai teks beroffset, yang
+// akan ditolak MySQL. Jalur bacanya tidak perlu ikut berubah: database/sql
+// memindai DATETIME ke field string dalam format RFC3339 yang sama persis
+// seperti sebelumnya (dibuktikan TestDATETIMEBisaDipindaiKeString).
+//
+// String kosong menjadi NULL, bukan tanggal nol: "belum pernah" memang bukan
+// tanggal, dan 0000-00-00 cuma menyamarkannya jadi tahun nol.
+func waktuKeDB(s string) any {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	for _, pola := range []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(pola, s); err == nil {
+			return t
+		}
+	}
+	// Sengaja diteruskan apa adanya: biar MySQL yang menolak dengan pesan yang
+	// menyebut nilainya, daripada diam-diam menyimpan waktu yang salah.
+	return s
+}
+
+// kosongJadiNULL memakai NULL untuk "belum ada", bukan string kosong.
+//
+// Kolom yang menunjuk baris lain tidak boleh berisi "": tidak ada pengguna
+// bernomor kosong, jadi foreign key akan menolaknya. Yang membacanya kembali
+// tetap menerima "" lewat COALESCE, jadi struct dan JSON tidak berubah bentuk.
+func kosongJadiNULL(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 func initDB() {
 	var err error
 	dbUser := getEnv("DB_USER", "root")
@@ -510,44 +581,18 @@ func initDB() {
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
 	db.SetConnMaxLifetime(5 * time.Minute)
-
-	// Alter users table to support longer role name (e.g. rental_partner, food_merchant)
-	_, _ = db.Exec("ALTER TABLE users MODIFY COLUMN role VARCHAR(30)")
-	// Alter users table to support password column
-	_, _ = db.Exec("ALTER TABLE users ADD COLUMN password VARCHAR(100) DEFAULT ''")
-	// Alter rental_cars table to support vehicle_type column
-	_, _ = db.Exec("ALTER TABLE rental_cars ADD COLUMN vehicle_type VARCHAR(20) DEFAULT 'car'")
-	// Warna pembeda armada di kalender; kosong berarti dipilih otomatis oleh UI.
-	_, _ = db.Exec("ALTER TABLE rental_cars ADD COLUMN color VARCHAR(20) DEFAULT ''")
-	// reason menampung rangkaian "Booking - Customer: ... | Pembayaran: ... | Jasa: ... | KTP: ...";
-	// VARCHAR(100) sudah kepenuhan sejak field pembayaran ditambah.
-	_, _ = db.Exec("ALTER TABLE rental_car_schedules MODIFY COLUMN reason VARCHAR(500)")
-	// Jadwal yang sudah ditutup tidak lagi dihapus supaya tetap terbaca di Laporan;
-	// status 'completed' yang membebaskan armada, bukan penghapusan baris.
-	_, _ = db.Exec("ALTER TABLE rental_car_schedules ADD COLUMN status VARCHAR(20) DEFAULT 'active'")
-	// Denda keterlambatan dikunci saat sewa ditutup, bukan dihitung ulang tiap dibaca,
-	// supaya nilai di laporan tidak berubah sendiri seiring waktu.
-	_, _ = db.Exec("ALTER TABLE rental_car_schedules ADD COLUMN late_fee DECIMAL(12,2) NOT NULL DEFAULT 0")
-	_, _ = db.Exec("ALTER TABLE rental_bookings ADD COLUMN late_fee DECIMAL(12,2) NOT NULL DEFAULT 0")
-	// Toleransi keterlambatan: menit gratis sebelum denda mulai dihitung.
-	_, _ = db.Exec("ALTER TABLE rental_settings ADD COLUMN late_fee_grace_minutes INT DEFAULT 0")
-	// Catatan mitra saat menerima/menolak pesanan dari aplikasi.
-	_, _ = db.Exec("ALTER TABLE rental_bookings ADD COLUMN notes VARCHAR(500) DEFAULT ''")
-	// Nama usaha yang dipakai sebagai kop invoice. Nilai awalnya diambil dari
-	// pengajuan kemitraan, tapi mitra boleh menggantinya sendiri lewat Akun Saya.
-	_, _ = db.Exec("ALTER TABLE users ADD COLUMN business_name VARCHAR(100) DEFAULT ''")
-	// Scan dokumen calon driver; pengajuan lama tetap ada dengan kolom kosong.
-	_, _ = db.Exec("ALTER TABLE driver_applications ADD COLUMN ktp_photo_url VARCHAR(255) DEFAULT ''")
-	_, _ = db.Exec("ALTER TABLE driver_applications ADD COLUMN sim_photo_url VARCHAR(255) DEFAULT ''")
-	_, _ = db.Exec("ALTER TABLE driver_applications ADD COLUMN stnk_photo_url VARCHAR(255) DEFAULT ''")
-
+	// Perubahan kolom untuk database yang sudah ada dijalankan SETELAH blok
+	// CREATE TABLE di bawah, bukan sebelumnya: pada database yang baru lahir,
+	// tabelnya belum ada saat baris ini dibaca, dan setiap ALTER akan gagal
+	// dengan "Table doesn't exist" — empat belas peringatan palsu tiap kali
+	// server pertama kali menyalakan database kosong.
 	tables := []string{
 		`CREATE TABLE IF NOT EXISTS users (
 			phone_number VARCHAR(20) PRIMARY KEY,
 			name VARCHAR(100),
 			email VARCHAR(100),
 			role VARCHAR(30),
-			created_at VARCHAR(50),
+			created_at DATETIME,
 			balance DECIMAL(14,2) NOT NULL DEFAULT 0,
 			badge VARCHAR(20),
 			is_driver_active BOOLEAN,
@@ -555,12 +600,12 @@ func initDB() {
 			rating DECIMAL(3,2) NOT NULL DEFAULT 0,
 			password VARCHAR(100) DEFAULT ''
 		)`,
-		skemaOrderRatings,
 		`CREATE TABLE IF NOT EXISTS user_addresses (
 			phone_number VARCHAR(20),
 			address_type VARCHAR(50),
 			address TEXT,
-			PRIMARY KEY (phone_number, address_type)
+			PRIMARY KEY (phone_number, address_type),
+			FOREIGN KEY (phone_number) REFERENCES users(phone_number) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS orders (
 			id VARCHAR(50) PRIMARY KEY,
@@ -577,15 +622,24 @@ func initDB() {
 			status VARCHAR(20),
 			driver_phone VARCHAR(20),
 			driver_name VARCHAR(100),
-			created_at VARCHAR(50),
-			updated_at VARCHAR(50),
+			created_at DATETIME,
+			updated_at DATETIME,
 			package_type VARCHAR(50),
 			package_quantity INT,
 			package_weight VARCHAR(20),
 			package_notes TEXT,
 			insurance BOOLEAN,
-			special_handling BOOLEAN
+			special_handling BOOLEAN,
+			-- RESTRICT, bukan CASCADE: pesanan adalah catatan keuangan dan tidak
+			-- boleh ikut lenyap saat sebuah akun dihapus. Yang menghapus akun wajib
+			-- menganonimkan pesanannya lebih dulu (rider_phone/driver_phone jadi
+			-- NULL), dan barulah baris users boleh pergi.
+			FOREIGN KEY (rider_phone) REFERENCES users(phone_number) ON DELETE RESTRICT,
+			FOREIGN KEY (driver_phone) REFERENCES users(phone_number) ON DELETE RESTRICT
 		)`,
+		// Setelah orders: penilaian menunjuk pesanannya lewat foreign key, jadi
+		// tabel yang ditunjuk harus sudah ada saat ini dijalankan.
+		skemaOrderRatings,
 		`CREATE TABLE IF NOT EXISTS driver_applications (
 			id VARCHAR(50) PRIMARY KEY,
 			phone_number VARCHAR(20),
@@ -600,8 +654,9 @@ func initDB() {
 			sim_photo_url VARCHAR(255) DEFAULT '',
 			stnk_photo_url VARCHAR(255) DEFAULT '',
 			status VARCHAR(20),
-			created_at VARCHAR(50),
-			notes TEXT
+			created_at DATETIME,
+			notes TEXT,
+			FOREIGN KEY (phone_number) REFERENCES users(phone_number) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS chat_messages (
 			id VARCHAR(50) PRIMARY KEY,
@@ -610,7 +665,10 @@ func initDB() {
 			sender_name VARCHAR(100),
 			sender_role VARCHAR(20),
 			content TEXT,
-			timestamp VARCHAR(50)
+			timestamp DATETIME,
+			-- Percakapan ikut mati bersama pesanannya: tanpa pesanan, isinya tidak
+			-- bisa dibaca siapa pun dan tidak menjelaskan apa-apa.
+			FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS food_merchants (
 			id VARCHAR(50) PRIMARY KEY,
@@ -619,7 +677,7 @@ func initDB() {
 			address TEXT NOT NULL,
 			image_url TEXT,
 			is_open BOOLEAN DEFAULT TRUE,
-			created_at VARCHAR(50),
+			created_at DATETIME,
 			FOREIGN KEY (owner_phone) REFERENCES users(phone_number) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS food_menus (
@@ -646,7 +704,7 @@ func initDB() {
 			status VARCHAR(20) DEFAULT 'active',
 			vehicle_type VARCHAR(20) DEFAULT 'car',
 			color VARCHAR(20) DEFAULT '',
-			created_at VARCHAR(50),
+			created_at DATETIME,
 			FOREIGN KEY (owner_phone) REFERENCES users(phone_number) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS rental_bookings (
@@ -658,8 +716,8 @@ func initDB() {
 			total_price DECIMAL(12,2) NOT NULL,
 			status VARCHAR(20) DEFAULT 'pending',
 			notes VARCHAR(500) DEFAULT '',
-			created_at VARCHAR(50),
-			updated_at VARCHAR(50),
+			created_at DATETIME,
+			updated_at DATETIME,
 			FOREIGN KEY (car_id) REFERENCES rental_cars(id) ON DELETE CASCADE,
 			FOREIGN KEY (customer_phone) REFERENCES users(phone_number) ON DELETE CASCADE
 		)`,
@@ -670,7 +728,7 @@ func initDB() {
 			end_time DATETIME NOT NULL,
 			reason VARCHAR(500) DEFAULT 'Maintenance',
 			status VARCHAR(20) DEFAULT 'active',
-			created_at VARCHAR(50),
+			created_at DATETIME,
 			FOREIGN KEY (car_id) REFERENCES rental_cars(id) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS rental_settings (
@@ -678,7 +736,7 @@ func initDB() {
 			late_fee_mode VARCHAR(10) DEFAULT 'off',
 			late_fee_value DECIMAL(12,2) NOT NULL DEFAULT 0,
 			late_fee_grace_minutes INT DEFAULT 0,
-			updated_at VARCHAR(50),
+			updated_at DATETIME,
 			FOREIGN KEY (owner_phone) REFERENCES users(phone_number) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS rental_services (
@@ -686,7 +744,7 @@ func initDB() {
 			owner_phone VARCHAR(20) NOT NULL,
 			name VARCHAR(100) NOT NULL,
 			price DECIMAL(12,2) NOT NULL DEFAULT 0,
-			created_at VARCHAR(50),
+			created_at DATETIME,
 			FOREIGN KEY (owner_phone) REFERENCES users(phone_number) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS partner_applications (
@@ -699,14 +757,14 @@ func initDB() {
 			business_name VARCHAR(100),
 			address TEXT,
 			status VARCHAR(20) DEFAULT 'pending',
-			created_at VARCHAR(50),
+			created_at DATETIME,
 			notes TEXT
 		)`,
 		`CREATE TABLE IF NOT EXISTS partner_subscriptions (
 			phone_number VARCHAR(20) PRIMARY KEY,
 			status VARCHAR(20) DEFAULT 'TRIAL',
 			valid_until DATETIME,
-			updated_at VARCHAR(50),
+			updated_at DATETIME,
 			FOREIGN KEY (phone_number) REFERENCES users(phone_number) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS subscription_invoices (
@@ -715,7 +773,7 @@ func initDB() {
 			amount DECIMAL(12,2) NOT NULL DEFAULT 0,
 			status VARCHAR(20),
 			payment_url TEXT,
-			created_at VARCHAR(50),
+			created_at DATETIME,
 			FOREIGN KEY (phone_number) REFERENCES users(phone_number) ON DELETE CASCADE
 		)`,
 		// Ongkos dan bagi hasil per layanan, diatur super admin lewat dashboard.
@@ -724,7 +782,7 @@ func initDB() {
 			base DECIMAL(12,2) NOT NULL,
 			per_km DECIMAL(12,2) NOT NULL,
 			komisi_persen DECIMAL(5,2) NOT NULL DEFAULT 20,
-			updated_at VARCHAR(50)
+			updated_at DATETIME
 		)`,
 	}
 
@@ -733,8 +791,39 @@ func initDB() {
 			log.Fatalf("Gagal inisialisasi tabel: %v", err)
 		}
 	}
+
+	// Alter users table to support longer role name (e.g. rental_partner, food_merchant)
+	migrasiSkema("ALTER TABLE users MODIFY COLUMN role VARCHAR(30)")
+	// Alter users table to support password column
+	migrasiSkema("ALTER TABLE users ADD COLUMN password VARCHAR(100) DEFAULT ''")
+	// Alter rental_cars table to support vehicle_type column
+	migrasiSkema("ALTER TABLE rental_cars ADD COLUMN vehicle_type VARCHAR(20) DEFAULT 'car'")
+	// Warna pembeda armada di kalender; kosong berarti dipilih otomatis oleh UI.
+	migrasiSkema("ALTER TABLE rental_cars ADD COLUMN color VARCHAR(20) DEFAULT ''")
+	// reason menampung rangkaian "Booking - Customer: ... | Pembayaran: ... | Jasa: ... | KTP: ...";
+	// VARCHAR(100) sudah kepenuhan sejak field pembayaran ditambah.
+	migrasiSkema("ALTER TABLE rental_car_schedules MODIFY COLUMN reason VARCHAR(500)")
+	// Jadwal yang sudah ditutup tidak lagi dihapus supaya tetap terbaca di Laporan;
+	// status 'completed' yang membebaskan armada, bukan penghapusan baris.
+	migrasiSkema("ALTER TABLE rental_car_schedules ADD COLUMN status VARCHAR(20) DEFAULT 'active'")
+	// Denda keterlambatan dikunci saat sewa ditutup, bukan dihitung ulang tiap dibaca,
+	// supaya nilai di laporan tidak berubah sendiri seiring waktu.
+	migrasiSkema("ALTER TABLE rental_car_schedules ADD COLUMN late_fee DECIMAL(12,2) NOT NULL DEFAULT 0")
+	migrasiSkema("ALTER TABLE rental_bookings ADD COLUMN late_fee DECIMAL(12,2) NOT NULL DEFAULT 0")
+	// Toleransi keterlambatan: menit gratis sebelum denda mulai dihitung.
+	migrasiSkema("ALTER TABLE rental_settings ADD COLUMN late_fee_grace_minutes INT DEFAULT 0")
+	// Catatan mitra saat menerima/menolak pesanan dari aplikasi.
+	migrasiSkema("ALTER TABLE rental_bookings ADD COLUMN notes VARCHAR(500) DEFAULT ''")
+	// Nama usaha yang dipakai sebagai kop invoice. Nilai awalnya diambil dari
+	// pengajuan kemitraan, tapi mitra boleh menggantinya sendiri lewat Akun Saya.
+	migrasiSkema("ALTER TABLE users ADD COLUMN business_name VARCHAR(100) DEFAULT ''")
+	// Scan dokumen calon driver; pengajuan lama tetap ada dengan kolom kosong.
+	migrasiSkema("ALTER TABLE driver_applications ADD COLUMN ktp_photo_url VARCHAR(255) DEFAULT ''")
+	migrasiSkema("ALTER TABLE driver_applications ADD COLUMN sim_photo_url VARCHAR(255) DEFAULT ''")
+	migrasiSkema("ALTER TABLE driver_applications ADD COLUMN stnk_photo_url VARCHAR(255) DEFAULT ''")
+
 	// Kolom password kini menyimpan hash bcrypt (60 karakter), bukan teks biasa.
-	_, _ = db.Exec("ALTER TABLE users MODIFY COLUMN password VARCHAR(255) DEFAULT ''")
+	migrasiSkema("ALTER TABLE users MODIFY COLUMN password VARCHAR(255) DEFAULT ''")
 	// Email adalah identitas login — loginHandler dan login Google sama-sama
 	// mencari akun lewat kolom ini — tapi kolomnya tidak pernah dijamin unik.
 	// Dua akun beremail sama membuat salah satunya tidak bisa masuk sama sekali,
@@ -744,7 +833,7 @@ func initDB() {
 	// Email kosong dijadikan NULL lebih dulu: indeks unik MySQL mengizinkan
 	// banyak NULL, tapi menolak banyak string kosong — dan driver lama bisa
 	// terlanjur punya email kosong.
-	_, _ = db.Exec("UPDATE users SET email = NULL WHERE email = ''")
+	migrasiSkema("UPDATE users SET email = NULL WHERE email = ''")
 	if _, err := db.Exec("CREATE UNIQUE INDEX uniq_users_email ON users (email)"); err != nil {
 		// "Duplicate key name" cuma berarti indeksnya sudah ada dari boot lalu.
 		if !strings.Contains(err.Error(), "Duplicate key name") {
@@ -754,18 +843,18 @@ func initDB() {
 	// Komisi aplikator dikunci saat pesanan dibuat, bukan dihitung ulang saat
 	// laporan dibaca: mengubah persentase besok tidak boleh menulis ulang
 	// pendapatan bulan lalu, dan driver berhak tahu angka bersihnya saat menerima.
-	_, _ = db.Exec("ALTER TABLE orders ADD COLUMN komisi DECIMAL(12,2) NOT NULL DEFAULT 0")
+	migrasiSkema("ALTER TABLE orders ADD COLUMN komisi DECIMAL(12,2) NOT NULL DEFAULT 0")
 	// Pesanan lama semuanya dibayar dari dompet, jadi baris yang sudah ada
 	// memang 'wallet'. Pesanan baru selalu menyebutkan metodenya sendiri.
-	_, _ = db.Exec("ALTER TABLE orders ADD COLUMN payment_method VARCHAR(10) DEFAULT 'wallet'")
+	migrasiSkema("ALTER TABLE orders ADD COLUMN payment_method VARCHAR(10) DEFAULT 'wallet'")
 	// Posisi driver terakhir. Satu baris per driver, ditimpa terus — riwayat
 	// perjalanan tidak disimpan karena tidak ada yang membacanya, dan menyimpan
 	// jejak lokasi orang tanpa alasan justru menambah yang harus dijaga.
-	_, _ = db.Exec("ALTER TABLE users ADD COLUMN driver_lat DOUBLE DEFAULT 0")
-	_, _ = db.Exec("ALTER TABLE users ADD COLUMN driver_lng DOUBLE DEFAULT 0")
-	_, _ = db.Exec("ALTER TABLE users ADD COLUMN driver_loc_at VARCHAR(50) DEFAULT ''")
+	migrasiSkema("ALTER TABLE users ADD COLUMN driver_lat DOUBLE DEFAULT 0")
+	migrasiSkema("ALTER TABLE users ADD COLUMN driver_lng DOUBLE DEFAULT 0")
+	migrasiSkema("ALTER TABLE users ADD COLUMN driver_loc_at DATETIME NULL")
 	// Token perangkat untuk notifikasi push. Satu per pemasangan aplikasi.
-	_, _ = db.Exec("ALTER TABLE users ADD COLUMN fcm_token VARCHAR(255) DEFAULT ''")
+	migrasiSkema("ALTER TABLE users ADD COLUMN fcm_token VARCHAR(255) DEFAULT ''")
 
 	// Indeks dan batasan nilai dipisahkan dari CREATE TABLE karena tabelnya
 	// sudah telanjur ada di produksi: `CREATE TABLE IF NOT EXISTS` tidak
@@ -803,7 +892,7 @@ func initDB() {
 		"ALTER TABLE tarif ADD CONSTRAINT chk_tarif_masuk_akal CHECK (base >= 0 AND per_km >= 0 AND komisi_persen BETWEEN 0 AND 100)",
 	}
 	for _, p := range penguat {
-		_, _ = db.Exec(p)
+		migrasiSkema(p)
 	}
 
 	seedTarif()
@@ -945,7 +1034,7 @@ func seedUsersToDB() {
 
 	// Seed Food Merchant & Menu
 	_, _ = db.Exec(`INSERT INTO food_merchants (id, owner_phone, restaurant_name, address, image_url, is_open, created_at)
-		VALUES ('merchant-1', '+628111111111', 'Warung Soto Pontianak', 'Jl. Gajah Mada No. 12, Pontianak', 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400', 1, ?)`, time.Now().Format(time.RFC3339))
+		VALUES ('merchant-1', '+628111111111', 'Warung Soto Pontianak', 'Jl. Gajah Mada No. 12, Pontianak', 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400', 1, ?)`, time.Now())
 	_, _ = db.Exec(`INSERT INTO food_menus (id, merchant_id, name, description, price, category, image_url, is_available) VALUES 
 		('menu-1', 'merchant-1', 'Soto Ayam Spesial', 'Soto ayam dengan kuah kuning gurih', 18000, 'Makanan', 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=100', 1),
 		('menu-2', 'merchant-1', 'Soto Daging Sapi', 'Soto daging sapi empuk melimpah', 25000, 'Makanan', 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=100', 1),
@@ -953,7 +1042,7 @@ func seedUsersToDB() {
 
 	// Seed Rental Cars. Dua placeholder butuh dua argumen; sebelumnya hanya satu
 	// yang dikirim sehingga INSERT selalu gagal diam-diam dan tabel tetap kosong.
-	now := time.Now().Format(time.RFC3339)
+	now := time.Now()
 	if _, err := db.Exec(`INSERT INTO rental_cars (id, owner_phone, brand, model, plate_number, transmission, seats, price_per_day, image_url, status, created_at) VALUES 
 		('car-1', '+628222222222', 'Toyota', 'Avanza Veloz', 'KB 1234 XX', 'Automatic', 7, 350000, 'https://images.unsplash.com/photo-1549399542-7e3f8b79c341?w=400', 'active', ?),
 		('car-2', '+628222222222', 'Honda', 'Brio Satya', 'KB 5678 YY', 'Manual', 5, 250000, 'https://images.unsplash.com/photo-1619767886558-efdc259cde1a?w=400', 'active', ?)`, now, now); err != nil {
@@ -1018,7 +1107,7 @@ func dbSaveUser(u User) error {
 			is_driver_active = VALUES(is_driver_active),
 			total_orders = VALUES(total_orders),
 			rating = VALUES(rating)
-	`, u.PhoneNumber, u.Name, u.Email, u.Role, u.CreatedAt, u.Balance, u.Badge, u.IsDriverActive, u.TotalOrders, u.Rating)
+	`, u.PhoneNumber, u.Name, u.Email, u.Role, waktuKeDB(u.CreatedAt), u.Balance, u.Badge, u.IsDriverActive, u.TotalOrders, u.Rating)
 	return err
 }
 
@@ -1119,8 +1208,8 @@ func dbSaveAddress(phone, addrType, address string) error {
 func dbGetOrder(id string) (Order, bool) {
 	var o Order
 	row := db.QueryRow(`
-		SELECT id, rider_phone, rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
-		fare, COALESCE(komisi, 0), COALESCE(payment_method, 'wallet'), service, status, driver_phone, driver_name, created_at, updated_at,
+		SELECT id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng,
+		fare, COALESCE(komisi, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ''), driver_name, created_at, updated_at,
 		package_type, package_quantity, package_weight, package_notes, insurance, special_handling
 		FROM orders WHERE id = ?
 	`, id)
@@ -1155,8 +1244,8 @@ func dbSaveOrder(o Order) error {
 			driver_phone = VALUES(driver_phone),
 			driver_name = VALUES(driver_name),
 			updated_at = VALUES(updated_at)
-	`, o.ID, o.RiderPhone, o.RiderName, o.PickupAddress, o.DropoffAddress, o.PickupLat, o.PickupLng, o.DropoffLat, o.DropoffLng,
-		o.Fare, o.Komisi, o.PaymentMethod, o.Service, o.Status, o.DriverPhone, o.DriverName, o.CreatedAt, o.UpdatedAt,
+	`, o.ID, kosongJadiNULL(o.RiderPhone), o.RiderName, o.PickupAddress, o.DropoffAddress, o.PickupLat, o.PickupLng, o.DropoffLat, o.DropoffLng,
+		o.Fare, o.Komisi, o.PaymentMethod, o.Service, o.Status, kosongJadiNULL(o.DriverPhone), o.DriverName, waktuKeDB(o.CreatedAt), waktuKeDB(o.UpdatedAt),
 		o.PackageType, o.PackageQuantity, o.PackageWeight, o.PackageNotes, o.Insurance, o.SpecialHandling)
 	return err
 }
@@ -1174,7 +1263,7 @@ func dbClaimOrder(orderID, driverPhone, driverName, updatedAt string) (bool, err
 	res, err := db.Exec(`
 		UPDATE orders SET status = 'accepted', driver_phone = ?, driver_name = ?, updated_at = ?
 		WHERE id = ? AND status = 'pending'`,
-		driverPhone, driverName, updatedAt, orderID)
+		driverPhone, driverName, waktuKeDB(updatedAt), orderID)
 	if err != nil {
 		return false, err
 	}
@@ -1204,7 +1293,7 @@ func dbSaldoTertahan(riderPhone string) (float64, error) {
 // dbCancelOrder membatalkan pesanan hanya kalau statusnya masih salah satu dari
 // yang diizinkan, dan mengembalikan false kalau sudah terlanjur berpindah.
 func dbCancelOrder(orderID string, statusBoleh []string, updatedAt string) (bool, error) {
-	args := []interface{}{updatedAt, orderID}
+	args := []interface{}{waktuKeDB(updatedAt), orderID}
 	tanda := make([]string, len(statusBoleh))
 	for i, s := range statusBoleh {
 		tanda[i] = "?"
@@ -1241,7 +1330,7 @@ func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, e
 		return nil, 0, err
 	}
 
-	q := "SELECT id, rider_phone, rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(payment_method, 'wallet'), service, status, driver_phone, driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling FROM orders WHERE 1=1"
+	q := "SELECT id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ${apos}${apos}), driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling FROM orders WHERE 1=1"
 	var args []interface{}
 	if driver != "" {
 		q += " AND driver_phone = ?"
@@ -1303,7 +1392,7 @@ func dbSaveApplication(a DriverApplication) error {
 		INSERT INTO driver_applications (id, phone_number, name, email, ktp_number, sim_number, vehicle_plate, vehicle_type, vehicle_model, ktp_photo_url, sim_photo_url, stnk_photo_url, status, created_at, notes)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE status = VALUES(status)
-	`, a.ID, a.PhoneNumber, a.Name, a.Email, a.KTPNumber, a.SIMNumber, a.VehiclePlate, a.VehicleType, a.VehicleModel, a.KTPPhotoURL, a.SIMPhotoURL, a.STNKPhotoURL, a.Status, a.CreatedAt, a.Notes)
+	`, a.ID, a.PhoneNumber, a.Name, a.Email, a.KTPNumber, a.SIMNumber, a.VehiclePlate, a.VehicleType, a.VehicleModel, a.KTPPhotoURL, a.SIMPhotoURL, a.STNKPhotoURL, a.Status, waktuKeDB(a.CreatedAt), a.Notes)
 	return err
 }
 
@@ -1349,7 +1438,7 @@ func dbSavePartnerApplication(a PartnerApplication) error {
 		INSERT INTO partner_applications (id, type, phone_number, name, email, ktp_number, business_name, address, status, created_at, notes)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE status = VALUES(status)
-	`, a.ID, a.Type, a.PhoneNumber, a.Name, a.Email, a.KTPNumber, a.BusinessName, a.Address, a.Status, a.CreatedAt, a.Notes)
+	`, a.ID, a.Type, a.PhoneNumber, a.Name, a.Email, a.KTPNumber, a.BusinessName, a.Address, a.Status, waktuKeDB(a.CreatedAt), a.Notes)
 	return err
 }
 
@@ -1416,7 +1505,7 @@ func dbSavePartnerSubscription(s PartnerSubscription) error {
 		validUntil = time.Now()
 	}
 	_, err = db.Exec("INSERT INTO partner_subscriptions (phone_number, status, valid_until, updated_at) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE status = ?, valid_until = ?, updated_at = ?",
-		s.PhoneNumber, s.Status, validUntil, s.UpdatedAt, s.Status, validUntil, s.UpdatedAt)
+		s.PhoneNumber, s.Status, validUntil, waktuKeDB(s.UpdatedAt), s.Status, validUntil, waktuKeDB(s.UpdatedAt))
 	return err
 }
 
@@ -1430,10 +1519,14 @@ func dbSaveSubscriptionInvoice(inv SubscriptionInvoice) error {
 	return err
 }
 
-// subscription_invoices.created_at bertipe VARCHAR(50), bukan DATETIME. parseTime=true
-// hanya menyentuh kolom waktu sungguhan, jadi memindainya ke time.Time SELALU gagal —
-// dan karena kegagalan itu cuma jadi "tidak ketemu", webhook Xendit tidak pernah bisa
-// mengaktifkan langganan siapa pun. Dibaca sebagai teks, lalu dinormalkan.
+// subscription_invoices.created_at dulu VARCHAR(50) berisi RFC3339, sementara
+// parseTime=true hanya menyentuh kolom waktu sungguhan — jadi memindainya ke
+// time.Time SELALU gagal, dan karena kegagalan itu cuma jadi "tidak ketemu",
+// webhook Xendit tidak pernah bisa mengaktifkan langganan siapa pun.
+//
+// Sejak migrasi 002 kolomnya DATETIME dan nilainya sudah rapi sendiri. Fungsi
+// ini tetap dipakai karena masih menerima teks: bentuk lama dari baris yang
+// ditulis sebelum migrasi tetap terbaca benar, dan biayanya satu time.Parse.
 func waktuInvoice(mentah string) string {
 	for _, pola := range []string{time.RFC3339, "2006-01-02 15:04:05"} {
 		if t, err := time.Parse(pola, mentah); err == nil {
@@ -1515,7 +1608,7 @@ func dbGetChatMessages(orderID string) ([]ChatMessage, error) {
 
 func dbSaveChatMessage(m ChatMessage) error {
 	_, err := db.Exec("INSERT INTO chat_messages (id, order_id, sender_phone, sender_name, sender_role, content, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		m.ID, m.OrderID, m.SenderPhone, m.SenderName, m.SenderRole, m.Content, m.Timestamp)
+		m.ID, m.OrderID, m.SenderPhone, m.SenderName, m.SenderRole, m.Content, waktuKeDB(m.Timestamp))
 	return err
 }
 
@@ -1548,7 +1641,7 @@ func dbGetAnalyticsData() (map[string]interface{}, error) {
 	db.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'rider'").Scan(&totalRiders)
 	db.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'driver'").Scan(&totalDrivers)
 
-	rows, err := db.Query("SELECT driver_phone, driver_name, COUNT(*), SUM(fare) FROM orders WHERE status = 'completed' AND driver_phone != '' GROUP BY driver_phone, driver_name")
+	rows, err := db.Query("SELECT driver_phone, driver_name, COUNT(*), SUM(fare) FROM orders WHERE status = 'completed' AND driver_phone IS NOT NULL GROUP BY driver_phone, driver_name")
 	var driverList []map[string]interface{}
 	if err == nil {
 		defer rows.Close()
@@ -1821,10 +1914,12 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	} else if targetRole == "food_merchant" {
 		merchantID := newID("merchant")
-		_, _ = db.Exec(`
+		if _, err := db.Exec(`
 			INSERT INTO food_merchants (id, owner_phone, restaurant_name, address, image_url, is_open, created_at)
 			VALUES (?, ?, ?, ?, ?, 1, ?)
-		`, merchantID, phone, name+" Restaurant", "Jl. Merdeka No. 10, Pontianak", "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400", time.Now().Format(time.RFC3339))
+		`, merchantID, phone, name+" Restaurant", "Jl. Merdeka No. 10, Pontianak", "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400", time.Now()); err != nil {
+			log.Printf("PERINGATAN: merchant %s untuk %s gagal dibuat saat pendaftaran: %v", merchantID, phone, err)
+		}
 	}
 
 	token, err := issueToken(u.PhoneNumber, u.Role)
@@ -2265,7 +2360,7 @@ func rateOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		INSERT INTO order_ratings (order_id, driver_phone, rider_phone, stars, review, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE stars = VALUES(stars), review = VALUES(review), created_at = VALUES(created_at)`,
-		o.ID, o.DriverPhone, o.RiderPhone, input.Stars, strings.TrimSpace(input.Review), time.Now().Format(time.RFC3339)); err != nil {
+		o.ID, o.DriverPhone, o.RiderPhone, input.Stars, strings.TrimSpace(input.Review), time.Now()); err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan penilaian"})
 		return
 	}
@@ -2275,7 +2370,9 @@ func rateOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	// dan tidak ada galat pembulatan yang menumpuk.
 	rata := 5.0
 	if err := db.QueryRow("SELECT AVG(stars) FROM order_ratings WHERE driver_phone = ?", o.DriverPhone).Scan(&rata); err == nil {
-		_, _ = db.Exec("UPDATE users SET rating = ? WHERE phone_number = ?", rata, o.DriverPhone)
+		if _, err := db.Exec("UPDATE users SET rating = ? WHERE phone_number = ?", rata, o.DriverPhone); err != nil {
+			log.Printf("PERINGATAN: rata-rata bintang driver %s gagal disimpan: %v", o.DriverPhone, err)
+		}
 	}
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Terima kasih atas penilaiannya", "rating_driver": rata})
 }
@@ -2346,10 +2443,10 @@ func cancelOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 // setelah penumpangnya menyerah dan pulang.
 func kedaluwarsakanPesanan() {
 	for range time.Tick(time.Minute) {
-		batas := time.Now().Add(-batasPesananMenunggu).Format(time.RFC3339)
+		batas := time.Now().Add(-batasPesananMenunggu)
 		res, err := db.Exec(
 			"UPDATE orders SET status = 'expired', updated_at = ? WHERE status = 'pending' AND created_at < ?",
-			time.Now().Format(time.RFC3339), batas)
+			time.Now(), batas)
 		if err != nil {
 			log.Printf("Gagal menandai pesanan kedaluwarsa: %v", err)
 			continue
@@ -2422,7 +2519,7 @@ func completeOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 
 	o.Status = "completed"
 	o.UpdatedAt = time.Now().Format(time.RFC3339)
-	if _, err := tx.Exec("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?", o.Status, o.UpdatedAt, o.ID); err != nil {
+	if _, err := tx.Exec("UPDATE orders SET status = ?, updated_at = ? WHERE id = ?", o.Status, waktuKeDB(o.UpdatedAt), o.ID); err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal memperbarui pesanan"})
 		return
 	}
@@ -2565,8 +2662,17 @@ func adminUserDetailHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONResponse(w, 404, map[string]string{"error": "User tidak ditemukan"})
 			return
 		}
-		err := dbDeleteUser(phone)
-		if err != nil {
+		if err := dbDeleteUser(phone); err != nil {
+			// Pesanan menunjuk users lewat foreign key RESTRICT, jadi database
+			// menolak menghapus pemilik riwayat pesanan. Itu memang disengaja:
+			// catatan keuangan tidak boleh ikut lenyap. Yang mau menutup sebuah
+			// akun mengubah perannya, bukan menghapus barisnya — dan pesan ini
+			// yang menyebutkannya, supaya admin tidak menghadap 500 tanpa sebab.
+			var e *mysql.MySQLError
+			if errors.As(err, &e) && e.Number == 1451 {
+				writeJSONResponse(w, 409, map[string]string{"error": "Akun ini punya riwayat pesanan dan tidak bisa dihapus — catatan keuangannya ikut hilang. Nonaktifkan saja dengan mengubah perannya."})
+				return
+			}
 			writeJSONResponse(w, 500, map[string]string{"error": "Gagal menghapus dari database: " + err.Error()})
 			return
 		}
@@ -2734,11 +2840,11 @@ func hapusAkunSendiri(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec("UPDATE orders SET rider_name = 'Pengguna dihapus', rider_phone = '' WHERE rider_phone = ?", phone); err != nil {
+	if _, err := tx.Exec("UPDATE orders SET rider_name = 'Pengguna dihapus', rider_phone = NULL WHERE rider_phone = ?", phone); err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menganonimkan pesanan"})
 		return
 	}
-	if _, err := tx.Exec("UPDATE orders SET driver_name = 'Pengguna dihapus', driver_phone = '' WHERE driver_phone = ?", phone); err != nil {
+	if _, err := tx.Exec("UPDATE orders SET driver_name = 'Pengguna dihapus', driver_phone = NULL WHERE driver_phone = ?", phone); err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menganonimkan pesanan"})
 		return
 	}
@@ -2770,7 +2876,7 @@ func hapusAkunSendiri(w http.ResponseWriter, r *http.Request) {
 func dbSetDriverLocation(phone string, lat, lng float64) error {
 	_, err := db.Exec(
 		"UPDATE users SET driver_lat = ?, driver_lng = ?, driver_loc_at = ? WHERE phone_number = ? AND role = 'driver'",
-		lat, lng, time.Now().Format(time.RFC3339), phone,
+		lat, lng, time.Now(), phone,
 	)
 	return err
 }
@@ -2778,14 +2884,19 @@ func dbSetDriverLocation(phone string, lat, lng float64) error {
 // dbGetDriverLocation mengembalikan posisi terakhir driver beserta waktunya.
 // ok bernilai false kalau driver itu belum pernah mengirim posisi.
 func dbGetDriverLocation(phone string) (lat, lng float64, at string, ok bool) {
+	// driver_loc_at boleh NULL: driver yang belum pernah mengirim posisi, dan
+	// driver yang menekan offline. NULL tidak bisa dipindai ke string biasa,
+	// jadi lewat NullString — bukan COALESCE ke '', karena itu memaksa kolom
+	// DATETIME kembali menjadi teks dan offset waktunya hilang di jalan.
+	var waktu sql.NullString
 	err := db.QueryRow(
-		"SELECT COALESCE(driver_lat, 0), COALESCE(driver_lng, 0), COALESCE(driver_loc_at, '') FROM users WHERE phone_number = ?",
+		"SELECT COALESCE(driver_lat, 0), COALESCE(driver_lng, 0), driver_loc_at FROM users WHERE phone_number = ?",
 		phone,
-	).Scan(&lat, &lng, &at)
-	if err != nil || at == "" || !koordinatValid(lat, lng) {
+	).Scan(&lat, &lng, &waktu)
+	if err != nil || !waktu.Valid || !koordinatValid(lat, lng) {
 		return 0, 0, "", false
 	}
-	return lat, lng, at, true
+	return lat, lng, waktu.String, true
 }
 
 // driverLocationHandler menerima posisi driver dari aplikasi.
@@ -2808,7 +2919,7 @@ func driverOfflineHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
 		return
 	}
-	if _, err := db.Exec("UPDATE users SET driver_loc_at = '' WHERE phone_number = ?", callerPhone(r)); err != nil {
+	if _, err := db.Exec("UPDATE users SET driver_loc_at = NULL WHERE phone_number = ?", callerPhone(r)); err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan status"})
 		return
 	}
@@ -3119,10 +3230,12 @@ func adminPartnerApplicationActionHandler(w http.ResponseWriter, r *http.Request
 			err := db.QueryRow("SELECT id FROM food_merchants WHERE owner_phone = ?", app.PhoneNumber).Scan(&existID)
 			if err != nil { // Not exists
 				merchantID := newID("merchant")
-				_, _ = db.Exec(`
+				if _, err := db.Exec(`
 					INSERT INTO food_merchants (id, owner_phone, restaurant_name, address, image_url, is_open, created_at)
 					VALUES (?, ?, ?, ?, ?, 1, ?)
-				`, merchantID, app.PhoneNumber, app.BusinessName, app.Address, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400", time.Now().Format(time.RFC3339))
+				`, merchantID, app.PhoneNumber, app.BusinessName, app.Address, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400", time.Now()); err != nil {
+					log.Printf("PERINGATAN: merchant %s untuk %s gagal dibuat saat persetujuan: %v", merchantID, app.PhoneNumber, err)
+				}
 			}
 		}
 
@@ -3355,7 +3468,7 @@ func foodMerchantHandler(w http.ResponseWriter, r *http.Request) {
 		// owner_phone dari body diabaikan; pemilik selalu pemanggil.
 		m.OwnerPhone = callerPhone(r)
 		m.CreatedAt = time.Now().Format(time.RFC3339)
-		_, err := db.Exec("INSERT INTO food_merchants (id, owner_phone, restaurant_name, address, image_url, is_open, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE restaurant_name = VALUES(restaurant_name), address = VALUES(address), image_url = VALUES(image_url), is_open = VALUES(is_open)", m.ID, m.OwnerPhone, m.RestaurantName, m.Address, m.ImageURL, m.IsOpen, m.CreatedAt)
+		_, err := db.Exec("INSERT INTO food_merchants (id, owner_phone, restaurant_name, address, image_url, is_open, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE restaurant_name = VALUES(restaurant_name), address = VALUES(address), image_url = VALUES(image_url), is_open = VALUES(is_open)", m.ID, m.OwnerPhone, m.RestaurantName, m.Address, m.ImageURL, m.IsOpen, waktuKeDB(m.CreatedAt))
 		if err != nil {
 			writeJSONResponse(w, 500, map[string]string{"error": fmt.Sprintf("Failed to save merchant: %v", err)})
 			return
@@ -3517,7 +3630,7 @@ func rentalCarsHandler(w http.ResponseWriter, r *http.Request) {
 		// (pemiliknya tidak ikut berubah, tapi merek/harga/statusnya tertimpa diam-diam,
 		// dan mitra yang mendaftar tidak mendapat mobil apa pun). Penyuntingan armada
 		// punya jalurnya sendiri lewat PUT /rental/cars/{id}.
-		_, err := db.Exec("INSERT INTO rental_cars (id, owner_phone, brand, model, plate_number, transmission, seats, price_per_day, image_url, status, vehicle_type, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", c.ID, c.OwnerPhone, c.Brand, c.Model, c.PlateNumber, c.Transmission, c.Seats, c.PricePerDay, c.ImageURL, c.Status, c.VehicleType, c.Color, c.CreatedAt)
+		_, err := db.Exec("INSERT INTO rental_cars (id, owner_phone, brand, model, plate_number, transmission, seats, price_per_day, image_url, status, vehicle_type, color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", c.ID, c.OwnerPhone, c.Brand, c.Model, c.PlateNumber, c.Transmission, c.Seats, c.PricePerDay, c.ImageURL, c.Status, c.VehicleType, c.Color, waktuKeDB(c.CreatedAt))
 		if isDuplicateEntry(err) {
 			writeJSONResponse(w, 409, map[string]string{"error": "Plat nomor ini sudah terdaftar di sistem"})
 			return
@@ -3703,7 +3816,7 @@ func rentalSettingsHandler(w http.ResponseWriter, r *http.Request) {
 		input.UpdatedAt = time.Now().Format(time.RFC3339)
 		if _, err := db.Exec(`INSERT INTO rental_settings (owner_phone, late_fee_mode, late_fee_value, late_fee_grace_minutes, updated_at) VALUES (?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE late_fee_mode = VALUES(late_fee_mode), late_fee_value = VALUES(late_fee_value), late_fee_grace_minutes = VALUES(late_fee_grace_minutes), updated_at = VALUES(updated_at)`,
-			input.OwnerPhone, input.LateFeeMode, input.LateFeeVal, input.GraceMinutes, input.UpdatedAt); err != nil {
+			input.OwnerPhone, input.LateFeeMode, input.LateFeeVal, input.GraceMinutes, waktuKeDB(input.UpdatedAt)); err != nil {
 			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
@@ -3810,7 +3923,7 @@ func rentalBookingsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// 3. Insert booking
-		_, err = tx.Exec("INSERT INTO rental_bookings (id, car_id, customer_phone, start_time, end_time, total_price, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", b.ID, b.CarID, b.CustomerPhone, b.StartTime, b.EndTime, b.TotalPrice, "pending", b.CreatedAt, b.UpdatedAt)
+		_, err = tx.Exec("INSERT INTO rental_bookings (id, car_id, customer_phone, start_time, end_time, total_price, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", b.ID, b.CarID, b.CustomerPhone, b.StartTime, b.EndTime, b.TotalPrice, "pending", waktuKeDB(b.CreatedAt), waktuKeDB(b.UpdatedAt))
 		if err != nil {
 			writeJSONResponse(w, 500, map[string]string{"error": fmt.Sprintf("Failed to insert booking: %v", err)})
 			return
@@ -3913,10 +4026,10 @@ func rentalBookingDetailHandler(w http.ResponseWriter, r *http.Request) {
 		// Catatan lama dipertahankan kalau aksi berikutnya tidak membawa catatan,
 		// supaya alasan penolakan tidak hilang begitu saja.
 		query := "UPDATE rental_bookings SET status = ?, updated_at = ? WHERE id = ?"
-		args := []interface{}{input.Status, time.Now().Format(time.RFC3339), bookingID}
+		args := []interface{}{input.Status, time.Now(), bookingID}
 		if input.Notes != "" {
 			query = "UPDATE rental_bookings SET status = ?, notes = ?, updated_at = ? WHERE id = ?"
-			args = []interface{}{input.Status, input.Notes, time.Now().Format(time.RFC3339), bookingID}
+			args = []interface{}{input.Status, input.Notes, time.Now(), bookingID}
 		}
 		if _, err := db.Exec(query, args...); err != nil {
 			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
@@ -4031,7 +4144,7 @@ func rentalSchedulesHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		_, err = tx.Exec("INSERT INTO rental_car_schedules (id, car_id, start_time, end_time, reason, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", s.ID, s.CarID, s.StartTime, s.EndTime, s.Reason, s.Status, s.CreatedAt)
+		_, err = tx.Exec("INSERT INTO rental_car_schedules (id, car_id, start_time, end_time, reason, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", s.ID, s.CarID, s.StartTime, s.EndTime, s.Reason, s.Status, waktuKeDB(s.CreatedAt))
 		if err != nil {
 			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -4720,7 +4833,7 @@ func rentalServicesHandler(w http.ResponseWriter, r *http.Request) {
 		s.OwnerPhone = callerPhone(r)
 		s.ID = newID("service")
 		s.CreatedAt = time.Now().Format(time.RFC3339)
-		if _, err := db.Exec("INSERT INTO rental_services (id, owner_phone, name, price, created_at) VALUES (?, ?, ?, ?, ?)", s.ID, s.OwnerPhone, s.Name, s.Price, s.CreatedAt); err != nil {
+		if _, err := db.Exec("INSERT INTO rental_services (id, owner_phone, name, price, created_at) VALUES (?, ?, ?, ?, ?)", s.ID, s.OwnerPhone, s.Name, s.Price, waktuKeDB(s.CreatedAt)); err != nil {
 			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
 			return
 		}

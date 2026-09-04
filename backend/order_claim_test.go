@@ -29,9 +29,28 @@ func bukaDBTes(t *testing.T) {
 	t.Cleanup(func() { db = lama; conn.Close() })
 }
 
+// penggunaUji membuat satu akun sekali pakai dan menghapusnya lagi setelah tes.
+//
+// Sejak migrasi 002, orders.rider_phone menunjuk users lewat foreign key, jadi
+// pesanan uji untuk nomor karangan ditolak database. Itu memang gunanya: data
+// yang tidak mungkin ada di produksi juga tidak boleh bisa dibuat di tes.
+func penggunaUji(t *testing.T, phone string) {
+	t.Helper()
+	if err := dbSaveUser(User{
+		PhoneNumber: phone, Name: "Uji", Role: "rider",
+		CreatedAt: time.Now().Format(time.RFC3339), Badge: "Silver",
+	}); err != nil {
+		t.Fatalf("gagal menyiapkan pengguna uji %s: %v", phone, err)
+	}
+	// Berjalan setelah pembersihan pesanan (t.Cleanup urutannya terbalik), jadi
+	// baris users pergi belakangan — persis yang dituntut ON DELETE RESTRICT.
+	t.Cleanup(func() { db.Exec("DELETE FROM users WHERE phone_number = ?", phone) })
+}
+
 // pesananUji menyimpan satu pesanan dan membereskannya setelah tes selesai.
 func pesananUji(t *testing.T, rider, metode, status string, tarif float64) string {
 	t.Helper()
+	penggunaUji(t, rider)
 	oid := newID("test")
 	now := time.Now().Format(time.RFC3339)
 	if err := dbSaveOrder(Order{
@@ -53,6 +72,10 @@ func TestDbClaimOrderHanyaSatuPemenang(t *testing.T) {
 	now := time.Now().Format(time.RFC3339)
 
 	const jumlahDriver = 8
+	// Driver pun menunjuk users lewat foreign key sejak migrasi 002.
+	for i := 0; i < jumlahDriver; i++ {
+		penggunaUji(t, fmt.Sprintf("+6280000000%d", i))
+	}
 	var siap sync.WaitGroup
 	var mulai sync.WaitGroup
 	var kunci sync.Mutex
@@ -126,6 +149,7 @@ func TestRateOrder(t *testing.T) {
 	penumpang := "+62800000010"
 	driver := "+62800000011"
 	oid := pesananUji(t, penumpang, "cash", "completed", 12000)
+	penggunaUji(t, driver)
 	db.Exec("UPDATE orders SET driver_phone = ? WHERE id = ?", driver, oid)
 	// Tabelnya dibuat server saat boot; tes tidak menjalankan initDB, jadi
 	// definisi yang sama dipakai langsung dari sini.
