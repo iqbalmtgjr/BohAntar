@@ -1,3 +1,6 @@
 
 # Paket unggahan dashboard, dibuat ulang tiap deploy
 dist-dashboard.zip
+
+# Cache build Kotlin, lahir sendiri saat flutter pub get
+mobile/android/.kotlin/
