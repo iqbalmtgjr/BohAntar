@@ -1,4 +1,7 @@
 import 'dart:async';
+// Path dari dart:ui dipakai beralias: latlong2 lewat flutter_map juga
+// mengekspor Path (versi LatLng), dan tanpa alias namanya bentrok.
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -7,12 +10,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/screens/login_screen.dart';
 import 'package:mobile/screens/order_ride_screen.dart';
+import 'package:mobile/screens/pindai_setoran_screen.dart';
 import 'package:mobile/services/api_service.dart';
 import 'package:mobile/services/maps_service.dart';
 import 'package:mobile/services/notifikasi_service.dart';
 import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/peta.dart';
-import 'package:mobile/widgets/decorative_background.dart';
 
 class DashboardScreen extends StatefulWidget {
   final String name;
@@ -97,6 +100,16 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   // setState tiap 3 detik, dan Future yang dibuat di build ikut dibuat ulang
   // setiap kali — riwayat pesanan akan ditarik dua puluh kali per menit.
   Future<Map<String, dynamic>>? _pendapatanFuture;
+
+  // Riwayat untuk tab Aktivitas. Diisi oleh polling yang memang sudah berjalan
+  // tiap 4 detik untuk mencari pesanan aktif, jadi tab ini tidak menembak
+  // permintaan sendiri. _riwayatSidik menyimpan sidik jari daftar terakhir
+  // (id:status tiap baris) supaya setState hanya dipanggil ketika isinya benar-
+  // benar berubah — tanpa itu daftarnya digambar ulang tiap 4 detik dan
+  // kelihatan berkedip terus.
+  List<dynamic> _riwayatPesanan = [];
+  String _riwayatSidik = '';
+  bool _riwayatSudahDimuat = false;
 
   @override
   void initState() {
@@ -212,9 +225,17 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             break;
           }
         }
-        if (mounted) {
+        // Daftar yang sama persis tidak perlu digambar ulang. Sidik jarinya
+        // memuat status tiap pesanan, jadi perubahan status ikut terdeteksi,
+        // bukan cuma pesanan baru.
+        final sidik = ordersList.map((o) => '${o['id']}:${o['status']}').join(',');
+        final berubah = sidik != _riwayatSidik || activeOrder?['id'] != _riderActiveOrder?['id'];
+        if (mounted && (berubah || !_riwayatSudahDimuat)) {
           setState(() {
             _riderActiveOrder = activeOrder;
+            _riwayatPesanan = ordersList;
+            _riwayatSidik = sidik;
+            _riwayatSudahDimuat = true;
           });
         }
       }
@@ -851,64 +872,139 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     return Scaffold(
       backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
       appBar: _buildAppBar(),
+      // Badan halaman dinaikkan sampai ke belakang app bar supaya lengkungannya
+      // ikut lewat di belakang logo, bukan berhenti sebagai garis lurus di
+      // bawahnya. Isinya sendiri didorong turun oleh Padding di bawah.
+      extendBodyBehindAppBar: true,
       body: Stack(
         children: [
-          const DecorativeCircles(),
-          _buildRiderTabContent(theme, isDark),
+          // DecorativeCircles sengaja tidak dipakai di sini: empat lingkaran
+          // samarnya membuat latar tampak berkabut di mana-mana, sedangkan
+          // rancangannya cuma minta satu lengkungan di pojok kanan atas.
+          _latarLengkungKananAtas(isDark),
+          // removePadding wajib di sini. Sejak badan halaman naik ke belakang app
+          // bar, Scaffold tidak lagi memakan padding sistem, jadi MediaQuery di
+          // dalamnya masih membawa tinggi status bar dan bilah gestur. Setiap
+          // daftar bergulir bersarang (GridView menu, ListView aktivitas) diam-diam
+          // menambahkan padding itu ke dirinya sendiri — itulah jarak kosong yang
+          // muncul antara kartu saldo dan menu. Jaraknya dipasang sekali di sini.
+          MediaQuery.removePadding(
+            context: context,
+            removeTop: true,
+            removeBottom: true,
+            child: Padding(
+              padding: EdgeInsets.only(top: MediaQuery.paddingOf(context).top + 74),
+              child: _buildRiderTabContent(theme, isDark),
+            ),
+          ),
         ],
       ),
+      floatingActionButton: SizedBox(
+        width: 58,
+        height: 58,
+        child: FloatingActionButton(
+          onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Pindai QR sedang dalam pengembangan.'),
+              backgroundColor: AppTheme.primaryBlue,
+            ),
+          ),
+          backgroundColor: AppTheme.primaryBlue,
+          elevation: 4,
+          shape: const CircleBorder(),
+          child: const Icon(Icons.qr_code_scanner, color: Colors.white, size: 26),
+        ),
+      ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: _buildRiderBottomNavBar(isDark),
     );
   }
 
-  Widget _buildRiderBottomNavBar(bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? AppTheme.cardObsidianDark : Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, -3),
+  /// Latar lengkung biru di pojok kanan atas.
+  ///
+  /// Dibuat dari widget, bukan PNG: ikut warna tema, tidak menambah aset, dan
+  /// ukurannya tetap benar di layar mana pun. Warna tepi luar bidangnya sengaja
+  /// hampir sama dengan latar halaman — perbedaan tipis itulah yang terbaca
+  /// sebagai garis lengkung, ditegaskan cincin tipis di luarnya.
+  Widget _latarLengkungKananAtas(bool isDark) {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: IgnorePointer(
+        child: SizedBox(
+          height: 420,
+          child: CustomPaint(
+            painter: _PelukisLengkungAtas(isDark: isDark),
+            size: Size.infinite,
           ),
+        ),
+      ),
+    );
+  }
+
+  // Bar bawah memakai BottomAppBar, bukan BottomNavigationBar, karena tombol
+  // bundar di tengah butuh takik (notch) dan satu slot kosong di antara menu.
+  // Indeks tabnya tetap 0–3 seperti sebelumnya; slot tengah bukan tab.
+  Widget _buildRiderBottomNavBar(bool isDark) {
+    return BottomAppBar(
+      // Tanpa latar sendiri: warna halaman yang terlihat, jadi bar bawah menyatu
+      // dengan isinya. Bayangan ikut dimatikan, kalau tidak garis abu-abunya
+      // tetap tercetak di atas bar yang sudah bening.
+      color: Colors.transparent,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+      shape: const CircularNotchedRectangle(),
+      notchMargin: 8,
+      height: 66,
+      padding: EdgeInsets.zero,
+      child: Row(
+        children: [
+          _itemNavRider(0, Icons.home_outlined, Icons.home, 'Home', isDark),
+          _itemNavRider(1, Icons.receipt_long_outlined, Icons.receipt_long, 'Aktivitas', isDark),
+          const SizedBox(width: 64), // ruang untuk tombol bundar di tengah
+          _itemNavRider(2, Icons.help_outline, Icons.help, 'Bantuan', isDark),
+          _itemNavRider(3, Icons.person_outline, Icons.person, 'Akun', isDark),
         ],
       ),
-      child: BottomNavigationBar(
-        currentIndex: _currentTabIndex,
-        onTap: (index) {
-          setState(() {
-            _currentTabIndex = index;
-          });
-        },
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        selectedItemColor: AppTheme.primaryBlue,
-        unselectedItemColor: Colors.grey.shade400,
-        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal, fontSize: 11),
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_outlined),
-            activeIcon: Icon(Icons.home),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.receipt_long_outlined),
-            activeIcon: Icon(Icons.receipt_long),
-            label: 'Aktivitas',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.help_outline),
-            activeIcon: Icon(Icons.help),
-            label: 'Bantuan',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
-            activeIcon: Icon(Icons.person),
-            label: 'Akun',
-          ),
-        ],
+    );
+  }
+
+  Widget _itemNavRider(int index, IconData icon, IconData iconAktif, String label, bool isDark) {
+    final aktif = _currentTabIndex == index;
+    final warna = aktif
+        ? AppTheme.primaryBlue
+        : (isDark ? Colors.white38 : Colors.grey.shade400);
+    return Expanded(
+      child: InkWell(
+        onTap: () => setState(() => _currentTabIndex = index),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(aktif ? iconAktif : icon, color: warna, size: 23),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              style: TextStyle(
+                color: warna,
+                fontSize: aktif ? 11.5 : 11,
+                fontWeight: aktif ? FontWeight.bold : FontWeight.w500,
+              ),
+            ),
+            // Garis penanda tab aktif, seperti di rancangan. Slot setinggi 3 px
+            // tetap dipesan walau tab tidak aktif supaya label tidak bergeser
+            // naik-turun setiap pindah tab.
+            const SizedBox(height: 3),
+            Container(
+              width: 16,
+              height: 2.5,
+              decoration: BoxDecoration(
+                color: aktif ? AppTheme.primaryBlue : Colors.transparent,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -933,11 +1029,12 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header lokasi
+          // Lonceng pindah ke app bar, jadi baris ini tinggal lokasi saja.
           Row(
             children: [
               const Icon(Icons.location_on, color: AppTheme.primaryBlue, size: 20),
               const SizedBox(width: 8),
-              Expanded(
+              Flexible(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -951,7 +1048,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   ],
                 ),
               ),
-              const Icon(Icons.notifications_none, size: 24),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right, size: 18, color: Colors.grey.shade400),
             ],
           ),
           const SizedBox(height: 24),
@@ -970,86 +1068,143 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
           // bohPay balance Card
           Container(
-            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: isDark ? AppTheme.cardObsidianDark : Colors.white,
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: AppTheme.primaryBlue.withOpacity(isDark ? 0.15 : 0.08),
-                width: 1.5,
+              gradient: const LinearGradient(
+                colors: [AppTheme.primaryBlue, Color(0xFF4D90FF)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
+              borderRadius: BorderRadius.circular(24),
               boxShadow: [
                 BoxShadow(
-                  color: AppTheme.primaryBlue.withOpacity(isDark ? 0.12 : 0.04),
-                  blurRadius: 14,
-                  offset: const Offset(0, 6),
+                  color: AppTheme.primaryBlue.withOpacity(0.28),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
                 )
               ],
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
+            // ClipRRect supaya dua lingkaran hias di bawah ini terpotong rapi
+            // mengikuti sudut kartunya, bukan menonjol keluar.
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: Stack(
+                children: [
+                  Positioned(
+                    top: -55,
+                    right: -30,
+                    child: Container(
+                      width: 150,
+                      height: 150,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.10),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    bottom: -70,
+                    right: 40,
+                    child: Container(
+                      width: 130,
+                      height: 130,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.07),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                 Row(
                   children: [
                     Container(
-                      padding: const EdgeInsets.all(8),
+                      padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: AppTheme.primaryBlue.withOpacity(0.1),
-                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.22),
+                        borderRadius: BorderRadius.circular(14),
                       ),
-                      child: const Icon(Icons.wallet, color: AppTheme.primaryBlue, size: 20),
+                      child: const Icon(Icons.account_balance_wallet, color: Colors.white, size: 22),
                     ),
                     const SizedBox(width: 12),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'bohPay',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppTheme.primaryBlue),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Rp ${_walletBalance.toStringAsFixed(0).replaceAllMapped(RegExp(r"(\d{1,3})(?=(\d{3})+(?!\d))"), (Match m) => "${m[1]}.")}',
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -0.5,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'bohPay',
+                            style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Colors.white70),
                           ),
+                          const SizedBox(height: 2),
+                          Text(
+                            'Rp ${_walletBalance.toStringAsFixed(0).replaceAllMapped(RegExp(r"(\d{1,3})(?=(\d{3})+(?!\d))"), (Match m) => "${m[1]}.")}',
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.5,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (widget.role == 'rider')
+                      ElevatedButton(
+                        onPressed: _showTopUpDialog,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.white,
+                          foregroundColor: AppTheme.primaryBlue,
+                          padding: const EdgeInsets.only(left: 14, right: 8),
+                          minimumSize: const Size(0, 38),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(30),
+                          ),
+                          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                          elevation: 0,
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('Top Up'),
+                            Icon(Icons.chevron_right, size: 16),
+                          ],
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                        const Row(
+                          children: [
+                            Icon(Icons.check_circle, size: 14, color: Colors.white70),
+                            SizedBox(width: 6),
+                            Text(
+                              'Saldo kamu aman dan siap digunakan',
+                              style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w500),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
-                if (widget.role == 'rider')
-                  ElevatedButton(
-                  onPressed: _showTopUpDialog,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primaryBlue,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size(80, 38),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                    elevation: 0,
                   ),
-                  child: const Text('Top Up'),
-                )
-              ],
+                ],
+              ),
             ),
           ),
-          const SizedBox(height: 28),
+          const SizedBox(height: 16),
 
           // Services Grid
           GridView.count(
             crossAxisCount: 3,
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            mainAxisSpacing: 20,
-            crossAxisSpacing: 16,
-            childAspectRatio: 0.9,
+            mainAxisSpacing: 12,
+            crossAxisSpacing: 12,
+            childAspectRatio: 0.82,
+            padding: EdgeInsets.zero, // jangan ambil padding sistem dari MediaQuery
             children: [
-              _buildServiceButton(Icons.local_shipping, 'BohAntar', AppTheme.primaryBlue, Colors.white, () {
+              _buildServiceButton(Icons.delivery_dining, 'BohAntar', 'Antar barang & makanan', AppTheme.primaryBlue, () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -1061,7 +1216,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   ),
                 ).then((_) => _fetchUserProfile());
               }),
-              _buildServiceButton(Icons.motorcycle, 'BohRide', const Color(0xFF4D90FF), Colors.white, () {
+              _buildServiceButton(Icons.motorcycle, 'BohRide', 'Jasa transportasi', const Color(0xFF4D90FF), () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -1073,7 +1228,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   ),
                 ).then((_) => _fetchUserProfile());
               }),
-              _buildServiceButton(Icons.restaurant, 'BohFood', const Color(0xFFFF4D4D), Colors.white, () {
+              _buildServiceButton(Icons.restaurant, 'BohFood', 'Pesan makanan', const Color(0xFFFF4D4D), () {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('Layanan BohFood sedang dalam pengembangan. Silakan coba BohRide/BohCar!'),
@@ -1081,7 +1236,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   ),
                 );
               }),
-              _buildServiceButton(Icons.drafts, 'BohSend', const Color(0xFF00B4D8), Colors.white, () {
+              _buildServiceButton(Icons.mail, 'BohSend', 'Kirim paket & dokumen', const Color(0xFF00B4D8), () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -1093,7 +1248,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   ),
                 ).then((_) => _fetchUserProfile());
               }),
-              _buildServiceButton(Icons.shopping_bag, 'BohMart', const Color(0xFFFFB703), Colors.white, () {
+              _buildServiceButton(Icons.shopping_bag, 'BohMart', 'Belanja kebutuhan', const Color(0xFFFFB703), () {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(
                     content: Text('Layanan BohMart sedang dalam pengembangan. Silakan coba BohRide/BohCar!'),
@@ -1101,7 +1256,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   ),
                 );
               }),
-              _buildServiceButton(Icons.grid_view_rounded, 'Lainnya', const Color(0xFF6C757D), Colors.white, () {
+              _buildServiceButton(Icons.grid_view_rounded, 'Lainnya', 'Layanan lainnya', const Color(0xFF6C757D), () {
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Membuka seluruh menu layanan...')),
                 );
@@ -1133,14 +1288,20 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             ),
             TextButton(
               onPressed: () {},
-              child: const Text('Lihat semua', style: TextStyle(color: AppTheme.primaryBlue)),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Lihat semua', style: TextStyle(color: AppTheme.primaryBlue, fontWeight: FontWeight.w600)),
+                  Icon(Icons.chevron_right, size: 16, color: AppTheme.primaryBlue),
+                ],
+              ),
             ),
           ],
         ),
         const SizedBox(height: 8),
         Container(
           width: double.infinity,
-          height: 120,
+          height: 150,
           decoration: BoxDecoration(
             gradient: const LinearGradient(
               colors: [Color(0xFF4D90FF), AppTheme.primaryBlue],
@@ -1156,27 +1317,79 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 bottom: -20,
                 child: Opacity(
                   opacity: 0.15,
-                  child: const Icon(Icons.local_shipping, size: 140, color: Colors.white),
+                  child: const Icon(Icons.local_shipping, size: 150, color: Colors.white),
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.all(18),
+                padding: const EdgeInsets.all(16),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
-                  children: const [
-                    Text(
-                      'DISKON ONGKIR\nbohAntar',
-                      style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w900),
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.25),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text(
+                        'Spesial Pengguna Baru',
+                        style: TextStyle(color: Colors.white, fontSize: 9.5, fontWeight: FontWeight.bold),
+                      ),
                     ),
-                    SizedBox(height: 6),
-                    Text(
-                      'Hingga Rp10.000 • s/d 30 Des 2026',
-                      style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Diskon Ongkir\nhingga Rp10.000',
+                      style: TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w900, height: 1.2),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      'Untuk semua layanan bohAntar',
+                      style: TextStyle(color: Colors.white70, fontSize: 10.5, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 10),
+                    ElevatedButton(
+                      onPressed: () => setState(() => _currentTabIndex = 0),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: AppTheme.primaryBlue,
+                        padding: const EdgeInsets.only(left: 12, right: 6),
+                        minimumSize: const Size(0, 30),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                        textStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                        elevation: 0,
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('Pesan Sekarang'),
+                          Icon(Icons.chevron_right, size: 15),
+                        ],
+                      ),
                     ),
                   ],
                 ),
-              )
+              ),
+              // Titik indikator. Baru satu promo, jadi hanya satu yang menyala —
+              // sisanya menyusul begitu promonya datang dari server.
+              Positioned(
+                right: 16,
+                bottom: 12,
+                child: Row(
+                  children: List.generate(3, (i) {
+                    return Container(
+                      width: i == 0 ? 14 : 6,
+                      height: 6,
+                      margin: const EdgeInsets.only(left: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(i == 0 ? 0.95 : 0.4),
+                        borderRadius: BorderRadius.circular(3),
+                      ),
+                    );
+                  }),
+                ),
+              ),
             ],
           ),
         )
@@ -1184,35 +1397,42 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
+  // Digambar dari _riwayatPesanan, bukan FutureBuilder yang Future-nya dibuat di
+  // dalam build: polling pesanan aktif memanggil setState tiap 4 detik, dan
+  // Future yang lahir di build ikut dibuat ulang setiap kali — riwayatnya ditarik
+  // ulang lengkap dengan lingkaran memuat, terus-menerus. Sekarang datanya ikut
+  // menumpang polling yang sama, dan tarik-ke-bawah untuk menyegarkan manual.
   Widget _buildAktivitasBody(ThemeData theme, bool isDark) {
-    return FutureBuilder<Map<String, dynamic>>(
-      future: ApiService().getOrders(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text("Error: ${snapshot.error}"));
-        }
-        final List ordersList = snapshot.data?['orders'] ?? [];
-        if (ordersList.isEmpty) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: const [
-                Icon(Icons.receipt_long, size: 64, color: Colors.grey),
-                SizedBox(height: 16),
-                Text("Belum ada riwayat aktivitas pesanan", style: TextStyle(color: Colors.grey)),
-              ],
+    if (!_riwayatSudahDimuat) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_riwayatPesanan.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _fetchRiderActiveOrder,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: const [
+            SizedBox(height: 160),
+            Icon(Icons.receipt_long, size: 64, color: Colors.grey),
+            SizedBox(height: 16),
+            Center(
+              child: Text("Belum ada riwayat aktivitas pesanan", style: TextStyle(color: Colors.grey)),
             ),
-          );
-        }
-        return ListView.builder(
-          physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          itemCount: ordersList.length,
-          itemBuilder: (context, index) {
-            final order = ordersList[index];
+          ],
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _fetchRiderActiveOrder,
+      child: Builder(
+        builder: (context) {
+          final ordersList = _riwayatPesanan;
+          return ListView.builder(
+            physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+            padding: const EdgeInsets.all(16),
+            itemCount: ordersList.length,
+            itemBuilder: (context, index) {
+              final order = ordersList[index];
             final pickup = order['pickup'] ?? '';
             final dropoff = order['dropoff'] ?? '';
             final fare = (order['fare'] as num?)?.toDouble() ?? 0.0;
@@ -1267,9 +1487,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 ),
               ),
             );
-          },
-        );
-      },
+            },
+          );
+        },
+      ),
     );
   }
 
@@ -1731,40 +1952,69 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
-  Widget _buildServiceButton(IconData icon, String label, Color bgColor, Color iconColor, VoidCallback onTap) {
+  Widget _buildServiceButton(IconData icon, String label, String subjudul, Color bgColor, VoidCallback onTap) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: bgColor,
-              shape: BoxShape.circle,
-              boxShadow: [
-                BoxShadow(
-                  color: bgColor.withOpacity(0.2),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                )
-              ],
-            ),
-            child: Icon(icon, color: iconColor, size: 28),
+    return Material(
+      color: isDark ? AppTheme.cardObsidianDark : Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      elevation: 0,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: isDark ? Colors.white12 : const Color(0xFFE8EEF7)),
           ),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 12,
-              color: isDark ? Colors.white70 : Colors.black87,
-            ),
-          )
-        ],
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: bgColor,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: bgColor.withOpacity(0.28),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    )
+                  ],
+                ),
+                child: Icon(icon, color: Colors.white, size: 24),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12.5,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 2),
+              // Flexible supaya subjudul dua baris di layar sempit terpotong
+              // rapi, bukan meluberkan kartunya.
+              Flexible(
+                child: Text(
+                  subjudul,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 9.5,
+                    height: 1.2,
+                    color: isDark ? Colors.white38 : Colors.grey.shade500,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -2104,6 +2354,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 ),
               ),
               const SizedBox(height: 20),
+              // Saldo minus berarti komisi pesanan tunai yang belum disetor.
+              // Kartunya hanya muncul kalau memang ada utangnya.
+              if (_walletBalance < 0) _kartuUtangKomisi(isDark),
               Text(
                 'Riwayat pesanan',
                 style: TextStyle(
@@ -2142,6 +2395,90 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Kartu utang komisi + tombol pindai QR setoran.
+  ///
+  /// Uangnya diserahkan tunai ke petugas lebih dulu; QR yang dipindai di sini
+  /// cuma bukti bahwa petugas sudah menerimanya. Karena itu tombolnya bicara
+  /// "sudah setor tunai", bukan "bayar sekarang".
+  Widget _kartuUtangKomisi(bool isDark) {
+    final utang = -_walletBalance;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 20),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? AppTheme.cardObsidianDark : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.errorColor.withOpacity(0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.account_balance_wallet, color: AppTheme.errorColor, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Komisi belum disetor',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                ),
+              ),
+              Text(
+                _rupiah(utang),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w900,
+                  fontSize: 16,
+                  color: AppTheme.errorColor,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Dari pesanan tunai: ongkosnya Anda terima langsung, komisinya jadi utang ke bohAntar.',
+            style: TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _pindaiSetoran,
+              icon: const Icon(Icons.qr_code_scanner, size: 18),
+              label: const Text('Sudah setor tunai — pindai QR petugas'),
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(0, 46),
+                textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pindaiSetoran() async {
+    final hasil = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(builder: (_) => const PindaiSetoranScreen()),
+    );
+    if (hasil == null || !mounted) return;
+    // Saldo dibaca ulang dari server, bukan dihitung sendiri di sini: setoran
+    // lain bisa masuk di sela-sela, dan angka yang benar hanya ada di database.
+    await _fetchUserProfile();
+    if (!mounted) return;
+    final jumlah = (hasil['amount'] as num?)?.toDouble() ?? 0;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Setoran ${_rupiah(jumlah)} diterima. Terima kasih!'),
+        backgroundColor: Colors.green,
       ),
     );
   }
@@ -2359,7 +2696,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     onPressed: () async {
                       final phone = _acceptedOrder!['rider_phone'] ?? '';
                       final uri = Uri.parse('tel:$phone');
-                      if (await canLaunchUrl(uri)) { await launchUrl(uri); }
+                      if (phone.isNotEmpty && await canLaunchUrl(uri)) {
+                        await launchUrl(uri);
+                      } else {
+                        _beriTahu('Tidak dapat melakukan panggilan');
+                      }
                     },
                     icon: const Icon(Icons.phone, size: 16),
                     label: const Text('Telepon', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -2670,29 +3011,143 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     return AppBar(
       backgroundColor: Colors.transparent,
       elevation: 0,
-      title: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: AppTheme.primaryBlue.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: const Icon(Icons.local_taxi, color: AppTheme.primaryBlue, size: 20),
-          ),
-          const SizedBox(width: 8),
-          const Text(
-            'bohAntar',
-            style: TextStyle(fontWeight: FontWeight.w900, color: AppTheme.primaryBlue, fontSize: 18),
-          ),
-        ],
+      // Material 3 mewarnai app bar dengan surfaceTint begitu isinya tergulir di
+      // bawahnya — itulah pita putih di belakang logo. Dua baris ini
+      // mematikannya, jadi app bar benar-benar bening di posisi mana pun.
+      surfaceTintColor: Colors.transparent,
+      scrolledUnderElevation: 0,
+      // Bar ditinggikan supaya logo yang lebih besar tidak mepet ke tepi.
+      toolbarHeight: 74,
+      // Logonya sudah memuat tulisan "bohAntar", jadi ikon taksi dan teksnya
+      // tidak perlu lagi. cacheHeight dipasang karena berkasnya 421 KB: tanpa
+      // itu Flutter mendekode bitmap penuh untuk slot setinggi 46 px.
+      title: Image.asset(
+        'assets/images/logo.png',
+        height: 46,
+        cacheHeight: 138,
+        semanticLabel: 'bohAntar',
       ),
       actions: [
-        IconButton(
-          icon: Icon(Icons.logout, color: isDark ? Colors.white70 : Colors.black87),
-          onPressed: _logout,
-        )
+        _tombolHeader(
+          icon: Icons.notifications_none,
+          isDark: isDark,
+          // Titik merah hanya menyala kalau memang ada yang perlu dilihat.
+          // Lencana yang menyala terus berhenti berarti setelah sehari.
+          bertanda: _riderActiveOrder != null,
+          onTap: () => setState(() => _currentTabIndex = 1),
+        ),
+        const SizedBox(width: 8),
+        _tombolHeader(icon: Icons.logout, isDark: isDark, onTap: _logout),
+        const SizedBox(width: 16),
       ],
     );
   }
+
+  /// Tombol persegi membulat di kanan atas, seperti di rancangan.
+  Widget _tombolHeader({
+    required IconData icon,
+    required bool isDark,
+    required VoidCallback onTap,
+    bool bertanda = false,
+  }) {
+    return Material(
+      // Bening, bukan putih: kotaknya cuma ditandai garis tepi, jadi bentuknya
+      // tetap terlihat tanpa kotak putih di belakang ikonnya.
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(16),
+      elevation: 0,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          width: 48,
+          height: 48,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: isDark ? Colors.white12 : const Color(0xFFE8EEF7)),
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Icon(icon, size: 24, color: isDark ? Colors.white70 : const Color(0xFF334155)),
+              if (bertanda)
+                Positioned(
+                  top: 10,
+                  right: 10,
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: AppTheme.errorColor,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: isDark ? AppTheme.cardObsidianDark : Colors.white,
+                        width: 1.5,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Lengkungan biru di pojok kanan atas.
+///
+/// Digambar sebagai kurva bezier, bukan lingkaran: sebesar apa pun lingkarannya,
+/// begitu busurnya masuk layar bentuknya terbaca sebagai bola. Rancangannya minta
+/// satu bidang melengkung yang masuk dari tepi atas dan keluar di tepi kanan,
+/// dan itu cuma bisa dari path sendiri.
+///
+/// Semua titiknya relatif terhadap lebar/tinggi kanvas, jadi lengkungannya sama
+/// di layar sempit maupun tablet.
+class _PelukisLengkungAtas extends CustomPainter {
+  const _PelukisLengkungAtas({required this.isDark});
+
+  final bool isDark;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+
+    final bidang = ui.Path()
+      ..moveTo(w * 0.40, 0)
+      ..quadraticBezierTo(w * 0.94, h * 0.06, w, h * 0.58)
+      ..lineTo(w, 0)
+      ..close();
+
+    final warna = isDark
+        ? [AppTheme.primaryBlue.withOpacity(0.30), AppTheme.primaryBlue.withOpacity(0.10)]
+        : [const Color(0xFFC9E0FC), const Color(0xFFE9F2FE)];
+
+    canvas.drawPath(
+      bidang,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+          colors: warna,
+        ).createShader(Rect.fromLTWH(0, 0, w, h)),
+    );
+
+    // Garis lengkung tipis, sejajar di luar bidangnya.
+    final garis = ui.Path()
+      ..moveTo(w * 0.16, 0)
+      ..quadraticBezierTo(w * 0.82, h * 0.14, w, h * 0.92);
+
+    canvas.drawPath(
+      garis,
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = AppTheme.primaryBlue.withOpacity(isDark ? 0.18 : 0.14),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PelukisLengkungAtas lama) => lama.isDark != isDark;
 }

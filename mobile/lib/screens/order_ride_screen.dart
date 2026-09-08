@@ -1506,11 +1506,14 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () async {
-                    if (_driverPhone.isNotEmpty) {
-                      final uri = Uri.parse('tel:$_driverPhone');
-                      if (await canLaunchUrl(uri)) {
-                        await launchUrl(uri);
-                      }
+                    final uri = Uri.parse('tel:$_driverPhone');
+                    if (_driverPhone.isNotEmpty && await canLaunchUrl(uri)) {
+                      await launchUrl(uri);
+                    } else if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                            content: Text('Tidak dapat melakukan panggilan')),
+                      );
                     }
                   },
                   icon: const Icon(Icons.phone_outlined, size: 18),

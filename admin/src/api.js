@@ -56,6 +56,12 @@ export const api = {
     const q = new URLSearchParams(params).toString();
     return json(`/admin/orders${q ? "?" + q : ""}`);
   },
+  getKomisi: (from, to) => json(`/admin/komisi?from=${from}&to=${to}`),
+  buatSetoran: (driverPhone, amount) => post(`/admin/setoran`, { driver_phone: driverPhone, amount }),
+  cekSetoran: (id) => json(`/admin/setoran?id=${encodeURIComponent(id)}`),
+  // QR-nya digambar server dan endpointnya butuh token admin, jadi tidak bisa
+  // dipasang langsung sebagai src <img>; diambil sebagai blob lalu jadi objectURL.
+  qrSetoran: (id) => authFetch(`${BASE}/admin/setoran/qr/${id}`).then(r => r.blob()).then(b => URL.createObjectURL(b)),
   getAnalytics: () => json(`/admin/analytics`),
   getTarif: () => json(`/admin/tarif`),
   saveTarif: (data) => json(`/admin/tarif`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),

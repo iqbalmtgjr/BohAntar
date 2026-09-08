@@ -2,6 +2,7 @@ package main
 
 import (
 	"math"
+	"net/http"
 	"time"
 )
 
@@ -168,4 +169,97 @@ func hitungKomisi(t tarifLayanan, fare float64) float64 {
 		return fare
 	}
 	return math.Round(fare * t.KomisiPersen / 100)
+}
+
+// ==================== LAPORAN BAGI HASIL ====================
+
+type barisKomisi struct {
+	DriverPhone string  `json:"driver_phone"`
+	DriverName  string  `json:"driver_name"`
+	OrderCount  int     `json:"order_count"`
+	TotalOngkos float64 `json:"total_ongkos"`
+	Komisi      float64 `json:"komisi"`
+	KomisiTunai float64 `json:"komisi_tunai"`
+	SaldoDriver float64 `json:"saldo_driver"`
+}
+
+// adminKomisiHandler melaporkan bagian aplikator dari pesanan yang selesai,
+// dirinci per driver.
+//
+// Angkanya dijumlahkan dari kolom orders.komisi yang sudah terkunci sejak
+// pesanan dibuat, bukan dihitung ulang dari persentase tarif hari ini —
+// menaikkan komisi bulan depan tidak boleh menulis ulang pendapatan bulan lalu.
+//
+// Tunai dipisah karena uangnya belum tentu ada di tangan kami: penumpang
+// membayar langsung ke driver dan komisinya cuma memotong saldo driver, jadi
+// baru jadi uang setelah driver menyetor. Saldo driver ikut dikirim supaya yang
+// masih berutang (saldo minus) kelihatan di baris yang sama.
+func adminKomisiHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
+		return
+	}
+	now := time.Now()
+	from := r.URL.Query().Get("from")
+	to := r.URL.Query().Get("to")
+	if from == "" {
+		from = now.Format("2006-01") + "-01" // bawaan: bulan berjalan
+	}
+	if to == "" {
+		to = now.Format("2006-01-02")
+	}
+	for _, d := range []string{from, to} {
+		if _, err := time.Parse("2006-01-02", d); err != nil {
+			writeJSONResponse(w, 400, map[string]string{"error": "Tanggal harus berformat YYYY-MM-DD"})
+			return
+		}
+	}
+	if from > to {
+		writeJSONResponse(w, 400, map[string]string{"error": "Tanggal awal melewati tanggal akhir"})
+		return
+	}
+
+	rows, err := db.Query(`
+		SELECT o.driver_phone, COALESCE(o.driver_name, ''), COUNT(*),
+		       COALESCE(SUM(o.fare), 0), COALESCE(SUM(o.komisi), 0),
+		       COALESCE(SUM(CASE WHEN o.payment_method = 'cash' THEN o.komisi ELSE 0 END), 0),
+		       COALESCE(MAX(u.balance), 0)
+		FROM orders o
+		LEFT JOIN users u ON u.phone_number = o.driver_phone
+		WHERE o.status = 'completed' AND o.driver_phone IS NOT NULL AND o.driver_phone <> ''
+		  AND o.created_at >= ? AND o.created_at < DATE_ADD(?, INTERVAL 1 DAY)
+		GROUP BY o.driver_phone, o.driver_name
+		ORDER BY SUM(o.komisi) DESC`, from, to)
+	if err != nil {
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal membaca laporan bagi hasil"})
+		return
+	}
+	defer rows.Close()
+
+	daftar := make([]barisKomisi, 0)
+	var totalKomisi, totalTunai, totalOngkos float64
+	totalOrder := 0
+	for rows.Next() {
+		var b barisKomisi
+		if err := rows.Scan(&b.DriverPhone, &b.DriverName, &b.OrderCount, &b.TotalOngkos, &b.Komisi, &b.KomisiTunai, &b.SaldoDriver); err != nil {
+			continue
+		}
+		daftar = append(daftar, b)
+		totalKomisi += b.Komisi
+		totalTunai += b.KomisiTunai
+		totalOngkos += b.TotalOngkos
+		totalOrder += b.OrderCount
+	}
+
+	writeJSONResponse(w, 200, map[string]interface{}{
+		"status":        "success",
+		"from":          from,
+		"to":            to,
+		"total_komisi":  totalKomisi,
+		"komisi_tunai":  totalTunai, // dipotong dari saldo driver, belum tentu disetor
+		"komisi_wallet": totalKomisi - totalTunai,
+		"total_ongkos":  totalOngkos,
+		"total_order":   totalOrder,
+		"drivers":       daftar,
+	})
 }

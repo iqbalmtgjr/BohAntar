@@ -21,6 +21,9 @@ class AppTheme {
   static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,
+      // Satu tempat saja: tanpa ini hanya beberapa gaya di textTheme yang
+      // memakai Inter, sisanya jatuh ke font bawaan sistem.
+      fontFamily: 'Inter',
       brightness: Brightness.light,
       colorScheme: const ColorScheme.light(
         primary: primaryBlue,
@@ -90,6 +93,9 @@ class AppTheme {
   static ThemeData get darkTheme {
     return ThemeData(
       useMaterial3: true,
+      // Satu tempat saja: tanpa ini hanya beberapa gaya di textTheme yang
+      // memakai Inter, sisanya jatuh ke font bawaan sistem.
+      fontFamily: 'Inter',
       brightness: Brightness.dark,
       colorScheme: const ColorScheme.dark(
         primary: primaryBlue,

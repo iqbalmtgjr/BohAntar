@@ -20,6 +20,7 @@ import UsersPage from "./pages/UsersPage";
 import OrdersPage from "./pages/OrdersPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import TarifPage from "./pages/TarifPage";
+import KomisiPage from "./pages/KomisiPage";
 import DriverRegistPage from "./pages/DriverRegistPage";
 import ApplicationsPage from "./pages/ApplicationsPage";
 import PaymentReportRental from "./pages/PaymentReportRental";
@@ -193,6 +194,7 @@ export default function App() {
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/tarif" element={<TarifPage />} />
+        <Route path="/komisi" element={<KomisiPage />} />
         <Route path="/driver-register" element={<DriverRegistPage />} />
         <Route path="/applications" element={<ApplicationsPage />} />
         <Route path="/partner-applications" element={<PartnerApplicationsPage />} />

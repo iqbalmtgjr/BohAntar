@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Users, ShoppingBag, BarChart3, UserPlus, FileText,
-  LogOut, CheckCircle, CreditCard, LayoutGrid, Percent
+  LogOut, CheckCircle, CreditCard, LayoutGrid, Percent, Wallet
 } from "lucide-react";
 import logoB from "../assets/logo_b_icon.png";
 import ThemeToggle from "./ThemeToggle";
@@ -29,6 +29,7 @@ const navItems = [
   { to: "/partner-applications", icon: FileText, label: "Pengajuan Mitra", short: "Mitra" },
   { to: "/approved-partners", icon: CheckCircle, label: "Mitra Disetujui", short: "Disetujui", desktopOnly: true },
   { section: "Pelaporan Pembayaran" },
+  { to: "/komisi", icon: Wallet, label: "Bagi Hasil Driver", short: "Komisi", desktopOnly: true },
   { to: "/payment-reports/rental", icon: CreditCard, label: "bohRental", short: "Bayar", desktopOnly: true },
 ];
 

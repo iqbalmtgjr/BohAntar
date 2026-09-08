@@ -234,6 +234,23 @@ class ApiService {
   }
 
   // Wallet Top Up
+  /// Menukar QR setoran jadi saldo. Nominalnya ditentukan petugas saat membuat
+  /// QR, bukan dikirim dari sini — aplikasi cuma menyerahkan isi QR-nya.
+  Future<Map<String, dynamic>> klaimSetoran(String token) async {
+    if (_token == null) {
+      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+    }
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/driver/setoran/klaim'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_token',
+      },
+      body: jsonEncode({'token': token}),
+    );
+    return _handleResponse(response);
+  }
+
   Future<Map<String, dynamic>> topUp(double amount) async {
     if (_token == null) {
       throw Exception('Otorisasi diperlukan. Silakan login kembali.');

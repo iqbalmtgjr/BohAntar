@@ -396,6 +396,10 @@ func main() {
 	mux.HandleFunc("/api/admin/orders", admin(adminOrdersHandler))
 	mux.HandleFunc("/api/admin/analytics", admin(adminAnalyticsHandler))
 	mux.HandleFunc("/api/admin/tarif", admin(adminTarifHandler))
+	mux.HandleFunc("/api/admin/komisi", admin(adminKomisiHandler))
+	mux.HandleFunc("/api/admin/setoran", admin(adminSetoranHandler))
+	mux.HandleFunc("/api/admin/setoran/qr/", admin(adminSetoranQRHandler))
+	mux.HandleFunc("/api/driver/setoran/klaim", requireRole("driver")(driverKlaimSetoranHandler))
 	mux.HandleFunc("/api/admin/drivers/", admin(adminDriverApproveHandler))
 	mux.HandleFunc("/api/admin/applications", admin(adminDriverApplicationsHandler))
 	mux.HandleFunc("/api/admin/partner-applications", admin(adminPartnerApplicationsHandler))
@@ -784,6 +788,30 @@ func initDB() {
 			per_km DECIMAL(12,2) NOT NULL,
 			komisi_persen DECIMAL(5,2) NOT NULL DEFAULT 20,
 			updated_at DATETIME
+		)`,
+		// Setoran komisi tunai. Barisnya dibuat petugas SESUDAH menerima uangnya,
+		// lalu dipindai driver untuk menaikkan saldonya sendiri. Uang berpindah
+		// hanya kalau kedua pihak bertindak, dan barisnya jadi bukti setoran yang
+		// bisa dicocokkan dengan kas.
+		//
+		// Sengaja tanpa FOREIGN KEY ke users, tidak seperti tabel lain di atas.
+		// Tabel-tabel itu sudah ada sejak lama, jadi klausa FK-nya tidak pernah
+		// benar-benar dijalankan ulang; tabel baru ini menjalankannya, dan langsung
+		// ditolak: users.phone_number di MySQL lokal berkolasi utf8mb4_0900_ai_ci
+		// sedangkan tabel baru mewarisi utf8mb4_unicode_ci dari database. Menyamakan
+		// kolasinya di sini akan menukar masalahnya ke produksi — MariaDB tidak
+		// mengenal utf8mb4_0900_ai_ci sama sekali. Keberadaan drivernya sudah
+		// diperiksa handler sebelum baris dibuat, dan baris setoran memang catatan
+		// sejarah yang tetap sah dibaca walau akunnya kelak hilang.
+		`CREATE TABLE IF NOT EXISTS setoran_komisi (
+			id VARCHAR(64) PRIMARY KEY,
+			driver_phone VARCHAR(20) NOT NULL,
+			amount DECIMAL(12,2) NOT NULL,
+			dibuat_oleh VARCHAR(20) NOT NULL,
+			created_at DATETIME NOT NULL,
+			expires_at DATETIME NOT NULL,
+			claimed_at DATETIME NULL,
+			INDEX idx_setoran_driver (driver_phone, created_at)
 		)`,
 	}
 
