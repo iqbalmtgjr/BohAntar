@@ -138,6 +138,9 @@ html[data-theme="dark"] .portal-ui .filter-btn.active {
   .portal-ui .sidebar-nav {
     display: flex !important;
     flex-direction: row;
+    /* Versi desktopnya bergulir vertikal; di tab bar mendatar ini gulungan itu
+       hanya akan memunculkan bilah gulir di dalam bar. */
+    overflow: visible;
     position: fixed;
     left: 0; right: 0; bottom: 0;
     background: var(--bg-card);
