@@ -4,6 +4,7 @@ import 'package:mobile/services/notifikasi_service.dart';
 import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/decorative_background.dart';
 import 'dashboard_screen.dart';
+import 'driver_register_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   // Kosong berarti nomor HP diisi di layar ini. Diisi hanya kalau pendaftaran
@@ -271,12 +272,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Pendaftaran driver butuh verifikasi KTP, SIM, dan STNK. Hubungi kantor bohAntar untuk mengajukan.',
+                                  'Ajukan lewat formulir berdokumen. Akun driver aktif setelah KTP, SIM, dan STNK Anda disetujui admin.',
                                   style: TextStyle(
                                     fontSize: 12,
                                     height: 1.5,
                                     color: isDark ? Colors.blueGrey.shade300 : Colors.grey.shade700,
                                   ),
+                                ),
+                                TextButton(
+                                  style: TextButton.styleFrom(
+                                    padding: EdgeInsets.zero,
+                                    minimumSize: const Size(0, 32),
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  onPressed: () => Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => const DriverRegisterScreen()),
+                                  ),
+                                  child: const Text('Daftar jadi driver'),
                                 ),
                               ],
                             ),

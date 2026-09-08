@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -1639,7 +1640,10 @@ func dbGetAnalyticsData() (map[string]interface{}, error) {
 	var totalUsers, totalRiders, totalDrivers int
 	db.QueryRow("SELECT COUNT(*) FROM users").Scan(&totalUsers)
 	db.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'rider'").Scan(&totalRiders)
-	db.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'driver'").Scan(&totalDrivers)
+	// Pengaju yang belum disetujui sudah punya baris users berperan "driver"
+	// supaya login bisa ditahan, jadi hitungannya harus menyaring yang aktif —
+	// kalau tidak, angka driver di dasbor ikut naik sebelum ada yang disetujui.
+	db.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'driver' AND is_driver_active = 1").Scan(&totalDrivers)
 
 	rows, err := db.Query("SELECT driver_phone, driver_name, COUNT(*), SUM(fare) FROM orders WHERE status = 'completed' AND driver_phone IS NOT NULL GROUP BY driver_phone, driver_name")
 	var driverList []map[string]interface{}
@@ -1747,6 +1751,10 @@ func verifyOTPHandler(w http.ResponseWriter, r *http.Request) {
 	role := "rider"
 	if userExists {
 		role = user.Role
+	}
+	if alasan := alasanDriverBelumBolehMasuk(input.PhoneNumber, role); alasan != "" {
+		writeJSONResponse(w, 403, map[string]string{"error": alasan})
+		return
 	}
 	token, err := issueToken(input.PhoneNumber, role)
 	if err != nil {
@@ -1856,6 +1864,10 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 	// 1. Cek apakah email sudah terdaftar
 	u, _, found := dbFindUserByEmail(email)
 	if found {
+		if alasan := alasanDriverBelumBolehMasuk(u.PhoneNumber, u.Role); alasan != "" {
+			writeJSONResponse(w, 403, map[string]string{"error": alasan})
+			return
+		}
 		token, err := issueToken(u.PhoneNumber, u.Role)
 		if err != nil {
 			writeJSONResponse(w, 500, map[string]string{"error": "Gagal membuat token sesi"})
@@ -3001,7 +3013,75 @@ func adminDriverRegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var app DriverApplication
-	if err := json.NewDecoder(r.Body).Decode(&app); err != nil || app.PhoneNumber == "" || app.Name == "" || app.KTPNumber == "" || app.SIMNumber == "" || app.VehiclePlate == "" {
+	var password string
+
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		// Jalur dari HP. Dokumen ikut di permintaan yang sama karena calon driver
+		// belum punya akun, sedangkan /api/upload butuh token.
+		//
+		// Karena itu jalur ini menulis ke disk tanpa token sama sekali: remnya
+		// dipasang SEBELUM body dibaca, kalau tidak penyerang tetap menghabiskan
+		// 15 MB tulisan per permintaan sebelum ditolak. Embernya sendiri
+		// (awalan kunci) supaya banjir pendaftaran tidak ikut menutup pintu
+		// login, dan sebaliknya. Setiap kiriman dihitung, bukan cuma yang gagal —
+		// pendaftar sungguhan tidak mengirim sepuluh pengajuan per seperempat jam.
+		rem := "daftar-driver:" + alamatPemanggil(r)
+		if terlaluSeringGagal(rem) {
+			writeJSONResponse(w, 429, map[string]string{"error": "Terlalu banyak pengajuan dari jaringan ini. Coba lagi 15 menit lagi."})
+			return
+		}
+		catatGagalLogin(rem)
+
+		const maxUpload = 3 * (5 << 20) // tiga dokumen, masing-masing sebesar batas /api/upload
+		r.Body = http.MaxBytesReader(w, r.Body, maxUpload)
+		if err := r.ParseMultipartForm(maxUpload); err != nil {
+			writeJSONResponse(w, 413, map[string]string{"error": "Ukuran dokumen melebihi batas 15 MB"})
+			return
+		}
+		app = DriverApplication{
+			PhoneNumber:  r.FormValue("phone_number"),
+			Name:         r.FormValue("name"),
+			Email:        r.FormValue("email"),
+			KTPNumber:    r.FormValue("ktp_number"),
+			SIMNumber:    r.FormValue("sim_number"),
+			VehiclePlate: r.FormValue("vehicle_plate"),
+			VehicleType:  r.FormValue("vehicle_type"),
+			VehicleModel: r.FormValue("vehicle_model"),
+		}
+		password = r.FormValue("password")
+		if len(password) < 8 {
+			writeJSONResponse(w, 400, map[string]string{"error": "Password minimal 8 karakter"})
+			return
+		}
+		berkas := []struct {
+			field string
+			dst   *string
+			label string
+		}{
+			{"ktp_photo", &app.KTPPhotoURL, "KTP"},
+			{"sim_photo", &app.SIMPhotoURL, "SIM"},
+			{"stnk_photo", &app.STNKPhotoURL, "STNK"},
+		}
+		for _, b := range berkas {
+			f, fh, err := r.FormFile(b.field)
+			if err != nil {
+				writeJSONResponse(w, 400, map[string]string{"error": "Scan " + b.label + " wajib dilampirkan"})
+				return
+			}
+			url, err := simpanBerkasUnggahan(f, fh.Filename)
+			f.Close()
+			if err != nil {
+				writeJSONResponse(w, 400, map[string]string{"error": "Scan " + b.label + ": " + err.Error()})
+				return
+			}
+			*b.dst = url
+		}
+	} else if err := json.NewDecoder(r.Body).Decode(&app); err != nil {
+		writeJSONResponse(w, 400, map[string]string{"error": "Data pendaftaran tidak lengkap"})
+		return
+	}
+
+	if app.PhoneNumber == "" || app.Name == "" || app.KTPNumber == "" || app.SIMNumber == "" || app.VehiclePlate == "" {
 		writeJSONResponse(w, 400, map[string]string{"error": "Data pendaftaran tidak lengkap"})
 		return
 	}
@@ -3016,11 +3096,79 @@ func adminDriverRegisterHandler(w http.ResponseWriter, r *http.Request) {
 	// sendiri — token, pesanan, dan lokasinya berpisah di dua baris.
 	app.PhoneNumber = normalizePhone(app.PhoneNumber)
 	app.Email = strings.ToLower(strings.TrimSpace(app.Email))
+
+	if statusPengajuanDriver(app.PhoneNumber) == "pending" {
+		writeJSONResponse(w, 409, map[string]string{"error": "Pengajuan untuk nomor ini sudah ada dan sedang ditinjau."})
+		return
+	}
+
+	// driver_applications.phone_number menunjuk users lewat foreign key, jadi
+	// akunnya harus ada lebih dulu — kalau tidak, pengajuannya ditolak database
+	// dan pengaju menerima "berhasil" untuk baris yang tidak pernah tersimpan.
+	// Perannya sudah "driver" sejak sekarang supaya login tertahan sampai admin
+	// menyetujui; yang dinyalakan saat approve adalah is_driver_active.
+	pemilik, sudahPunyaAkun := dbGetUser(app.PhoneNumber)
+	if !sudahPunyaAkun {
+		if app.Email != "" {
+			if u, _, found := dbFindUserByEmail(app.Email); found {
+				writeJSONResponse(w, 409, map[string]string{"error": "Email ini sudah dipakai akun " + u.PhoneNumber + ". Masuk dengan akun itu, atau pakai email lain."})
+				return
+			}
+		}
+		baru := User{PhoneNumber: app.PhoneNumber, Name: app.Name, Email: app.Email, Role: "driver", CreatedAt: time.Now().Format(time.RFC3339), Balance: 0, Badge: "Silver", Rating: 5.0, IsDriverActive: false}
+		if err := dbSaveUser(baru); err != nil {
+			log.Printf("pendaftaran driver: akun %s gagal dibuat: %v", app.PhoneNumber, err)
+			writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyiapkan akun driver"})
+			return
+		}
+	} else if password != "" && pemilik.Role != "driver" {
+		// Penumpang lama yang naik jadi driver tetap memakai password dan
+		// perannya sendiri sampai disetujui — menimpanya berarti mengunci dia
+		// keluar dari akun yang sedang dipakainya.
+		password = ""
+	}
+	if password != "" {
+		if err := dbSetPassword(app.PhoneNumber, password); err != nil {
+			writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan password"})
+			return
+		}
+	}
+
 	app.ID = newID("app")
 	app.Status = "pending"
 	app.CreatedAt = time.Now().Format(time.RFC3339)
-	dbSaveApplication(app)
+	if err := dbSaveApplication(app); err != nil {
+		log.Printf("pendaftaran driver: pengajuan %s gagal disimpan: %v", app.PhoneNumber, err)
+		writeJSONResponse(w, 500, map[string]string{"error": "Pengajuan gagal disimpan"})
+		return
+	}
 	writeJSONResponse(w, 201, map[string]interface{}{"status": "success", "message": "Pendaftaran driver berhasil dikirim", "application": app})
+}
+
+// statusPengajuanDriver mengembalikan status pengajuan terakhir sebuah nomor,
+// atau "" kalau nomor itu tidak pernah mengajukan. Driver lama yang dibuat
+// langsung oleh admin memang tidak punya baris pengajuan.
+func statusPengajuanDriver(phone string) string {
+	var status string
+	_ = db.QueryRow("SELECT status FROM driver_applications WHERE phone_number = ? ORDER BY created_at DESC LIMIT 1", phone).Scan(&status)
+	return status
+}
+
+// alasanDriverBelumBolehMasuk menahan akun driver yang pengajuannya belum
+// disetujui: password yang benar pun tidak boleh menghasilkan token, karena
+// token driver membuka daftar pesanan berisi alamat rumah penumpang sungguhan.
+// Mengembalikan "" kalau akun ini boleh masuk.
+func alasanDriverBelumBolehMasuk(phone, role string) string {
+	if role != "driver" {
+		return ""
+	}
+	switch statusPengajuanDriver(phone) {
+	case "pending":
+		return "Pengajuan driver Anda masih ditinjau admin. Anda bisa masuk setelah disetujui."
+	case "rejected":
+		return "Pengajuan driver Anda ditolak. Hubungi kantor bohAntar."
+	}
+	return ""
 }
 
 func adminDriverApplicationsHandler(w http.ResponseWriter, r *http.Request) {
@@ -3086,20 +3234,24 @@ func adminDriverApproveHandler(w http.ResponseWriter, r *http.Request) {
 		app.Status = "approved"
 		dbSaveApplication(app)
 
-		// Password awal hanya dibuat untuk akun yang benar-benar baru. Penumpang
-		// yang naik jadi driver sudah punya password sendiri, dan menimpanya
-		// berarti mengunci dia keluar dari akunnya sendiri.
-		initialPass := ""
 		if eu, ok := dbGetUser(app.PhoneNumber); ok {
 			eu.Role = "driver"
 			eu.IsDriverActive = true
 			dbSaveUser(eu)
 		} else {
 			dbSaveUser(User{PhoneNumber: app.PhoneNumber, Name: app.Name, Email: app.Email, Role: "driver", CreatedAt: time.Now().Format(time.RFC3339), Balance: 0, Badge: "Silver", IsDriverActive: true})
-			// Tanpa ini driver yang sudah disetujui tidak bisa masuk sama sekali:
-			// login memeriksa password terhadap hash kosong, dan itu selalu gagal.
-			// Google Sign-In pun hanya menolong kalau email di formulir kebetulan
-			// sama persis dengan akun Google-nya.
+		}
+
+		// Password awal hanya dibuat untuk akun yang belum punya password sama
+		// sekali — pengajuan yang diketik admin. Yang mendaftar dari HP sudah
+		// memilih passwordnya sendiri, dan penumpang yang naik jadi driver sudah
+		// punya password lama; menimpanya berarti mengunci dia keluar dari
+		// akunnya sendiri. Tanpa cabang ini akun tanpa password tidak bisa masuk
+		// selamanya: login mengadu password dengan hash kosong dan selalu gagal.
+		initialPass := ""
+		var hash string
+		_ = db.QueryRow("SELECT COALESCE(password, '') FROM users WHERE phone_number = ?", app.PhoneNumber).Scan(&hash)
+		if hash == "" {
 			initialPass = randomPassword()
 			if err := dbSetPassword(app.PhoneNumber, initialPass); err != nil {
 				writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyiapkan password driver"})
@@ -4283,6 +4435,41 @@ func uploadContentAllowed(ext string, head []byte) bool {
 	return known && http.DetectContentType(head) == want
 }
 
+// simpanBerkasUnggahan menaruh satu berkas multipart di folder uploads dan
+// mengembalikan URL-nya. Dipisah dari uploadHandler karena pendaftaran driver
+// dari HP juga memakainya: calon driver belum punya akun, jadi ia tidak bisa
+// lewat /api/upload yang berada di balik token.
+func simpanBerkasUnggahan(file multipart.File, namaAsli string) (string, error) {
+	ext := strings.ToLower(filepath.Ext(namaAsli))
+	if _, known := uploadTypeByExt[ext]; !known && ext != ".heic" && ext != ".heif" {
+		return "", errors.New("Format file tidak valid. Hanya gambar (termasuk HEIC/iPhone) dan PDF yang diperbolehkan.")
+	}
+
+	// Ekstensi saja bisa dipalsukan; isi file harus cocok dengan ekstensinya.
+	head := make([]byte, 512)
+	n, _ := io.ReadFull(file, head)
+	if !uploadContentAllowed(ext, head[:n]) {
+		return "", errors.New("Isi file tidak cocok dengan ekstensinya")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", errors.New("Gagal membaca ulang file")
+	}
+
+	if err := os.MkdirAll("uploads", os.ModePerm); err != nil {
+		return "", errors.New("Gagal menyiapkan folder unggahan")
+	}
+	newFileName := newID("f") + ext
+	dst, err := os.Create(filepath.Join("uploads", newFileName))
+	if err != nil {
+		return "", errors.New("Gagal menyimpan file")
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, file); err != nil {
+		return "", errors.New("Gagal menyalin isi file")
+	}
+	return fmt.Sprintf("/uploads/%s", newFileName), nil
+}
+
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
@@ -4303,47 +4490,11 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	if err := os.MkdirAll("uploads", os.ModePerm); err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Failed to create upload directory"})
-		return
-	}
-
-	ext := strings.ToLower(filepath.Ext(handler.Filename))
-
-	// Validasi Ekstensi File
-	if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".webp" && ext != ".pdf" && ext != ".heic" && ext != ".heif" {
-		writeJSONResponse(w, 400, map[string]string{"error": "Format file tidak valid. Hanya gambar (termasuk HEIC/iPhone) dan PDF yang diperbolehkan."})
-		return
-	}
-
-	// Ekstensi saja bisa dipalsukan; isi file harus cocok dengan ekstensinya.
-	head := make([]byte, 512)
-	n, _ := io.ReadFull(file, head)
-	if !uploadContentAllowed(ext, head[:n]) {
-		writeJSONResponse(w, 400, map[string]string{"error": "Isi file tidak cocok dengan ekstensinya"})
-		return
-	}
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal membaca ulang file"})
-		return
-	}
-
-	newFileName := newID("f") + ext
-	dstPath := filepath.Join("uploads", newFileName)
-
-	dst, err := os.Create(dstPath)
+	fileURL, err := simpanBerkasUnggahan(file, handler.Filename)
 	if err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Error saving the file"})
+		writeJSONResponse(w, 400, map[string]string{"error": err.Error()})
 		return
 	}
-	defer dst.Close()
-
-	if _, err := io.Copy(dst, file); err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Error copying the file content"})
-		return
-	}
-
-	fileURL := fmt.Sprintf("/uploads/%s", newFileName)
 	writeJSONResponse(w, 200, map[string]string{
 		"status": "success",
 		"url":    fileURL,
@@ -4376,6 +4527,10 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	if !found || !checkPassword(hash, input.Password) {
 		catatGagalLogin(ip)
 		writeJSONResponse(w, 401, map[string]string{"error": "Email atau password salah"})
+		return
+	}
+	if alasan := alasanDriverBelumBolehMasuk(u.PhoneNumber, u.Role); alasan != "" {
+		writeJSONResponse(w, 403, map[string]string{"error": alasan})
 		return
 	}
 	token, err := issueToken(u.PhoneNumber, u.Role)

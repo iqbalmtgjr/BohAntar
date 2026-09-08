@@ -45,6 +45,9 @@ dependencies:
   web_socket_channel: ^3.0.1
   url_launcher: ^6.3.1
   google_sign_in: ^7.2.0
+  # Ambil foto KTP/SIM/STNK saat daftar driver. Plugin resmi tim Flutter;
+  # memilih berkas dari galeri/kamera butuh platform channel, bukan Dart biasa.
+  image_picker: ^1.2.0
   flutter_secure_storage: ^11.0.0
   firebase_core: ^4.14.0
   firebase_messaging: ^16.6.0

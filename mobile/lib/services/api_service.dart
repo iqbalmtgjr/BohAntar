@@ -132,6 +132,48 @@ class ApiService {
     return data;
   }
 
+  // Pengajuan jadi driver. Dokumen ikut di permintaan yang sama karena calon
+  // driver belum punya token — /api/upload tidak bisa dipakai olehnya. Tidak
+  // mengembalikan token: akun baru bisa masuk setelah admin menyetujui.
+  Future<Map<String, dynamic>> daftarDriver({
+    required String phoneNumber,
+    required String name,
+    required String email,
+    required String password,
+    required String ktpNumber,
+    required String simNumber,
+    required String vehiclePlate,
+    required String vehicleType,
+    required String vehicleModel,
+    required String ktpPhotoPath,
+    required String simPhotoPath,
+    required String stnkPhotoPath,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$baseUrl/api/admin/drivers/register'),
+    );
+    request.fields.addAll({
+      'phone_number': phoneNumber,
+      'name': name,
+      'email': email,
+      'password': password,
+      'ktp_number': ktpNumber,
+      'sim_number': simNumber,
+      'vehicle_plate': vehiclePlate,
+      'vehicle_type': vehicleType,
+      'vehicle_model': vehicleModel,
+    });
+    request.files.addAll([
+      await http.MultipartFile.fromPath('ktp_photo', ktpPhotoPath),
+      await http.MultipartFile.fromPath('sim_photo', simPhotoPath),
+      await http.MultipartFile.fromPath('stnk_photo', stnkPhotoPath),
+    ]);
+    return _handleResponse(
+      await http.Response.fromStream(await request.send()),
+    );
+  }
+
   // Google Login
   // id_token dikirim mentah; verifikasi tanda tangan dilakukan di backend.
   Future<Map<String, dynamic>> googleLogin(String idToken, {String? phoneNumber}) async {

@@ -6,6 +6,10 @@
 		<string>Aplikasi bohAntar memerlukan akses lokasi untuk menentukan titik penjemputan Anda.</string>
 		<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 		<string>Aplikasi bohAntar memerlukan akses lokasi untuk menentukan titik penjemputan Anda.</string>
+		<key>NSCameraUsageDescription</key>
+		<string>Kamera dipakai untuk memotret KTP, SIM, dan STNK saat mendaftar jadi driver.</string>
+		<key>NSPhotoLibraryUsageDescription</key>
+		<string>Galeri dipakai untuk memilih foto KTP, SIM, dan STNK saat mendaftar jadi driver.</string>
 		<key>CADisableMinimumFrameDurationOnPhone</key>
 		<true/>
 		<key>CFBundleDevelopmentRegion</key>
