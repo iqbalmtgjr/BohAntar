@@ -2224,6 +2224,17 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                         ],
                       ),
                       
+                      // Pindai QR setoran. Hanya muncul kalau memang ada komisi
+                      // yang belum disetor — driver yang tidak berutang tidak
+                      // punya QR untuk dipindai, dan tombol yang selalu ada
+                      // hanya menambah tebakan di layar yang sudah padat.
+                      if (_walletBalance < 0)
+                        IconButton(
+                          tooltip: 'Pindai QR setoran komisi',
+                          icon: const Icon(Icons.qr_code_scanner, color: AppTheme.errorColor),
+                          onPressed: _pindaiSetoran,
+                        ),
+
                       // Logout
                       IconButton(
                         icon: Icon(Icons.logout, color: isDark ? Colors.white70 : Colors.black87),
