@@ -6,6 +6,8 @@ import 'package:mobile/services/api_service.dart';
 import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/decorative_background.dart';
 
+import 'login_screen.dart';
+
 /// Pengajuan jadi driver, diisi sendiri dari HP. Tidak langsung menghasilkan
 /// akun yang bisa dipakai: backend menahan login sampai admin menyetujui
 /// dokumennya, karena token driver membuka alamat rumah penumpang sungguhan.
@@ -131,7 +133,20 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
           ],
         ),
       );
-      if (mounted) Navigator.pop(context);
+      if (!mounted) return;
+      // Ke layar masuk, bukan kembali ke formulir daftar yang baru saja
+      // dikirim — dan seluruh tumpukan dibuang supaya tombol kembali tidak
+      // memunculkan lagi formulir yang isinya sudah terkirim.
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const LoginScreen(
+            pesanInfo: 'Pengajuan driver Anda sedang ditinjau admin. Masuk dengan '
+                'email dan password yang tadi Anda buat setelah pengajuan disetujui.',
+          ),
+        ),
+        (route) => false,
+      );
     } catch (e) {
       setState(() => _errorMessage = e.toString().replaceAll('Exception: ', ''));
     } finally {

@@ -21,7 +21,13 @@ import 'dashboard_screen.dart';
 const String kGoogleServerClientId = '1084290744073-iv00hm6io5q1lupniq7bd7mc8rs6kqq6.apps.googleusercontent.com';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  /// Kabar yang ditampilkan di atas formulir masuk, mis. sesudah pengajuan
+  /// driver terkirim. Layar ini biasanya membuka splash lebih dulu; kalau ada
+  /// pesan, splash-nya dilewati — pesan yang baru bisa dibaca setelah pengguna
+  /// menebak harus mengetuk "Masuk" sama saja dengan tidak disampaikan.
+  final String? pesanInfo;
+
+  const LoginScreen({super.key, this.pesanInfo});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -39,6 +45,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
+    _showSplash = widget.pesanInfo == null;
     // Inisialisasi GoogleSignIn v7 (singleton, konfigurasi via initialize)
     GoogleSignIn.instance.initialize(serverClientId: kGoogleServerClientId);
   }
@@ -416,6 +423,33 @@ class _LoginScreenState extends State<LoginScreen> {
               'Masuk dengan email dan password akun bohAntar Anda.',
               style: theme.textTheme.bodyMedium,
             ),
+            if (widget.pesanInfo != null) ...[
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppTheme.primaryBlue.withValues(alpha: isDark ? 0.15 : 0.08),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.mark_email_read_outlined, color: AppTheme.primaryBlue, size: 24),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        widget.pesanInfo!,
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.5,
+                          color: isDark ? Colors.blueGrey.shade100 : Colors.grey.shade800,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 40),
 
             // Email Input
