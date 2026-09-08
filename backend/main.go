@@ -1331,7 +1331,7 @@ func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, e
 		return nil, 0, err
 	}
 
-	q := "SELECT id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ${apos}${apos}), driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling FROM orders WHERE 1=1"
+	q := "SELECT id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ''), driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling FROM orders WHERE 1=1"
 	var args []interface{}
 	if driver != "" {
 		q += " AND driver_phone = ?"
@@ -1355,6 +1355,12 @@ func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, e
 
 	rows, err := db.Query(q, args...)
 	if err != nil {
+		// Enam dari delapan pemanggil membuang error ini, jadi kueri yang rusak
+		// tidak tampak sebagai kegagalan di mana pun — cuma daftar kosong.
+		// Persis begitu cara `${apos}${apos}` yang tersasar ke dalam SQL ini
+		// mematikan papan orderan driver selama empat hari tanpa satu baris log
+		// pun. Sekarang dia berteriak, sekalipun pemanggilnya diam.
+		log.Printf("PERINGATAN: kueri daftar pesanan gagal: %v", err)
 		return nil, 0, err
 	}
 	defer rows.Close()
