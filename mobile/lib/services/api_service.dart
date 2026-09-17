@@ -356,6 +356,11 @@ class ApiService {
     String? packageNotes,
     bool? insurance,
     bool? specialHandling,
+    String? receiverName,
+    String? receiverPhone,
+    // BohFood: warung dan isi keranjang ({menu_id, qty}); harga dihitung server.
+    String? merchantId,
+    List<Map<String, dynamic>>? items,
   }) async {
     if (_token == null) {
       throw Exception('Otorisasi diperlukan. Silakan login kembali.');
@@ -381,9 +386,44 @@ class ApiService {
         'package_notes': packageNotes,
         'insurance': insurance,
         'special_handling': specialHandling,
+        'receiver_name': receiverName,
+        'receiver_phone': receiverPhone,
+        'merchant_id': merchantId,
+        'items': items,
       }),
     );
     return _handleResponse(response);
+  }
+
+  /// Daftar warung BohFood. Dengan posisi, server mengurutkan yang terdekat dan
+  /// mengisi jarak_km.
+  Future<List<dynamic>> getFoodMerchants({double? lat, double? lng}) async {
+    if (_token == null) {
+      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+    }
+    final uri = Uri.parse('$baseUrl/api/food/merchants').replace(queryParameters: {
+      if (lat != null && lng != null) 'lat': '$lat',
+      if (lat != null && lng != null) 'lng': '$lng',
+    });
+    final data = _handleResponse(await http.get(uri, headers: {'Authorization': 'Bearer $_token'}));
+    return (data['merchants'] as List?) ?? [];
+  }
+
+  /// Menu satu warung. Endpoint ini membalas array polos, bukan {status, ...},
+  /// jadi tidak lewat _handleResponse.
+  Future<List<dynamic>> getFoodMenus(String merchantId) async {
+    if (_token == null) {
+      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+    }
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/food/menus').replace(queryParameters: {'merchant_id': merchantId}),
+      headers: {'Authorization': 'Bearer $_token'},
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Gagal memuat menu (kode ${response.statusCode}). Coba lagi sebentar.');
+    }
+    final decoded = jsonDecode(response.body);
+    return decoded is List ? decoded : [];
   }
 
   // Get Active Orders (Driver)
@@ -416,8 +456,8 @@ class ApiService {
     return _handleResponse(response);
   }
 
-  // Pickup Order (Driver - Ambil Barang)
-  Future<Map<String, dynamic>> pickupOrder(String orderId) async {
+  // Pickup Order (Driver - Ambil Barang). Foto bukti opsional — hasil uploadFoto.
+  Future<Map<String, dynamic>> pickupOrder(String orderId, {String? photoUrl}) async {
     if (_token == null) {
       throw Exception('Otorisasi diperlukan. Silakan login kembali.');
     }
@@ -427,12 +467,13 @@ class ApiService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $_token',
       },
+      body: jsonEncode({'photo_url': photoUrl}),
     );
     return _handleResponse(response);
   }
 
-  // Complete Order (Driver/Rider)
-  Future<Map<String, dynamic>> completeOrder(String orderId) async {
+  // Complete Order (Driver). Foto serah-terima dan nama penerima opsional.
+  Future<Map<String, dynamic>> completeOrder(String orderId, {String? photoUrl, String? receivedBy}) async {
     if (_token == null) {
       throw Exception('Otorisasi diperlukan. Silakan login kembali.');
     }
@@ -442,8 +483,37 @@ class ApiService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $_token',
       },
+      body: jsonEncode({'photo_url': photoUrl, 'received_by': receivedBy}),
     );
     return _handleResponse(response);
+  }
+
+  /// Melepas pesanan yang sudah diterima supaya kembali ke papan orderan.
+  ///
+  /// Hanya sebelum penumpang atau barangnya diambil. Tanpa ini, pesanan yang
+  /// tidak bisa dilanjutkan menahan komisi driver tanpa batas waktu dan bisa
+  /// membuatnya tidak bisa menerima pesanan lain sama sekali.
+  Future<Map<String, dynamic>> lepasPesanan(String orderId) async {
+    if (_token == null) {
+      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+    }
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/orders/$orderId/lepas'),
+      headers: {'Authorization': 'Bearer $_token'},
+    );
+    return _handleResponse(response);
+  }
+
+  /// Mengunggah satu foto dan mengembalikan path /uploads/... miliknya.
+  Future<String> uploadFoto(String path) async {
+    if (_token == null) {
+      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+    }
+    final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/api/upload'))
+      ..headers['Authorization'] = 'Bearer $_token'
+      ..files.add(await http.MultipartFile.fromPath('file', path));
+    final data = _handleResponse(await http.Response.fromStream(await request.send()));
+    return data['url'] as String;
   }
 
   // Monitor Order Status (Rider & Driver)

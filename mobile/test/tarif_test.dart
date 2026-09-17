@@ -52,4 +52,28 @@ void main() {
       sebelumnya = sekarang;
     }
   });
+
+  // Biaya jasa aplikasi ditambahkan DI ATAS ongkos, bukan dipotong darinya.
+  // Kalau suatu saat ia ikut dipotong, bagian driver berkurang diam-diam dan
+  // test ini yang seharusnya gagal duluan.
+  test('biaya jasa menambah yang dibayar penumpang, bukan mengurangi ongkos', () {
+    final t = Tarif.untuk('BohRide');
+    expect(t.biayaJasa, 1000);
+    expect(t.hitung(5), 18000, reason: 'ongkos tidak boleh berubah karena biaya jasa');
+    expect(t.totalBayar(5), 19000);
+    expect(t.totalBayar(5) - t.hitung(5), t.biayaJasa);
+  });
+
+  test('biaya jasa ditagih sekali, tidak ikut naik seiring jarak', () {
+    final t = Tarif.untuk('BohRide');
+    for (final km in [0.0, 1.0, 5.0, 20.0]) {
+      expect(t.totalBayar(km) - t.hitung(km), t.biayaJasa, reason: '$km km');
+    }
+  });
+
+  test('semua layanan menagih biaya jasa yang sama', () {
+    for (final layanan in ['BohRide', 'BohCar', 'BohAntar', 'BohSend', 'BohFood']) {
+      expect(Tarif.untuk(layanan).biayaJasa, 1000, reason: layanan);
+    }
+  });
 }

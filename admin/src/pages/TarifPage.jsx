@@ -40,6 +40,7 @@ export default function TarifPage() {
       base: Number(row.base) || 0,
       per_km: Number(row.per_km) || 0,
       komisi_persen: Number(row.komisi_persen) || 0,
+      biaya_jasa: Number(row.biaya_jasa) || 0,
     });
     setSaving("");
     if (res.status === "success") {
@@ -76,6 +77,7 @@ export default function TarifPage() {
                 <th>Buka Pintu</th>
                 <th>Per Km</th>
                 <th>Komisi bohAntar</th>
+                <th>Biaya Jasa</th>
                 <th>Contoh {CONTOH_KM} km</th>
                 <th></th>
               </tr>
@@ -83,7 +85,7 @@ export default function TarifPage() {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6}>
+                  <td colSpan={7}>
                     <div className="empty-state">
                       <div className="icon" style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
                         <Percent size={40} style={{ color: "var(--text-muted)", opacity: 0.5 }} />
@@ -97,11 +99,17 @@ export default function TarifPage() {
                 const base = Number(r.base) || 0;
                 const perKm = Number(r.per_km) || 0;
                 const persen = Number(r.komisi_persen) || 0;
+                const biayaJasa = Number(r.biaya_jasa) || 0;
                 // Rumus ini harus sama dengan hitungTarif() di backend/tarif.go
                 // dan penaksir di aplikasi Flutter.
                 const contoh = Math.round((base + CONTOH_KM * perKm) / 100) * 100;
                 const komisi = Math.round(contoh * persen / 100);
                 const bagianDriver = contoh - komisi;
+                // Yang dibayar penumpang, dan yang benar-benar jadi pendapatan
+                // bohAntar. Biaya jasa ditambahkan di atas ongkos, jadi ia tidak
+                // mengurangi bagian driver sama sekali.
+                const dibayar = contoh + biayaJasa;
+                const pendapatan = komisi + biayaJasa;
                 return (
                   <tr key={r.layanan}>
                     <td data-label="Layanan" style={{ fontWeight: 700 }}>{r.layanan}</td>
@@ -129,10 +137,20 @@ export default function TarifPage() {
                         <span style={{ color: "var(--text-muted)" }}>%</span>
                       </div>
                     </td>
+                    <td data-label="Biaya Jasa">
+                      <input
+                        type="number" min="0" step="500" value={r.biaya_jasa ?? 0}
+                        onChange={e => ubah(r.layanan, "biaya_jasa", e.target.value)}
+                        style={{ width: 110 }}
+                      />
+                    </td>
                     <td data-label={`Contoh ${CONTOH_KM} km`}>
-                      <div style={{ fontWeight: 700 }}>{rupiah(contoh)}</div>
+                      <div style={{ fontWeight: 700 }}>{rupiah(dibayar)}</div>
                       <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                        driver {rupiah(bagianDriver)} &middot; bohAntar {rupiah(komisi)}
+                        ongkos {rupiah(contoh)} + jasa {rupiah(biayaJasa)}
+                      </div>
+                      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                        driver {rupiah(bagianDriver)} &middot; bohAntar {rupiah(pendapatan)}
                       </div>
                     </td>
                     <td data-label="">
@@ -156,7 +174,9 @@ export default function TarifPage() {
         <div className="card" style={{ marginTop: 16, color: "var(--text-secondary)", fontSize: 13, lineHeight: 1.7 }}>
           <strong>Cara angkanya bekerja</strong>
           <div>Ongkos = buka pintu + (jarak km &times; tarif per km), dibulatkan ke ratusan terdekat.</div>
-          <div>Komisi dipotong dari ongkos, bukan ditambahkan di atasnya — penumpang membayar angka yang sama, driver menerima sisanya.</div>
+          <div>Komisi dipotong dari ongkos, bukan ditambahkan di atasnya — driver menerima sisanya.</div>
+          <div>Biaya jasa aplikasi <strong>ditambahkan di atas ongkos</strong> dan masuk utuh ke bohAntar. Bagian driver tidak berkurang karenanya.</div>
+          <div>Pendapatan bohAntar per pesanan = komisi + biaya jasa. Pada pesanan tunai keduanya dipotong dari saldo driver, karena penumpang membayar ke tangan driver.</div>
           <div>Perubahan hanya berlaku untuk pesanan baru. Pesanan yang sudah berjalan memakai komisi yang terkunci saat dibuat.</div>
         </div>
       </div>

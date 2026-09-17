@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile/screens/chat_screen.dart';
+import 'package:mobile/screens/food_merchants_screen.dart';
 import 'package:mobile/screens/login_screen.dart';
 import 'package:mobile/screens/order_ride_screen.dart';
 import 'package:mobile/screens/pindai_setoran_screen.dart';
@@ -244,52 +246,148 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     }
   }
 
+  /// Nominal terkecil yang diterima server. Disamakan di sini supaya penolakan
+  /// terjadi sebelum perjalanan bolak-balik ke server, bukan sesudahnya.
+  static const double _topUpMinimal = 10000;
+
   void _showTopUpDialog() {
     final controller = TextEditingController();
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           title: const Text("Top Up PayAntar"),
-          content: TextField(
-            controller: controller,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(
-              hintText: "Masukkan nominal (misal: 50000)",
-              prefixText: "Rp ",
-            ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextField(
+                controller: controller,
+                keyboardType: TextInputType.number,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: "Masukkan nominal (misal: 50000)",
+                  prefixText: "Rp ",
+                ),
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                children: [20000, 50000, 100000]
+                    .map((n) => ActionChip(
+                          label: Text(_rupiah(n.toDouble())),
+                          onPressed: () => controller.text = n.toString(),
+                        ))
+                    .toList(),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Pembayaran lewat QRIS. Saldo bertambah otomatis setelah pembayaran lunas.',
+                style: TextStyle(fontSize: 11, color: Colors.grey),
+              ),
+            ],
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(dialogContext),
               child: const Text("Batal"),
             ),
             ElevatedButton(
-              onPressed: () async {
-                final text = controller.text.trim();
-                final amount = double.tryParse(text);
-                if (amount == null || amount <= 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Nominal tidak valid")),
+              onPressed: () {
+                final amount = double.tryParse(controller.text.trim());
+                if (amount == null || amount < _topUpMinimal) {
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    SnackBar(content: Text("Nominal minimal ${_rupiah(_topUpMinimal)}")),
                   );
                   return;
                 }
-                Navigator.pop(context);
-                try {
-                  final res = await ApiService().topUp(amount);
-                  if (res['status'] == 'success') {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text("Top up berhasil! Saldo baru: Rp ${res['balance']}")),
-                    );
-                    _fetchUserProfile();
-                  }
-                } catch (e) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(e.toString())),
-                  );
-                }
+                Navigator.pop(dialogContext);
+                _mintaQRTopUp(amount);
               },
-              child: const Text("Top Up"),
+              child: const Text("Lanjut Bayar"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Meminta tagihan ke server lalu membuka halaman pembayaran QRIS.
+  ///
+  /// Saldo tidak ditambah di sini dan tidak boleh ditambah di sini: yang
+  /// menambahkannya adalah webhook Xendit ke server, setelah pembayarannya
+  /// benar-benar lunas. Aplikasi hanya membaca ulang saldo sesudahnya.
+  Future<void> _mintaQRTopUp(double amount) async {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Menyiapkan pembayaran...'), duration: Duration(seconds: 2)),
+    );
+    try {
+      final res = await ApiService().topUp(amount);
+      final url = res['payment_url'] as String?;
+      if (url == null || url.isEmpty) {
+        throw Exception('Server tidak mengirim halaman pembayaran');
+      }
+      if (!mounted) return;
+      final terbuka = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      if (!mounted) return;
+      if (!terbuka) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Tidak bisa membuka halaman pembayaran')),
+        );
+        return;
+      }
+      _tungguPembayaran(amount);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
+  }
+
+  /// Layar tunggu setelah halaman pembayaran dibuka.
+  ///
+  /// Tombolnya membaca ulang saldo dari server, bukan menghitung sendiri:
+  /// pembayaran bisa saja belum lunas, dan angka yang benar cuma ada di
+  /// database. Tanpa tombol ini driver harus menutup dan membuka aplikasi
+  /// untuk melihat saldonya bertambah.
+  void _tungguPembayaran(double amount) {
+    final saldoSebelum = _walletBalance;
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Menunggu pembayaran'),
+          content: Text(
+            'Selesaikan pembayaran ${_rupiah(amount)} lewat QRIS, lalu tekan Cek Saldo.',
+            style: const TextStyle(fontSize: 13),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Tutup'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                // Diambil sebelum await: sesudahnya dialognya bisa saja sudah
+                // ditutup, dan mengambil Navigator dari context yang mati itu
+                // persis penyebab crash yang dijaga lint use_build_context.
+                final navigator = Navigator.of(dialogContext);
+                final messenger = ScaffoldMessenger.of(context);
+                await _fetchUserProfile();
+                if (!mounted) return;
+                final naik = _walletBalance > saldoSebelum;
+                navigator.pop();
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(naik
+                        ? 'Saldo bertambah. Sekarang ${_rupiah(_walletBalance)}.'
+                        : 'Pembayaran belum masuk. Coba lagi beberapa saat setelah membayar.'),
+                    backgroundColor: naik ? Colors.green : null,
+                  ),
+                );
+              },
+              child: const Text('Cek Saldo'),
             ),
           ],
         );
@@ -1039,8 +1137,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text('Lokasi kamu', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                    // Akun baru tidak lagi lahir dengan alamat bawaan, jadi
+                    // cadangannya harus mengaku belum tahu — alamat karangan
+                    // yang terlihat pasti lebih menyesatkan daripada kosong.
                     Text(
-                      _userAddresses["Rumah"] ?? "Jl. Merdeka No. 10, Sintang",
+                      _userAddresses["Rumah"] ?? "Belum ada alamat tersimpan",
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -1229,12 +1330,23 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 ).then((_) => _fetchUserProfile());
               }),
               _buildServiceButton(Icons.restaurant, 'BohFood', 'Pesan makanan', const Color(0xFFFF4D4D), () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Layanan BohFood sedang dalam pengembangan. Silakan coba BohRide/BohCar!'),
-                    backgroundColor: AppTheme.primaryBlue,
-                  ),
-                );
+                final nama = _userName.isNotEmpty ? _userName : widget.name;
+                Navigator.push<String>(
+                  context,
+                  MaterialPageRoute(builder: (_) => FoodMerchantsScreen(riderName: nama, riderPhone: widget.phone)),
+                ).then((orderId) {
+                  _fetchUserProfile();
+                  // Tiga layar pemesanan menutup diri dan mengoper id pesanan
+                  // ke sini; pelacakannya dibuka dari dashboard supaya tombol
+                  // kembali di layar pelacakan mendarat di beranda.
+                  if (orderId == null || !mounted) return;
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => OrderRideScreen(initialService: 'BohFood', riderName: nama, riderPhone: widget.phone, initialOrderId: orderId),
+                    ),
+                  ).then((_) => _fetchUserProfile());
+                });
               }),
               _buildServiceButton(Icons.mail, 'BohSend', 'Kirim paket & dokumen', const Color(0xFF00B4D8), () {
                 Navigator.push(
@@ -1435,7 +1547,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               final order = ordersList[index];
             final pickup = order['pickup'] ?? '';
             final dropoff = order['dropoff'] ?? '';
-            final fare = (order['fare'] as num?)?.toDouble() ?? 0.0;
+            // Makanan: yang dibayar pemesan adalah ongkir plus uang makanan.
+            final fare = ((order['fare'] as num?)?.toDouble() ?? 0.0) + ((order['food_total'] as num?)?.toDouble() ?? 0.0);
             final status = order['status'] ?? 'pending';
             final service = order['service'] ?? 'Layanan';
             
@@ -1451,7 +1564,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 leading: CircleAvatar(
                   backgroundColor: AppTheme.primaryBlue.withOpacity(0.1),
                   child: Icon(
-                    service == "BohRide" ? Icons.motorcycle : Icons.directions_car,
+                    _ikonLayanan(service),
                     color: AppTheme.primaryBlue,
                   ),
                 ),
@@ -1869,11 +1982,13 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     final service = _riderActiveOrder!['service'] ?? 'Layanan';
     final status = _riderActiveOrder!['status'];
     
+    final barang = _kirimBarang(_riderActiveOrder);
+    final makanan = _makanan(_riderActiveOrder);
     String statusText = "Driver sedang bersiap";
     if (status == 'accepted') {
-      statusText = "Driver menuju lokasi kamu";
+      statusText = makanan ? "Driver menuju warung" : barang ? "Driver menuju titik pengambilan" : "Driver menuju lokasi kamu";
     } else if (status == 'picked_up') {
-      statusText = "Perjalanan sedang berlangsung";
+      statusText = makanan ? "Makanan sedang diantar" : barang ? "Barang sedang diantar" : "Perjalanan sedang berlangsung";
     }
 
     return Container(
@@ -2289,7 +2404,13 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             bottom: 0,
             left: 0,
             right: 0,
-            child: _buildBottomPanel(isDark, theme),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_walletBalance < _ambangSaldoMenipis) _kartuSaldoDriver(isDark),
+                _buildBottomPanel(isDark, theme),
+              ],
+            ),
           ),
         ],
     );
@@ -2357,6 +2478,28 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       style: const TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.w900),
                     ),
                     const SizedBox(height: 6),
+                    // Saldo dan tombol top up ditaruh di sini, bukan cuma di
+                    // kartu peringatan: driver yang saldonya masih aman tetap
+                    // butuh jalan untuk mengisi sebelum kehabisan di jalan.
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Saldo komisi ${_rupiah(_walletBalance)}',
+                            style: const TextStyle(color: Colors.white70, fontSize: 11),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: _showTopUpDialog,
+                          icon: const Icon(Icons.add, size: 15, color: Colors.white),
+                          label: const Text('Top Up', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(0, 32),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                          ),
+                        ),
+                      ],
+                    ),
                     Text(
                       '${hariIni.length} pesanan selesai hari ini · sudah dipotong komisi',
                       style: const TextStyle(color: Colors.white70, fontSize: 11),
@@ -2365,9 +2508,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 ),
               ),
               const SizedBox(height: 20),
-              // Saldo minus berarti komisi pesanan tunai yang belum disetor.
-              // Kartunya hanya muncul kalau memang ada utangnya.
-              if (_walletBalance < 0) _kartuUtangKomisi(isDark),
+              // Kartu yang sama dengan di layar utama, supaya driver tidak
+              // membaca dua versi berbeda tentang saldo yang sama.
+              if (_walletBalance < _ambangSaldoMenipis)
+                _kartuSaldoDriver(isDark, margin: const EdgeInsets.only(bottom: 20)),
               Text(
                 'Riwayat pesanan',
                 style: TextStyle(
@@ -2410,69 +2554,133 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
-  /// Kartu utang komisi + tombol pindai QR setoran.
+  /// Di bawah nilai ini driver diperingatkan. Bukan angka ajaib: sekitar tiga
+  /// sampai empat komisi pesanan pendek, cukup untuk sempat top up sebelum
+  /// gerbang saldo di server mulai menolak pesanan tunai.
+  static const double _ambangSaldoMenipis = 10000;
+
+  /// Pita peringatan saldo di layar utama driver.
   ///
-  /// Uangnya diserahkan tunai ke petugas lebih dulu; QR yang dipindai di sini
-  /// cuma bukti bahwa petugas sudah menerimanya. Karena itu tombolnya bicara
-  /// "sudah setor tunai", bukan "bayar sekarang".
-  Widget _kartuUtangKomisi(bool isDark) {
-    final utang = -_walletBalance;
+  /// Muncul di dua keadaan yang beda akibatnya: saldo menipis masih boleh
+  /// narik, saldo minus sudah tidak. Server yang menolak pesanannya, jadi
+  /// peringatan ini yang membuat penolakan itu tidak datang mengagetkan.
+  Widget _kartuSaldoDriver(bool isDark, {EdgeInsets? margin}) {
+    final minus = _walletBalance < 0;
+    final warna = minus ? AppTheme.errorColor : Colors.orange;
     return Container(
-      margin: const EdgeInsets.only(bottom: 20),
-      padding: const EdgeInsets.all(16),
+      margin: margin ?? const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: isDark ? AppTheme.cardObsidianDark : Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.errorColor.withOpacity(0.35)),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: warna.withOpacity(0.45)),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 10)],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Icon(Icons.account_balance_wallet, color: AppTheme.errorColor, size: 20),
+              Icon(minus ? Icons.block : Icons.warning_amber_rounded, color: warna, size: 18),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Komisi belum disetor',
+                  minus
+                      ? 'Pesanan tunai ditolak sampai saldo diisi'
+                      : 'Saldo menipis — ${_rupiah(_walletBalance)}',
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
-                    fontSize: 13,
+                    fontSize: 12.5,
                     color: isDark ? Colors.white : Colors.black87,
                   ),
                 ),
               ),
-              Text(
-                _rupiah(utang),
-                style: const TextStyle(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 16,
-                  color: AppTheme.errorColor,
-                ),
-              ),
             ],
           ),
-          const SizedBox(height: 6),
-          const Text(
-            'Dari pesanan tunai: ongkosnya Anda terima langsung, komisinya jadi utang ke bohAntar.',
-            style: TextStyle(fontSize: 11, color: Colors.grey),
+          const SizedBox(height: 4),
+          Text(
+            minus
+                ? 'Komisi ${_rupiah(-_walletBalance)} belum disetor. Top up atau setor tunai ke petugas.'
+                : 'Komisi pesanan tunai dipotong dari saldo. Top up supaya tetap bisa menerima pesanan.',
+            style: const TextStyle(fontSize: 11, color: Colors.grey),
           ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: _pindaiSetoran,
-              icon: const Icon(Icons.qr_code_scanner, size: 18),
-              label: const Text('Sudah setor tunai — pindai QR petugas'),
-              style: ElevatedButton.styleFrom(
-                minimumSize: const Size(0, 46),
-                textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: _showTopUpDialog,
+                  icon: const Icon(Icons.add, size: 16),
+                  label: const Text('Top Up'),
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(0, 38),
+                    textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
               ),
-            ),
+              if (minus) ...[
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _pindaiSetoran,
+                    icon: const Icon(Icons.qr_code_scanner, size: 16),
+                    label: const Text('Setor tunai'),
+                    style: OutlinedButton.styleFrom(
+                      minimumSize: const Size(0, 38),
+                      textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
         ],
       ),
     );
+  }
+
+  /// Melepas pesanan yang sudah diterima supaya driver lain bisa mengambilnya.
+  ///
+  /// Dikonfirmasi dulu karena penumpangnya sudah menunggu, dan karena komisi
+  /// pesanan ini menahan saldo driver sampai pesanannya bergerak.
+  Future<void> _lepasPesanan() async {
+    final orderId = _acceptedOrder?['id'];
+    if (orderId == null) return;
+
+    final yakin = await showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: const Text('Lepas pesanan ini?'),
+        content: const Text(
+          'Pesanan dikembalikan ke papan orderan supaya driver lain bisa mengambilnya, '
+          'dan komisinya tidak lagi menahan saldo Anda.',
+          style: TextStyle(fontSize: 13),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Batal')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(d, true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
+            child: const Text('Lepas'),
+          ),
+        ],
+      ),
+    );
+    if (yakin != true || !mounted) return;
+
+    try {
+      await ApiService().lepasPesanan(orderId);
+      if (!mounted) return;
+      setState(() => _acceptedOrder = null);
+      // Saldo dibaca ulang: komisi yang tadi tertahan sekarang bebas lagi.
+      await _fetchUserProfile();
+      if (!mounted) return;
+      _beriTahu('Pesanan dikembalikan ke papan orderan');
+    } catch (e) {
+      if (!mounted) return;
+      _beriTahu(e.toString().replaceFirst('Exception: ', ''));
+    }
   }
 
   Future<void> _pindaiSetoran() async {
@@ -2556,6 +2764,243 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
   static String _rupiah(double nilai) =>
       'Rp ${nilai.toStringAsFixed(0).replaceAllMapped(RegExp(r"(\d{1,3})(?=(\d{3})+(?!\d))"), (m) => "${m[1]}.")}';
+
+  /// Layanan yang mengantar barang, bukan orang.
+  static bool _kirimBarang(Map<String, dynamic>? o) {
+    final s = (o?['service'] ?? '').toString();
+    return s == 'BohAntar' || s == 'BohSend' || s == 'BohFood';
+  }
+
+  static bool _makanan(Map<String, dynamic>? o) => (o?['service'] ?? '') == 'BohFood';
+
+  static IconData _ikonLayanan(String s) {
+    switch (s) {
+      case 'BohFood':
+        return Icons.restaurant;
+      case 'BohAntar':
+      case 'BohSend':
+        return Icons.local_shipping;
+      case 'BohCar':
+        return Icons.directions_car;
+      default:
+        return Icons.motorcycle;
+    }
+  }
+
+  static String _labelJemput(Map<String, dynamic>? o) =>
+      _makanan(o) ? 'Ambil di warung' : _kirimBarang(o) ? 'Ambil Barang' : 'Jemput Penumpang';
+
+  static String _labelTombolAmbil(Map<String, dynamic>? o) =>
+      _makanan(o) ? 'MAKANAN SUDAH DIAMBIL' : _kirimBarang(o) ? 'AMBIL BARANG' : 'AMBIL PENUMPANG';
+
+  /// Isi kiriman, ditampilkan sebelum driver menekan Terima.
+  ///
+  /// Tanpa ini sebuah kulkas dan sebuah map dokumen terlihat persis sama di
+  /// panel driver: cuma dua alamat dan satu angka tarif. Catatan penumpang baru
+  /// ikut setelah pesanan diterima — papan orderan memang tidak mengirimnya.
+  Widget _detailBarang(Map<String, dynamic> o, {bool tampilkanCatatan = false}) {
+    if (!_kirimBarang(o)) return const SizedBox.shrink();
+    if (_makanan(o)) return _detailMakanan(o, tampilkanCatatan);
+
+    final jenis = (o['package_type'] ?? '').toString();
+    final jumlah = (o['package_quantity'] as num?)?.toInt() ?? 0;
+    final berat = (o['package_weight'] ?? '').toString();
+    final catatan = tampilkanCatatan ? (o['package_notes'] ?? '').toString().trim() : '';
+    // Penerima ikut disembunyikan sebelum diterima, sama seperti nomor pemesan.
+    final teleponPenerima = tampilkanCatatan ? (o['receiver_phone'] ?? '').toString().trim() : '';
+    final penerima = [
+      if (tampilkanCatatan) (o['receiver_name'] ?? '').toString().trim(),
+      teleponPenerima,
+    ].where((s) => s.isNotEmpty).join(' · ');
+    final tanda = [
+      if (o['special_handling'] == true) '⚠ Penanganan khusus',
+      if (o['insurance'] == true) '🛡 Diasuransikan',
+    ];
+
+    return Container(
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.primaryBlue.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.inventory_2_outlined, size: 16, color: AppTheme.primaryBlue),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  [
+                    jenis.isEmpty ? 'Barang' : jenis,
+                    if (jumlah > 0) '$jumlah pcs',
+                    if (berat.isNotEmpty) berat,
+                  ].join(' · '),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          if (tanda.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(tanda.join('   '), style: const TextStyle(fontSize: 11, color: Colors.orange)),
+            ),
+          if (penerima.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: InkWell(
+                onTap: teleponPenerima.isEmpty ? null : () => launchUrl(Uri.parse('tel:$teleponPenerima')),
+                child: Row(
+                  children: [
+                    const Icon(Icons.person_pin_circle_outlined, size: 16, color: AppTheme.primaryBlue),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text('Penerima: $penerima', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600))),
+                    if (teleponPenerima.isNotEmpty) const Icon(Icons.phone, size: 16, color: Colors.green),
+                  ],
+                ),
+              ),
+            ),
+          if (catatan.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text('Catatan: $catatan', style: const TextStyle(fontSize: 12)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Pesanan makanan untuk driver: apa yang dibeli, di warung mana, dan berapa
+  /// yang harus ia talangi — angka yang menentukan apakah ia sanggup mengambil
+  /// orderan ini, jadi tampil sebelum tombol Terima.
+  Widget _detailMakanan(Map<String, dynamic> o, bool tampilkanCatatan) {
+    final items = (o['items'] as List?) ?? [];
+    final talangan = (o['food_total'] as num?)?.toDouble() ?? 0;
+    final ongkir = (o['fare'] as num?)?.toDouble() ?? 0;
+    final tunai = (o['payment_method'] ?? 'cash') != 'wallet';
+    final catatan = tampilkanCatatan ? (o['package_notes'] ?? '').toString().trim() : '';
+
+    return Container(
+      margin: const EdgeInsets.only(top: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.orange.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.restaurant, size: 16, color: Colors.orange),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text('Beli di ${o['merchant_name'] ?? 'warung'}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final it in items)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  SizedBox(width: 30, child: Text('${it['qty'] ?? 0}×', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+                  Expanded(child: Text((it['name'] ?? '').toString(), style: const TextStyle(fontSize: 12))),
+                  Text(
+                    _rupiah(((it['price'] as num?)?.toDouble() ?? 0) * ((it['qty'] as num?)?.toDouble() ?? 0)),
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
+            ),
+          const Divider(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Bayar ke warung', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+              Text(_rupiah(talangan), style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Colors.orange.shade800)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            tunai
+                ? 'Tagih ke pelanggan ${_rupiah(talangan + ongkir)} (makanan + ongkir)'
+                : 'PayAntar: uang makanan + ongkir masuk saldo kamu setelah selesai',
+            style: const TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+          if (catatan.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text('Catatan: $catatan', style: const TextStyle(fontSize: 12)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// Memotret lalu mengunggah bukti serah-terima. Null kalau driver membatalkan
+  /// atau unggahannya gagal — pemanggil berhenti, bukan melanjutkan tanpa bukti.
+  Future<String?> _unggahFotoBukti(String judul) async {
+    final sumber = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(title: Text(judul, style: const TextStyle(fontWeight: FontWeight.bold))),
+            ListTile(
+              leading: const Icon(Icons.photo_camera_outlined),
+              title: const Text('Ambil foto'),
+              onTap: () => Navigator.pop(ctx, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_outlined),
+              title: const Text('Pilih dari galeri'),
+              onTap: () => Navigator.pop(ctx, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (sumber == null) return null;
+    // Dikecilkan di HP: server menolak berkas di atas 5 MB.
+    final foto = await ImagePicker().pickImage(source: sumber, maxWidth: 1600, imageQuality: 70);
+    if (foto == null) return null;
+    try {
+      return await ApiService().uploadFoto(foto.path);
+    } catch (e) {
+      _beriTahu('Foto gagal diunggah: ${e.toString().replaceAll('Exception: ', '')}');
+      return null;
+    }
+  }
+
+  /// Nama orang yang menerima barang. Terisi awal dari nama penerima yang
+  /// ditulis pemesan; driver tinggal membetulkan kalau yang menerima orang lain.
+  /// Null kalau dibatalkan; boleh kosong kalau penerima tidak mau menyebut nama.
+  Future<String?> _tanyaNamaPenerima() {
+    var nama = (_acceptedOrder?['receiver_name'] ?? '').toString();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Diterima oleh siapa?'),
+        content: TextFormField(
+          initialValue: nama,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(hintText: 'Nama penerima'),
+          onChanged: (v) => nama = v,
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, nama.trim()), child: const Text('Lanjut foto')),
+        ],
+      ),
+    );
+  }
 
   Widget _buildBottomPanel(bool isDark, ThemeData theme) {
     // Perjalanan yang sedang berlangsung diperiksa lebih dulu daripada status
@@ -2667,7 +3112,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text("📍 Jemput Penumpang: ${_cleanPickupAddress(_acceptedOrder!['pickup'])}", overflow: TextOverflow.ellipsis, maxLines: 2, style: const TextStyle(fontSize: 12)),
+                      Text("📍 ${_labelJemput(_acceptedOrder)}: ${_cleanPickupAddress(_acceptedOrder!['pickup'])}", overflow: TextOverflow.ellipsis, maxLines: 2, style: const TextStyle(fontSize: 12)),
                       const SizedBox(height: 12),
                       Text("🏁 Antar ke: ${_acceptedOrder!['dropoff']}", overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
                     ],
@@ -2675,6 +3120,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 )
               ],
             ),
+            _detailBarang(_acceptedOrder!, tampilkanCatatan: true),
             const SizedBox(height: 16),
             // Chat & Call buttons
             Row(
@@ -2735,7 +3181,14 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
                 if (!isPickedUp) {
                   try {
-                    final res = await ApiService().pickupOrder(orderId);
+                    // Barang difoto saat diambil: satu-satunya bukti kondisi
+                    // awalnya kalau nanti ada sengketa.
+                    String? foto;
+                    if (_kirimBarang(_acceptedOrder)) {
+                      foto = await _unggahFotoBukti('Foto barang saat diambil');
+                      if (foto == null) return;
+                    }
+                    final res = await ApiService().pickupOrder(orderId, photoUrl: foto);
                     if (!mounted) return;
                     if (res['status'] == 'success') {
                       setState(() {
@@ -2744,9 +3197,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(
-                            service == "BohAntar" || service == "BohSend"
-                                ? "Barang berhasil diambil! Mulai pengantaran."
-                                : "Penumpang berhasil dijemput! Mulai perjalanan."
+                            service == "BohFood"
+                                ? "Makanan sudah di tangan. Antar ke pelanggan!"
+                                : _kirimBarang(_acceptedOrder)
+                                    ? "Barang berhasil diambil! Mulai pengantaran."
+                                    : "Penumpang berhasil dijemput! Mulai perjalanan."
                           ),
                           backgroundColor: Colors.teal,
                         ),
@@ -2760,7 +3215,15 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   }
                 } else {
                   try {
-                    final res = await ApiService().completeOrder(orderId);
+                    String? foto;
+                    String? penerima;
+                    if (_kirimBarang(_acceptedOrder)) {
+                      penerima = await _tanyaNamaPenerima();
+                      if (penerima == null) return;
+                      foto = await _unggahFotoBukti('Foto barang saat diserahkan');
+                      if (foto == null) return;
+                    }
+                    final res = await ApiService().completeOrder(orderId, photoUrl: foto, receivedBy: penerima);
                     if (!mounted) return;
                     if (res['status'] == 'success') {
                       setState(() {
@@ -2782,16 +3245,16 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               icon: Icon(
                 (_acceptedOrder!['status'] ?? 'accepted') == 'picked_up'
                     ? Icons.check_circle_outline
-                    : ((_acceptedOrder!['service'] ?? '') == 'BohAntar' || (_acceptedOrder!['service'] ?? '') == 'BohSend'
-                        ? Icons.local_shipping
-                        : Icons.person_pin_circle),
+                    : _makanan(_acceptedOrder)
+                        ? Icons.restaurant
+                        : _kirimBarang(_acceptedOrder)
+                            ? Icons.local_shipping
+                            : Icons.person_pin_circle,
               ),
               label: Text(
                 (_acceptedOrder!['status'] ?? 'accepted') == 'picked_up'
-                    ? "SELESAIKAN PERJALANAN"
-                    : ((_acceptedOrder!['service'] ?? '') == 'BohAntar' || (_acceptedOrder!['service'] ?? '') == 'BohSend'
-                        ? "AMBIL BARANG"
-                        : "AMBIL PENUMPANG"),
+                    ? (_kirimBarang(_acceptedOrder) ? "SELESAIKAN PENGANTARAN" : "SELESAIKAN PERJALANAN")
+                    : _labelTombolAmbil(_acceptedOrder),
               ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: (_acceptedOrder!['status'] ?? 'accepted') == 'picked_up' ? Colors.green.shade700 : AppTheme.primaryBlue,
@@ -2799,7 +3262,21 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 minimumSize: const Size(double.infinity, 50),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
-            )
+            ),
+            // Hanya sebelum penumpang atau barangnya diambil. Sesudah itu driver
+            // sudah memegang sesuatu milik orang lain dan harus lewat admin.
+            if ((_acceptedOrder!['status'] ?? 'accepted') != 'picked_up')
+              TextButton(
+                onPressed: _lepasPesanan,
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.grey,
+                  minimumSize: const Size(double.infinity, 40),
+                ),
+                child: const Text(
+                  'Tidak bisa melanjutkan? Lepas pesanan ini',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ),
           ],
         ),
       );
@@ -2839,7 +3316,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                         color: AppTheme.primaryBlue.withOpacity(0.12),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(Icons.motorcycle, color: AppTheme.primaryBlue),
+                      child: Icon(_ikonLayanan((_currentIncomingOrder!['service'] ?? '').toString()), color: AppTheme.primaryBlue),
                     ),
                     const SizedBox(width: 12),
                     Column(
@@ -2904,7 +3381,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        '📍 Lokasi Penumpang: ${_cleanPickupAddress(_currentIncomingOrder!['pickup'])}',
+                        '📍 ${_labelJemput(_currentIncomingOrder)}: ${_cleanPickupAddress(_currentIncomingOrder!['pickup'])}',
                         overflow: TextOverflow.ellipsis,
                         maxLines: 2,
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
@@ -2920,6 +3397,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 ),
               ],
             ),
+            _detailBarang(_currentIncomingOrder!),
             const SizedBox(height: 24),
 
             // Buttons

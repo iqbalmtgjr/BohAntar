@@ -75,47 +75,71 @@ func TestKomisiDanBagianDriverSelaluGenap(t *testing.T) {
 // — tidak lebih, tidak kurang. Ini invarian yang menjaga tunai dan dompet tetap
 // setara secara pembukuan.
 func TestBagiPembayaranSelaluMenyisakanKomisiUntukAplikator(t *testing.T) {
-	kasus := []struct{ fare, komisi float64 }{
-		{18000, 3600},
-		{8000, 0},
-		{25000, 25000},
-		{12300, 4100},
+	kasus := []struct{ fare, komisi, biayaJasa float64 }{
+		{18000, 3600, 1000},
+		{8000, 0, 1000},
+		{25000, 25000, 0},
+		{12300, 4100, 2000},
+		{15000, 1200, 1000}, // komisi 8% sesuai Perpres 27/2026
 	}
 	for _, k := range kasus {
 		for _, metode := range []string{"wallet", "cash", "", "entah-apa"} {
-			debit, kredit := bagiPembayaran(metode, k.fare, k.komisi)
-			if debit-kredit != k.komisi {
-				t.Errorf("metode %q fare %v komisi %v: debit %v - kredit %v = %v, mau %v",
-					metode, k.fare, k.komisi, debit, kredit, debit-kredit, k.komisi)
+			for _, talangan := range []float64{0, 45000} {
+				debit, kredit := bagiPembayaran(metode, k.fare, k.komisi, talangan, k.biayaJasa)
+				mau := k.komisi + k.biayaJasa
+				if debit-kredit != mau {
+					t.Errorf("metode %q fare %v komisi %v biayaJasa %v talangan %v: debit %v - kredit %v = %v, mau %v",
+						metode, k.fare, k.komisi, k.biayaJasa, talangan, debit, kredit, debit-kredit, mau)
+				}
 			}
 		}
 	}
 }
 
 func TestBagiPembayaranTunaiTidakMenyentuhPenumpang(t *testing.T) {
-	debit, kredit := bagiPembayaran("cash", 20000, 4000)
+	// Penumpang menyerahkan ongkos DAN biaya jasa tunai ke tangan driver, jadi
+	// yang dipotong dari saldo driver adalah dua-duanya.
+	debit, kredit := bagiPembayaran("cash", 20000, 4000, 0, 1000)
 	if debit != 0 {
 		t.Errorf("tunai tidak boleh mendebit saldo penumpang, dapat %v", debit)
 	}
-	if kredit != -4000 {
-		t.Errorf("tunai harus mendebit komisi dari driver (-4000), dapat %v", kredit)
+	if kredit != -5000 {
+		t.Errorf("tunai harus mendebit komisi + biaya jasa dari driver (-5000), dapat %v", kredit)
 	}
 
 	// Metode kosong dari aplikasi versi lama harus diperlakukan sebagai tunai,
 	// bukan diam-diam mendebit saldo penumpang.
-	debitKosong, kreditKosong := bagiPembayaran("", 20000, 4000)
+	debitKosong, kreditKosong := bagiPembayaran("", 20000, 4000, 0, 1000)
 	if debitKosong != debit || kreditKosong != kredit {
 		t.Errorf("metode kosong harus sama dengan tunai, dapat debit %v kredit %v", debitKosong, kreditKosong)
 	}
 }
 
 func TestBagiPembayaranDompetMemindahkanPenuh(t *testing.T) {
-	debit, kredit := bagiPembayaran("wallet", 20000, 4000)
-	if debit != 20000 {
-		t.Errorf("dompet harus mendebit penumpang penuh 20000, dapat %v", debit)
+	debit, kredit := bagiPembayaran("wallet", 20000, 4000, 0, 1000)
+	if debit != 21000 {
+		t.Errorf("dompet harus mendebit ongkos + biaya jasa = 21000, dapat %v", debit)
 	}
+	// Biaya jasa tidak pernah jadi milik driver: bagiannya tetap fare - komisi.
 	if kredit != 16000 {
 		t.Errorf("driver harus menerima 16000, dapat %v", kredit)
+	}
+}
+
+// Uang makanan BohFood lewat utuh dari penumpang ke driver yang sudah
+// menalanginya — tidak dipotong komisi, dan tunai tidak menyentuh saldo siapa
+// pun karena uangnya sudah berpindah tangan di pintu.
+func TestBagiPembayaranTalanganLewatUtuh(t *testing.T) {
+	debit, kredit := bagiPembayaran("wallet", 20000, 4000, 45000, 1000)
+	if debit != 66000 || kredit != 61000 {
+		t.Errorf("dompet: debit %v kredit %v, mau 66000 / 61000", debit, kredit)
+	}
+	if debit-kredit != 5000 {
+		t.Errorf("aplikator dapat %v, harusnya komisi 4000 + biaya jasa 1000", debit-kredit)
+	}
+	debit, kredit = bagiPembayaran("cash", 20000, 4000, 45000, 1000)
+	if debit != 0 || kredit != -5000 {
+		t.Errorf("tunai: debit %v kredit %v, mau 0 / -5000", debit, kredit)
 	}
 }
 
@@ -164,5 +188,43 @@ func TestKoordinatValidMenolakNolDanLuarBumi(t *testing.T) {
 		if got := koordinatValid(k.lat, k.lng); got != k.mau {
 			t.Errorf("%s: koordinatValid(%v, %v) = %v, mau %v", k.nama, k.lat, k.lng, got, k.mau)
 		}
+	}
+}
+
+// Gerbang saldo driver. Pesanan tunai menagih komisi dengan memotong saldo,
+// jadi saldo yang tidak cukup berarti pesanannya tidak boleh diterima.
+func TestSaldoCukupUntukKomisi(t *testing.T) {
+	kasus := []struct {
+		nama                    string
+		metode                  string
+		saldo, tertahan, komisi float64
+		mau                     bool
+	}{
+		{"tunai saldo lebih", "cash", 50000, 0, 2800, true},
+		{"tunai saldo pas", "cash", 2800, 0, 2800, true},
+		{"tunai saldo kurang", "cash", 2000, 0, 2800, false},
+		{"tunai saldo minus", "cash", -5000, 0, 2800, false},
+		{"tunai saldo nol", "cash", 0, 0, 2800, false},
+		{"tunai sisa habis oleh pesanan berjalan", "cash", 5000, 2800, 2800, false},
+		{"tunai sisa masih cukup", "cash", 8000, 2800, 2800, true},
+		{"dompet walau saldo nol", "wallet", 0, 0, 2800, true},
+		{"dompet walau saldo minus", "wallet", -50000, 0, 2800, true},
+		// Aplikasi versi lama mengirim metode kosong; itu berarti tunai, dan
+		// harus ikut dijaga — bukan diam-diam lolos.
+		{"metode kosong diperlakukan tunai", "", 2000, 0, 2800, false},
+	}
+	for _, k := range kasus {
+		if got := saldoCukupUntukKomisi(k.metode, k.saldo, k.tertahan, k.komisi); got != k.mau {
+			t.Errorf("%s: saldoCukupUntukKomisi(%q, %v, %v, %v) = %v, mau %v",
+				k.nama, k.metode, k.saldo, k.tertahan, k.komisi, got, k.mau)
+		}
+	}
+}
+
+// Komisi nol (misalnya layanan yang digratiskan lewat tabel tarif) tidak boleh
+// mengunci driver yang saldonya kosong.
+func TestSaldoCukupUntukKomisiNolSelaluBoleh(t *testing.T) {
+	if !saldoCukupUntukKomisi("cash", 0, 0, 0) {
+		t.Error("komisi 0 harus selalu boleh diterima walau saldo kosong")
 	}
 }

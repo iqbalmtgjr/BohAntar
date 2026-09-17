@@ -44,6 +44,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // memilih PayAntar duluan berarti pesanan pertama siapa pun pasti ditolak.
   String _paymentMethod = "Tunai"; // "PayAntar" or "Tunai"
   double _fare = 0.0;
+  double _biayaJasa = 0.0;
   
   int _inputStep = 0; // 0 = address picker, 1 = item details (BohAntar/BohSend), 2 = estimate
   
@@ -54,6 +55,18 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   final _packageNotesController = TextEditingController();
   bool _insuranceActive = false;
   bool _specialHandlingActive = false;
+  // Siapa yang menerima di tujuan. Kosong = pemesan sendiri.
+  final _receiverNameController = TextEditingController();
+  final _receiverPhoneController = TextEditingController();
+  // Bukti serah-terima dari driver, dibaca saat pesanan selesai.
+  String _receivedBy = "";
+  String _deliveryPhotoUrl = "";
+  // BohFood: uang makanan yang ditagih di atas ongkir, dan nama warungnya.
+  double _foodTotal = 0;
+  String _merchantName = "";
+
+  bool get _kirimBarang => _selectedService == "BohAntar" || _selectedService == "BohSend" || _selectedService == "BohFood";
+  bool get _makanan => _selectedService == "BohFood";
   
   // Interactive rating state
   int _ratingStars = 5;
@@ -99,6 +112,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     super.initState();
     _selectedService = widget.initialService;
     if (widget.initialOrderId != null) {
+      // Langsung ke radar, bukan formulir alamat yang berkedip sekejap
+      // sebelum pesanannya termuat.
+      _orderStatus = "searching";
       _muatPesananBerjalan(widget.initialOrderId!);
     }
     if (widget.initialDestination != null) {
@@ -119,6 +135,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     _pickupController.dispose();
     _destinationController.dispose();
     _packageNotesController.dispose();
+    _receiverNameController.dispose();
+    _receiverPhoneController.dispose();
     _reviewController.dispose();
     _statusTimer?.cancel();
     _radarController.dispose();
@@ -147,8 +165,11 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         _orderStatus = o['status'] == 'pending' ? 'searching' : o['status'];
         _selectedService = o['service'] ?? _selectedService;
         _fare = (o['fare'] as num?)?.toDouble() ?? 0;
+        _biayaJasa = (o['biaya_jasa'] as num?)?.toDouble() ?? 0;
         _driverName = o['driver_name'] ?? '';
         _driverPhone = o['driver_phone'] ?? '';
+        _foodTotal = (o['food_total'] as num?)?.toDouble() ?? 0;
+        _merchantName = (o['merchant_name'] ?? '').toString();
         _pickupController.text = o['pickup'] ?? '';
         _destinationController.text = o['dropoff'] ?? '';
         if (jemputLat != null && jemputLng != null) {
@@ -436,7 +457,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
 
   // Jarak dan rincian ongkos untuk tujuan yang sedang dipilih. Rumusnya ada di
   // lib/tarif.dart supaya bisa diuji terhadap angka yang sama dengan server.
-  ({double km, double base, double perKm, double total}) _rincianTarif() {
+  ({double km, double base, double perKm, double biayaJasa, double ongkos, double total}) _rincianTarif() {
     final tujuan = _destinationLatLng;
     final km = tujuan == null
         ? 0.0
@@ -448,13 +469,25 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             ) /
             1000.0;
     final tarif = Tarif.untuk(_selectedService);
-    return (km: km, base: tarif.base, perKm: tarif.perKM, total: tarif.hitung(km));
+    return (
+      km: km,
+      base: tarif.base,
+      perKm: tarif.perKM,
+      biayaJasa: tarif.biayaJasa,
+      ongkos: tarif.hitung(km),
+      total: tarif.totalBayar(km),
+    );
   }
 
   void _calculateFareFromDistance() {
     if (_destinationLatLng == null) return;
     setState(() {
-      _fare = _rincianTarif().total;
+      // _fare adalah ongkos perjalanan saja, sama seperti kolom `fare` di
+      // server. Biaya jasa disimpan terpisah supaya rinciannya bisa ditampilkan
+      // dan supaya angka yang dibandingkan dengan balasan server tetap sepadan.
+      final r = _rincianTarif();
+      _fare = r.ongkos;
+      _biayaJasa = r.biayaJasa;
     });
     // Tarif dihitung langsung (gratis, hitungan lokal); rutenya ditahan.
     _ruteDebounce?.cancel();
@@ -619,12 +652,14 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         pickupLng: _currentLatLng.longitude,
         dropoffLat: tujuan.latitude,
         dropoffLng: tujuan.longitude,
-        packageType: _selectedService == "BohAntar" || _selectedService == "BohSend" ? _packageType : null,
-        packageQuantity: _selectedService == "BohAntar" || _selectedService == "BohSend" ? _packageQuantity : null,
-        packageWeight: _selectedService == "BohAntar" || _selectedService == "BohSend" ? _packageWeight : null,
-        packageNotes: _selectedService == "BohAntar" || _selectedService == "BohSend" ? _packageNotesController.text : null,
-        insurance: _selectedService == "BohAntar" || _selectedService == "BohSend" ? _insuranceActive : null,
-        specialHandling: _selectedService == "BohAntar" || _selectedService == "BohSend" ? _specialHandlingActive : null,
+        packageType: _kirimBarang ? _packageType : null,
+        packageQuantity: _kirimBarang ? _packageQuantity : null,
+        packageWeight: _kirimBarang ? _packageWeight : null,
+        packageNotes: _kirimBarang ? _packageNotesController.text : null,
+        insurance: _kirimBarang ? _insuranceActive : null,
+        specialHandling: _kirimBarang ? _specialHandlingActive : null,
+        receiverName: _kirimBarang ? _receiverNameController.text.trim() : null,
+        receiverPhone: _kirimBarang ? _receiverPhoneController.text.trim() : null,
       );
 
       if (response['status'] == 'success' && response['order'] != null) {
@@ -633,6 +668,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           _orderId = order['id'];
           // Ongkos server yang berlaku, bukan taksiran lokal tadi.
           _fare = (order['fare'] as num?)?.toDouble() ?? _fare;
+          // Angka server yang berlaku, bukan taksiran lokal: super admin bisa
+          // saja sudah mengubah biaya jasa sejak aplikasi ini dipasang.
+          _biayaJasa = (order['biaya_jasa'] as num?)?.toDouble() ?? _biayaJasa;
         });
 
         // Start polling order status
@@ -697,6 +735,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             setState(() {
               _orderStatus = 'completed';
               _driverLatLng = null;
+              _receivedBy = (order['received_by'] ?? '').toString();
+              _deliveryPhotoUrl = (order['delivery_photo_url'] ?? '').toString();
+              _foodTotal = (order['food_total'] as num?)?.toDouble() ?? _foodTotal;
             });
           } else if (status == 'cancelled' || status == 'expired') {
             // Bisa datang dari admin yang menutup pesanan tersangkut, atau dari
@@ -742,7 +783,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                       : "Estimasi Harga")
               : _orderStatus == "searching"
                   ? "Mencari Driver..."
-                  : "Perjalanan Aktif",
+                  : _kirimBarang
+                      ? "Pesanan Aktif"
+                      : "Perjalanan Aktif",
           style: const TextStyle(fontWeight: FontWeight.bold),
         ),
         backgroundColor: Colors.transparent,
@@ -831,7 +874,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                 ],
                 const Spacer(),
                 if (_orderStatus == "searching") _buildRadarSearchPanel(theme, isDark),
-                if (_orderStatus == "accepted") _buildDriverComingPanel(theme, isDark),
+                // Ikut tampil saat picked_up: justru saat barang sudah di tangan
+                // driver, penumpang paling butuh chat, telepon, dan status.
+                if (_orderStatus == "accepted" || _orderStatus == "picked_up") _buildDriverComingPanel(theme, isDark),
               ],
             ),
           ),
@@ -970,7 +1015,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               onPressed: _destinationLatLng != null
                   ? () {
                       setState(() {
-                        if (_selectedService == "BohAntar" || _selectedService == "BohSend") {
+                        if (_kirimBarang) {
                           _inputStep = 1;
                         } else {
                           _inputStep = 2;
@@ -1030,11 +1075,15 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     return Container(
       padding: const EdgeInsets.all(20),
       margin: const EdgeInsets.all(16),
+      // Dibatasi lalu digulung: isian penerima membuat panel ini lebih tinggi
+      // dari layar HP kecil, apalagi saat keyboard terbuka.
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.75),
       decoration: BoxDecoration(
         color: isDark ? AppTheme.cardObsidianDark : Colors.white,
         borderRadius: BorderRadius.circular(24),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 16)],
       ),
+      child: SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1113,6 +1162,27 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             ),
           ),
+          const SizedBox(height: 12),
+
+          // Driver yang sampai di tujuan menelepon nomor ini, bukan nomor
+          // pemesan. Kosong berarti pemesan sendiri yang menerima.
+          const Text("Penerima di tujuan", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+          TextFormField(
+            controller: _receiverNameController,
+            textCapitalization: TextCapitalization.words,
+            decoration: const InputDecoration(
+              hintText: "Nama penerima (kosongkan kalau Anda sendiri)",
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+          ),
+          TextFormField(
+            controller: _receiverPhoneController,
+            keyboardType: TextInputType.phone,
+            decoration: const InputDecoration(
+              hintText: "Nomor HP penerima",
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+          ),
           const SizedBox(height: 16),
 
           const Text("Layanan tambahan", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
@@ -1156,6 +1226,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           ),
         ],
       ),
+      ),
     );
   }
 
@@ -1191,7 +1262,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               TextButton(
                 onPressed: () {
                   setState(() {
-                    if (_selectedService == "BohAntar" || _selectedService == "BohSend") {
+                    if (_kirimBarang) {
                       _inputStep = 1;
                     } else {
                       _inputStep = 0;
@@ -1234,6 +1305,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           const SizedBox(height: 8),
           _buildFareRow("Tarif dasar", tarif.base),
           _buildFareRow("Jarak (${distanceKm.toStringAsFixed(1)} km)", distanceCost),
+          // Ditampilkan terpisah, bukan dilebur ke ongkos: penumpang berhak
+          // tahu mana yang untuk driver dan mana yang untuk aplikasi.
+          if (tarif.biayaJasa > 0) _buildFareRow("Biaya jasa aplikasi", tarif.biayaJasa),
           // Asuransi dan penanganan khusus tidak muncul di sini karena server
           // tidak menagihnya: keduanya dikirim sebagai permintaan ke driver,
           // bukan sebagai biaya. Kalau memang mau ditagih, tempatnya di tabel
@@ -1533,8 +1607,23 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             children: [
               const Icon(Icons.directions_run, color: AppTheme.primaryBlue, size: 18),
               const SizedBox(width: 8),
-              const Expanded(
-                child: Text("Driver menuju lokasi kamu • ETA 4 menit", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              // Tanpa "ETA 4 menit" lagi: backend tidak menghitung ETA, angka
+              // itu karangan.
+              Expanded(
+                child: Text(
+                  _orderStatus == "picked_up"
+                      ? (_makanan
+                          ? "Makanan sedang diantar ke kamu"
+                          : _kirimBarang
+                              ? "Barang sedang diantar ke tujuan"
+                              : "Perjalanan sedang berlangsung")
+                      : (_makanan
+                          ? "Driver menuju ${_merchantName.isEmpty ? 'warung' : _merchantName}"
+                          : _kirimBarang
+                              ? "Driver menuju titik pengambilan barang"
+                              : "Driver menuju lokasi kamu"),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
               )
             ],
           ),
@@ -1548,8 +1637,14 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           // tercentang, berapa pun lama penumpang menunggu.
           _buildTimelineItem("Pesanan dibuat", true),
           _buildTimelineItem("Driver ditemukan", _orderStatus == "accepted" || _orderStatus == "picked_up" || _orderStatus == "completed"),
-          _buildTimelineItem("Penumpang dijemput", _orderStatus == "picked_up" || _orderStatus == "completed"),
-          _buildTimelineItem("Perjalanan selesai", _orderStatus == "completed"),
+          _buildTimelineItem(
+            _makanan ? "Makanan diambil dari warung" : _kirimBarang ? "Barang diambil" : "Penumpang dijemput",
+            _orderStatus == "picked_up" || _orderStatus == "completed",
+          ),
+          _buildTimelineItem(
+            _makanan ? "Makanan diserahkan" : _kirimBarang ? "Barang diserahkan" : "Perjalanan selesai",
+            _orderStatus == "completed",
+          ),
           // Tombol "Simulasi Selesai (Dev)" dihapus: hanya driver yang boleh
           // menutup pesanan, dan backend memang menolak permintaan dari
           // penumpang — jadi tombol itu tidak pernah bisa berhasil.
@@ -1640,19 +1735,52 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(color: Colors.grey.shade200),
                 ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Column(
                   children: [
-                    const Text("Total Pembayaran", style: TextStyle(color: Colors.grey, fontSize: 13)),
-                    Text(
-                      "Rp ${_fare.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}",
-                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: AppTheme.primaryBlue),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Total Pembayaran", style: TextStyle(color: Colors.grey, fontSize: 13)),
+                        Text(
+                          "Rp ${(_fare + _biayaJasa + _foodTotal).toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}",
+                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: AppTheme.primaryBlue),
+                        ),
+                      ],
                     ),
+                    // Makanan: pemesan berhak tahu berapa yang untuk warung dan
+                    // berapa untuk ongkir, bukan cuma satu angka.
+                    if (_foodTotal > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Align(
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            "Makanan Rp ${_foodTotal.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}"
+                            " · Ongkir Rp ${_fare.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}",
+                            style: const TextStyle(color: Colors.grey, fontSize: 11),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               ),
               const SizedBox(height: 32),
               
+              // Bukti serah-terima dari driver, kalau ada.
+              if (_receivedBy.isNotEmpty || _deliveryPhotoUrl.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                if (_receivedBy.isNotEmpty)
+                  Text("Diterima oleh $_receivedBy", style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                if (_deliveryPhotoUrl.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network('${ApiService().baseUrl}$_deliveryPhotoUrl', height: 160, fit: BoxFit.cover),
+                  ),
+                ],
+                const SizedBox(height: 16),
+              ],
+
               // Interactive 5 star ratings
               const Text(
                 "Beri penilaian untuk driver",

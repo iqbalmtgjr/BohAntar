@@ -245,8 +245,23 @@ func notifikasiDriverSiaga(o Order) {
 				tokens = append(tokens, t)
 			}
 		}
+		// Judulnya menyebut isi kiriman: driver yang motornya sudah penuh tidak
+		// perlu membuka aplikasi cuma untuk tahu orderannya lemari es.
+		judul := "Orderan baru!"
+		isi := fmt.Sprintf("%s → %s · Rp%.0f", o.PickupAddress, o.DropoffAddress, o.Fare-o.Komisi)
+		if o.Service == "BohFood" {
+			// Talangan disebut di muka: driver yang uangnya tidak cukup untuk
+			// membayar warung tidak perlu membuka aplikasi.
+			judul = "Pesanan makanan: " + o.MerchantName
+			isi = fmt.Sprintf("Talangi Rp%.0f · ongkir bersih Rp%.0f → %s", o.FoodTotal, o.Fare-o.Komisi, o.DropoffAddress)
+		} else if o.PackageType != "" {
+			judul = "Kiriman baru: " + o.PackageType
+			if o.PackageWeight != "" {
+				judul += " (" + o.PackageWeight + ")"
+			}
+		}
 		for _, t := range tokens {
-			kirimNotifikasi(t, "Orderan baru!", fmt.Sprintf("%s → %s · Rp%.0f", o.PickupAddress, o.DropoffAddress, o.Fare-o.Komisi), map[string]string{
+			kirimNotifikasi(t, judul, isi, map[string]string{
 				"tipe":     "orderan_baru",
 				"order_id": o.ID,
 			})

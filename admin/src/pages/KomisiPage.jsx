@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Wallet, Banknote, Smartphone, Receipt, AlertTriangle, QrCode, CheckCircle, X } from "lucide-react";
+import { Wallet, Percent, Banknote, Smartphone, Receipt, AlertTriangle, QrCode, CheckCircle, X } from "lucide-react";
 import { api } from "../api";
 import Topbar from "../components/Topbar";
 
@@ -76,7 +76,9 @@ export default function KomisiPage() {
   const d = data || {};
   const drivers = d.drivers || [];
   const kartu = [
-    { label: "Komisi Kami", value: rp(d.total_komisi), icon: Wallet, color: "var(--success)", bg: "var(--success-glow)" },
+    { label: "Pendapatan Kami", value: rp(d.total_pendapatan), icon: Wallet, color: "var(--success)", bg: "var(--success-glow)" },
+    { label: "Dari Komisi", value: rp(d.total_komisi), icon: Percent, color: "var(--success)", bg: "var(--success-glow)" },
+    { label: "Dari Biaya Jasa", value: rp(d.total_biaya_jasa), icon: Receipt, color: "var(--success)", bg: "var(--success-glow)" },
     { label: "Sudah di Kami (dompet)", value: rp(d.komisi_wallet), icon: Smartphone, color: "var(--primary)", bg: "var(--primary-glow)" },
     { label: "Dari Order Tunai", value: rp(d.komisi_tunai), icon: Banknote, color: "var(--warning)", bg: "var(--warning-glow)" },
     { label: "Ongkos Kotor", value: rp(d.total_ongkos), icon: Receipt, color: "var(--info)", bg: "var(--info-glow)" },
@@ -125,8 +127,8 @@ export default function KomisiPage() {
               <div className="card" style={{ marginBottom: 24, display: "flex", gap: 10, alignItems: "flex-start", borderColor: "var(--warning)" }}>
                 <AlertTriangle size={18} style={{ color: "var(--warning)", flexShrink: 0, marginTop: 2 }} />
                 <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                  {rp(d.komisi_tunai)} berasal dari order tunai — uangnya diterima driver, komisinya dipotong dari saldo driver.
-                  Saldo minus di tabel berarti komisi itu belum disetor ke kami.
+                  {rp(d.komisi_tunai)} berasal dari order tunai — uangnya diterima driver, komisi dan biaya jasanya dipotong dari saldo driver.
+                  Saldo minus di tabel berarti uang itu belum disetor ke kami.
                 </div>
               </div>
             )}
@@ -134,10 +136,10 @@ export default function KomisiPage() {
             <div className="card">
               <div className="table-header"><h3>{drivers.length} driver · {d.total_order || 0} pesanan selesai</h3></div>
               <table style={{ width: "100%" }}>
-                <thead><tr><th>Driver</th><th>Pesanan</th><th>Ongkos Kotor</th><th>Bagian Driver</th><th>Komisi Kami</th><th>Dari Tunai</th><th>Saldo Driver</th><th>Setoran</th></tr></thead>
+                <thead><tr><th>Driver</th><th>Pesanan</th><th>Ongkos Kotor</th><th>Bagian Driver</th><th>Komisi</th><th>Biaya Jasa</th><th>Belum Disetor</th><th>Saldo Driver</th><th>Setoran</th></tr></thead>
                 <tbody>
                   {drivers.length === 0 ? (
-                    <tr><td colSpan={8}>
+                    <tr><td colSpan={9}>
                       <div className="empty-state">
                         <div className="icon" style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
                           <Wallet size={40} style={{ color: "var(--text-muted)", opacity: 0.5 }} />
@@ -157,8 +159,9 @@ export default function KomisiPage() {
                       <td data-label="Pesanan" style={{ fontWeight: 700 }}>{v.order_count}</td>
                       <td data-label="Ongkos Kotor">{rp(v.total_ongkos)}</td>
                       <td data-label="Bagian Driver" style={{ color: "var(--text-secondary)" }}>{rp(v.total_ongkos - v.komisi)}</td>
-                      <td data-label="Komisi Kami" style={{ color: "var(--success)", fontWeight: 700 }}>{rp(v.komisi)}</td>
-                      <td data-label="Dari Tunai" style={{ color: v.komisi_tunai > 0 ? "var(--warning)" : "var(--text-muted)" }}>{rp(v.komisi_tunai)}</td>
+                      <td data-label="Komisi" style={{ color: "var(--success)", fontWeight: 700 }}>{rp(v.komisi)}</td>
+                      <td data-label="Biaya Jasa" style={{ color: "var(--success)" }}>{rp(v.biaya_jasa)}</td>
+                      <td data-label="Belum Disetor" style={{ color: v.komisi_tunai > 0 ? "var(--warning)" : "var(--text-muted)" }}>{rp(v.komisi_tunai)}</td>
                       <td data-label="Saldo Driver" style={{ color: v.saldo_driver < 0 ? "var(--danger)" : "var(--text-secondary)", fontWeight: v.saldo_driver < 0 ? 700 : 400 }}>{rp(v.saldo_driver)}</td>
                       <td data-label="Setoran">
                         {v.saldo_driver < 0 ? (

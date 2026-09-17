@@ -3,6 +3,17 @@ import { Store, MapPin, Clock, Salad, Plus, Save, CheckCircle, Power, Tag } from
 import { BASE, authFetch } from "../../api";
 import { toast } from "../../components/Feedback";
 
+// Status pesanan dari sudut pandang warung. Warung tidak mengubah status —
+// driver yang datang, membayar, dan mengantar — jadi daftarnya cuma jendela.
+const STATUS_LABEL = {
+  pending: "Menunggu driver", accepted: "Driver menuju warung", picked_up: "Sedang diantar",
+  completed: "Selesai", cancelled: "Dibatalkan", expired: "Tidak ada driver"
+};
+const STATUS_BADGE = {
+  pending: "badge-warning", accepted: "badge-primary", picked_up: "badge-primary",
+  completed: "badge-success", cancelled: "badge-danger", expired: "badge-muted"
+};
+
 /* Ilustrasi tudung saji: SVG murni supaya tetap tajam di layar HD/retina.
    Padanan WalletArt di dashboard bohRental. */
 function ClocheArt() {
@@ -65,6 +76,10 @@ export default function FoodDashboard({ ownerPhone }) {
   const [imageUrl, setImageUrl] = useState("");
   const [isOpen, setIsOpen] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Titik jemput driver dan dasar ongkir. Tanpa ini warung tidak tampil di aplikasi.
+  const [lat, setLat] = useState("");
+  const [lng, setLng] = useState("");
+  const [orders, setOrders] = useState([]);
 
   const fetchMerchantAndMenus = () => {
     authFetch(`${BASE}/food/merchant?owner_phone=${encodeURIComponent(ownerPhone)}`)
@@ -81,6 +96,8 @@ export default function FoodDashboard({ ownerPhone }) {
           setAddress(mdata.address);
           setImageUrl(mdata.image_url);
           setIsOpen(mdata.is_open);
+          setLat(mdata.lat ? String(mdata.lat) : "");
+          setLng(mdata.lng ? String(mdata.lng) : "");
 
           // Fetch menus
           return authFetch(`${BASE}/food/menus?merchant_id=${mdata.id}`)
@@ -100,6 +117,35 @@ export default function FoodDashboard({ ownerPhone }) {
     fetchMerchantAndMenus();
   }, [ownerPhone]);
 
+  // Pesanan masuk, disegarkan tiap 15 detik selama halaman terbuka.
+  useEffect(() => {
+    if (!merchant) return;
+    const muat = () =>
+      authFetch(`${BASE}/food/orders`)
+        .then(r => r.json())
+        .then(d => setOrders(Array.isArray(d.orders) ? d.orders : []))
+        .catch(() => {});
+    muat();
+    const t = setInterval(muat, 15000);
+    return () => clearInterval(t);
+  }, [merchant]);
+
+  const pakaiLokasiSaya = () => {
+    if (!navigator.geolocation) {
+      toast.error("Browser ini tidak mendukung lokasi. Isi koordinat manual dari Google Maps.");
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setLat(pos.coords.latitude.toFixed(6));
+        setLng(pos.coords.longitude.toFixed(6));
+        toast.success("Lokasi terisi. Jangan lupa tekan Simpan.");
+      },
+      () => toast.error("Akses lokasi ditolak. Isi koordinat manual: klik kanan titik warung di Google Maps, salin angkanya."),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
   const handleSaveMerchant = (e) => {
     e.preventDefault();
     setSaving(true);
@@ -110,7 +156,9 @@ export default function FoodDashboard({ ownerPhone }) {
       restaurant_name: name,
       address,
       image_url: imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400",
-      is_open: isOpen
+      is_open: isOpen,
+      lat: parseFloat(lat) || 0,
+      lng: parseFloat(lng) || 0
     };
 
     authFetch(`${BASE}/food/merchant`, {
@@ -312,6 +360,19 @@ export default function FoodDashboard({ ownerPhone }) {
                 <textarea className="input" placeholder="Jl. Gajah Mada No. 12, Pontianak" value={address} onChange={e => setAddress(e.target.value)} required style={{ resize: "none", height: 80 }} />
               </div>
               <div className="input-group">
+                <label>Lokasi warung — titik jemput driver &amp; dasar ongkir</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input className="input" placeholder="Lintang, mis. -0.0784" value={lat} onChange={e => setLat(e.target.value)} />
+                  <input className="input" placeholder="Bujur, mis. 111.4933" value={lng} onChange={e => setLng(e.target.value)} />
+                </div>
+                <button type="button" className="btn btn-sm" onClick={pakaiLokasiSaya} style={{ marginTop: 8 }}>
+                  <MapPin size={14} /> Gunakan lokasi saya (buka halaman ini di warung)
+                </button>
+                <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                  Warung tanpa lokasi tidak tampil di aplikasi pemesan.
+                </p>
+              </div>
+              <div className="input-group">
                 <label>Foto Banner Resto (URL)</label>
                 <input className="input" placeholder="https://images.unsplash.com/..." value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
               </div>
@@ -327,6 +388,55 @@ export default function FoodDashboard({ ownerPhone }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
           {merchant ? (
             <>
+              {!(merchant.lat && merchant.lng) && (
+                <div className="card" style={{ border: "1px solid rgba(245,158,11,0.5)", background: "rgba(245,158,11,0.08)", display: "flex", gap: 12, alignItems: "center" }}>
+                  <MapPin size={22} style={{ color: "#F59E0B", flexShrink: 0 }} />
+                  <div>
+                    <strong>Warung belum punya lokasi, jadi belum tampil di aplikasi.</strong>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+                      Isi lokasi di formulir sebelah kiri lalu Simpan. Driver butuh titiknya, dan ongkir dihitung dari sana.
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Pesanan masuk */}
+              <div className="card">
+                <div className="card-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>Pesanan Masuk</span>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)", fontWeight: 400 }}>diperbarui tiap 15 detik</span>
+                </div>
+                {orders.length === 0 ? (
+                  <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                    Belum ada pesanan. Pesanan dari aplikasi bohAntar akan muncul di sini — driver yang datang, membayar, dan mengantar.
+                  </p>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {orders.slice(0, 20).map(o => (
+                      <div key={o.id} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: 12 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                          <strong>{o.rider_name || "Pelanggan"}</strong>
+                          <span className={`badge ${STATUS_BADGE[o.status] || "badge-muted"}`}>{STATUS_LABEL[o.status] || o.status}</span>
+                        </div>
+                        <div style={{ fontSize: 13, marginTop: 6 }}>
+                          {(o.items || []).map(it => `${it.qty}× ${it.name}`).join(", ") || "—"}
+                        </div>
+                        {o.package_notes && (
+                          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>Catatan: {o.package_notes}</div>
+                        )}
+                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
+                          <span>{o.driver_name ? `Driver: ${o.driver_name}` : "Menunggu driver"}</span>
+                          <span>
+                            Rp {Number(o.food_total || 0).toLocaleString("id-ID")} ·{" "}
+                            {new Date(o.created_at).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
               {/* Stats overview (desktop; di mobile diganti kartu status + strip statistik) */}
               <div className="grid-2 portal-desktop-only">
                 <div className="stat-card" style={{ border: "1px solid rgba(245,158,11,0.2)" }}>

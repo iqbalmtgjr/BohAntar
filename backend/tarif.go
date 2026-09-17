@@ -22,28 +22,36 @@ type tarifLayanan struct {
 	Base         float64 `json:"base"`          // ongkos buka pintu
 	PerKM        float64 `json:"per_km"`        // dikalikan jarak; sekaligus knob kalibrasi
 	KomisiPersen float64 `json:"komisi_persen"` // bagian aplikator, sisanya untuk driver
+	BiayaJasa    float64 `json:"biaya_jasa"`    // rupiah tetap dari penumpang, utuh ke aplikator
 	UpdatedAt    string  `json:"updated_at"`
 }
 
 // tarifBawaan dipakai untuk mengisi tabel pertama kali, dan sebagai jaring
 // pengaman kalau baris layanannya hilang — supaya order aneh tidak pernah
 // jatuh ke tarif nol.
+//
+// biaya_jasa adalah rupiah tetap yang dibayar penumpang di luar ongkos dan
+// masuk utuh ke aplikator, tidak dibagi dengan driver. Ia ada supaya pendapatan
+// aplikator tidak seluruhnya bergantung pada persentase komisi, yang untuk ojek
+// roda dua dibatasi 8% oleh Perpres 27/2026.
 var tarifBawaan = []tarifLayanan{
-	{Layanan: "BohRide", Base: 8000, PerKM: 2000, KomisiPersen: 20},
-	{Layanan: "BohCar", Base: 16000, PerKM: 3500, KomisiPersen: 20},
-	{Layanan: "BohAntar", Base: 8000, PerKM: 2000, KomisiPersen: 20},
-	{Layanan: "BohSend", Base: 8000, PerKM: 2000, KomisiPersen: 20},
+	{Layanan: "BohRide", Base: 8000, PerKM: 2000, KomisiPersen: 20, BiayaJasa: 1000},
+	{Layanan: "BohCar", Base: 16000, PerKM: 3500, KomisiPersen: 20, BiayaJasa: 1000},
+	{Layanan: "BohAntar", Base: 8000, PerKM: 2000, KomisiPersen: 20, BiayaJasa: 1000},
+	{Layanan: "BohSend", Base: 8000, PerKM: 2000, KomisiPersen: 20, BiayaJasa: 1000},
+	// Ongkir saja; harga makanannya milik warung dan tidak kena komisi.
+	{Layanan: "BohFood", Base: 8000, PerKM: 2000, KomisiPersen: 20, BiayaJasa: 1000},
 }
 
-var tarifDefault = tarifLayanan{Layanan: "BohRide", Base: 8000, PerKM: 2000, KomisiPersen: 20}
+var tarifDefault = tarifLayanan{Layanan: "BohRide", Base: 8000, PerKM: 2000, KomisiPersen: 20, BiayaJasa: 1000}
 
 // seedTarif mengisi tabel dengan nilai awal. INSERT IGNORE membuatnya idempoten:
 // menjalankan ulang tidak menimpa angka yang sudah diubah super admin.
 func seedTarif() {
 	for _, t := range tarifBawaan {
 		_, _ = db.Exec(
-			"INSERT IGNORE INTO tarif (layanan, base, per_km, komisi_persen, updated_at) VALUES (?, ?, ?, ?, ?)",
-			t.Layanan, t.Base, t.PerKM, t.KomisiPersen, time.Now().Format(time.RFC3339),
+			"INSERT IGNORE INTO tarif (layanan, base, per_km, komisi_persen, biaya_jasa, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+			t.Layanan, t.Base, t.PerKM, t.KomisiPersen, t.BiayaJasa, time.Now().Format(time.RFC3339),
 		)
 	}
 }
@@ -54,9 +62,9 @@ func seedTarif() {
 func ambilTarif(layanan string) tarifLayanan {
 	var t tarifLayanan
 	err := db.QueryRow(
-		"SELECT layanan, base, per_km, komisi_persen, COALESCE(updated_at, '') FROM tarif WHERE layanan = ?",
+		"SELECT layanan, base, per_km, komisi_persen, COALESCE(biaya_jasa, 0), COALESCE(updated_at, '') FROM tarif WHERE layanan = ?",
 		layanan,
-	).Scan(&t.Layanan, &t.Base, &t.PerKM, &t.KomisiPersen, &t.UpdatedAt)
+	).Scan(&t.Layanan, &t.Base, &t.PerKM, &t.KomisiPersen, &t.BiayaJasa, &t.UpdatedAt)
 	if err != nil {
 		return tarifDefault
 	}
@@ -64,7 +72,7 @@ func ambilTarif(layanan string) tarifLayanan {
 }
 
 func ambilSemuaTarif() ([]tarifLayanan, error) {
-	rows, err := db.Query("SELECT layanan, base, per_km, komisi_persen, COALESCE(updated_at, '') FROM tarif ORDER BY layanan")
+	rows, err := db.Query("SELECT layanan, base, per_km, komisi_persen, COALESCE(biaya_jasa, 0), COALESCE(updated_at, '') FROM tarif ORDER BY layanan")
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +80,7 @@ func ambilSemuaTarif() ([]tarifLayanan, error) {
 	var hasil []tarifLayanan
 	for rows.Next() {
 		var t tarifLayanan
-		if err := rows.Scan(&t.Layanan, &t.Base, &t.PerKM, &t.KomisiPersen, &t.UpdatedAt); err != nil {
+		if err := rows.Scan(&t.Layanan, &t.Base, &t.PerKM, &t.KomisiPersen, &t.BiayaJasa, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
 		hasil = append(hasil, t)
@@ -82,11 +90,12 @@ func ambilSemuaTarif() ([]tarifLayanan, error) {
 
 func simpanTarif(t tarifLayanan) error {
 	_, err := db.Exec(`
-		INSERT INTO tarif (layanan, base, per_km, komisi_persen, updated_at)
-		VALUES (?, ?, ?, ?, ?)
+		INSERT INTO tarif (layanan, base, per_km, komisi_persen, biaya_jasa, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE base = VALUES(base), per_km = VALUES(per_km),
-			komisi_persen = VALUES(komisi_persen), updated_at = VALUES(updated_at)
-	`, t.Layanan, t.Base, t.PerKM, t.KomisiPersen, time.Now().Format(time.RFC3339))
+			komisi_persen = VALUES(komisi_persen), biaya_jasa = VALUES(biaya_jasa),
+			updated_at = VALUES(updated_at)
+	`, t.Layanan, t.Base, t.PerKM, t.KomisiPersen, t.BiayaJasa, time.Now().Format(time.RFC3339))
 	return err
 }
 
@@ -98,6 +107,9 @@ func tarifMasukAkal(t tarifLayanan) (string, bool) {
 	}
 	if t.Base < 0 || t.PerKM < 0 {
 		return "Ongkos tidak boleh negatif", false
+	}
+	if t.BiayaJasa < 0 {
+		return "Biaya jasa aplikasi tidak boleh negatif", false
 	}
 	if t.KomisiPersen < 0 || t.KomisiPersen > 100 {
 		return "Komisi harus antara 0 dan 100 persen", false
@@ -149,13 +161,44 @@ func hitungTarif(t tarifLayanan, pickupLat, pickupLng, dropoffLat, dropoffLng fl
 //	tunai  — penumpang tidak disentuh karena sudah membayar langsung di jalan,
 //	         dan driver didebit komisi yang kini ia utang ke aplikator.
 //
-// Apa pun metodenya, bagian aplikator selalu tepat sebesar komisi:
-// debitPenumpang - kreditDriver == komisi.
-func bagiPembayaran(metode string, fare, komisi float64) (debitPenumpang, kreditDriver float64) {
+// talangan adalah uang makanan BohFood yang sudah dibayar driver ke warung.
+// Ia lewat begitu saja: penumpang membayarnya dan driver menerimanya utuh,
+// tanpa komisi — aplikator tidak ikut memiliki sotonya.
+//
+// biayaJasa dibayar penumpang di luar ongkos dan tidak pernah jadi milik driver.
+// Pada pesanan tunai penumpang menyerahkannya ke tangan driver bersama ongkos,
+// jadi driver menampungnya sebentar dan menyetorkannya lewat saldo — sama
+// seperti komisi.
+//
+// Apa pun metodenya, bagian aplikator selalu tepat sebesar tagihannya:
+// debitPenumpang - kreditDriver == komisi + biayaJasa.
+func bagiPembayaran(metode string, fare, komisi, talangan, biayaJasa float64) (debitPenumpang, kreditDriver float64) {
 	if metode == "wallet" {
-		return fare, fare - komisi
+		return fare + biayaJasa + talangan, fare - komisi + talangan
 	}
-	return 0, -komisi
+	return 0, -tagihanAplikator(komisi, biayaJasa)
+}
+
+// tagihanAplikator adalah total yang harus sampai ke bohAntar dari satu pesanan.
+// Dipakai di tiga tempat yang harus selalu sepakat: pembagian saat pesanan
+// ditutup, gerbang saldo saat driver menerima, dan jumlah yang tertahan oleh
+// pesanan yang sedang berjalan.
+func tagihanAplikator(komisi, biayaJasa float64) float64 {
+	return komisi + biayaJasa
+}
+
+// saldoCukupUntukKomisi memutuskan apakah driver boleh menerima satu pesanan.
+//
+// Pesanan dompet selalu boleh: uangnya lewat aplikasi, dan saldo driver justru
+// bertambah saat pesanan ditutup. Yang dijaga pesanan tunai — penumpang membayar
+// langsung ke tangan driver, jadi komisinya hanya bisa ditagih dengan memotong
+// saldo. Tanpa gerbang ini saldo driver bisa terus minus tanpa batas, dan
+// menagihnya kembali berubah jadi urusan manusia, bukan urusan aplikasi.
+func saldoCukupUntukKomisi(metode string, saldo, tertahan, tagihan float64) bool {
+	if metode == "wallet" {
+		return true
+	}
+	return saldo-tertahan >= tagihan
 }
 
 // hitungKomisi mengembalikan bagian aplikator, dibulatkan ke rupiah utuh.
@@ -179,7 +222,8 @@ type barisKomisi struct {
 	OrderCount  int     `json:"order_count"`
 	TotalOngkos float64 `json:"total_ongkos"`
 	Komisi      float64 `json:"komisi"`
-	KomisiTunai float64 `json:"komisi_tunai"`
+	BiayaJasa   float64 `json:"biaya_jasa"`   // pendapatan aplikator di luar komisi
+	KomisiTunai float64 `json:"komisi_tunai"` // komisi + biaya jasa dari order tunai: belum di tangan
 	SaldoDriver float64 `json:"saldo_driver"`
 }
 
@@ -222,14 +266,15 @@ func adminKomisiHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.Query(`
 		SELECT o.driver_phone, COALESCE(o.driver_name, ''), COUNT(*),
 		       COALESCE(SUM(o.fare), 0), COALESCE(SUM(o.komisi), 0),
-		       COALESCE(SUM(CASE WHEN o.payment_method = 'cash' THEN o.komisi ELSE 0 END), 0),
+		       COALESCE(SUM(o.biaya_jasa), 0),
+		       COALESCE(SUM(CASE WHEN o.payment_method = 'cash' THEN o.komisi + o.biaya_jasa ELSE 0 END), 0),
 		       COALESCE(MAX(u.balance), 0)
 		FROM orders o
 		LEFT JOIN users u ON u.phone_number = o.driver_phone
 		WHERE o.status = 'completed' AND o.driver_phone IS NOT NULL AND o.driver_phone <> ''
 		  AND o.created_at >= ? AND o.created_at < DATE_ADD(?, INTERVAL 1 DAY)
 		GROUP BY o.driver_phone, o.driver_name
-		ORDER BY SUM(o.komisi) DESC`, from, to)
+		ORDER BY SUM(o.komisi + o.biaya_jasa) DESC`, from, to)
 	if err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal membaca laporan bagi hasil"})
 		return
@@ -237,27 +282,32 @@ func adminKomisiHandler(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	daftar := make([]barisKomisi, 0)
-	var totalKomisi, totalTunai, totalOngkos float64
+	var totalKomisi, totalBiayaJasa, totalTunai, totalOngkos float64
 	totalOrder := 0
 	for rows.Next() {
 		var b barisKomisi
-		if err := rows.Scan(&b.DriverPhone, &b.DriverName, &b.OrderCount, &b.TotalOngkos, &b.Komisi, &b.KomisiTunai, &b.SaldoDriver); err != nil {
+		if err := rows.Scan(&b.DriverPhone, &b.DriverName, &b.OrderCount, &b.TotalOngkos, &b.Komisi, &b.BiayaJasa, &b.KomisiTunai, &b.SaldoDriver); err != nil {
 			continue
 		}
 		daftar = append(daftar, b)
 		totalKomisi += b.Komisi
+		totalBiayaJasa += b.BiayaJasa
 		totalTunai += b.KomisiTunai
 		totalOngkos += b.TotalOngkos
 		totalOrder += b.OrderCount
 	}
 
 	writeJSONResponse(w, 200, map[string]interface{}{
-		"status":        "success",
-		"from":          from,
-		"to":            to,
-		"total_komisi":  totalKomisi,
-		"komisi_tunai":  totalTunai, // dipotong dari saldo driver, belum tentu disetor
-		"komisi_wallet": totalKomisi - totalTunai,
+		"status":           "success",
+		"from":             from,
+		"to":               to,
+		"total_komisi":     totalKomisi,
+		"total_biaya_jasa": totalBiayaJasa,
+		// Yang benar-benar jadi pendapatan bohAntar: komisi ditambah biaya jasa.
+		"total_pendapatan": totalKomisi + totalBiayaJasa,
+		// Dari order tunai, jadi uangnya masih di tangan driver sampai ia setor.
+		"komisi_tunai":  totalTunai,
+		"komisi_wallet": (totalKomisi + totalBiayaJasa) - totalTunai,
 		"total_ongkos":  totalOngkos,
 		"total_order":   totalOrder,
 		"drivers":       daftar,
