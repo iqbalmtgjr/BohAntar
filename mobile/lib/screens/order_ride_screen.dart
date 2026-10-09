@@ -93,6 +93,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // Autocomplete and Places suggestions
   List<PlaceSuggestion> _suggestions = [];
   bool _loadingSuggestions = false;
+  // Kabar di bawah kolom tujuan: tidak ketemu, atau pencariannya gagal. Dulu
+  // galatnya ditelan dan penumpang cuma melihat kolom yang diam.
+  String _pesanCari = '';
   Timer? _debounceTimer;
   // Rute adalah panggilan ke server OSRM umum, dan _calculateFareFromDistance()
   // dipanggil dari delapan tempat — tiap ketukan di peta memicu satu. Ditahan
@@ -428,6 +431,19 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   }
 
   void _onDestinationChanged(String query) {
+    // Tulisan tujuan diubah tangan: titik lama tidak lagi sesuai tulisannya.
+    // Tanpa ini pesanan bisa berangkat ke tujuan sebelumnya dengan nama yang
+    // baru diketik. Tombol Lanjutkan menunggu sampai satu saran dipilih atau
+    // titiknya digeser di peta.
+    if (_destinationLatLng != null || _pesanCari.isNotEmpty) {
+      setState(() {
+        _destinationLatLng = null;
+        _routePoints = [];
+        _estimasi = null;
+        _estimasiGagal = false;
+        _pesanCari = '';
+      });
+    }
     if (_debounceTimer?.isActive ?? false) _debounceTimer?.cancel();
     _debounceTimer = Timer(const Duration(milliseconds: 500), () {
       if (query.trim().length > 2) {
@@ -458,12 +474,15 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       setState(() {
         _suggestions = hasil;
         _loadingSuggestions = false;
+        _pesanCari = hasil.isEmpty ? 'Tidak ketemu. Coba nama lain, atau geser peta ke titik tujuan.' : '';
       });
     } catch (e) {
       debugPrint("Suggestions fetch error: $e");
       if (!mounted) return;
       setState(() {
+        _suggestions = [];
         _loadingSuggestions = false;
+        _pesanCari = e.toString().replaceAll('Exception: ', '');
       });
     }
   }
@@ -950,6 +969,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     setState(() {
       _geserPeta = true;
       _geserJemput = jemput;
+      // Pencarian ditinggalkan: kabar dan sarannya tidak berlaku lagi.
+      _pesanCari = '';
+      _suggestions = [];
     });
     // Pin mulai dari titik yang sedang dipilih, bukan dari tengah peta yang
     // kebetulan sedang terlihat.
@@ -1052,8 +1074,13 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                   child: Column(
                     children: [
                       // Pickup text input
+                      // Tidak bisa diketik: tulisan jemput yang diubah tangan
+                      // tidak memindahkan titiknya, jadi driver datang ke titik
+                      // lama dengan alamat baru. Mengetuknya membuka mode geser.
                       TextFormField(
                         controller: _pickupController,
+                        readOnly: true,
+                        onTap: () => _mulaiGeser(true),
                         decoration: InputDecoration(
                           hintText: "Pilih lokasi penjemputan",
                           suffixIcon: Row(
@@ -1148,16 +1175,26 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                   },
                 ),
               ),
-              
-            const SizedBox(height: 16),
-            const Text(
-              "Lokasi tersimpan",
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            ),
-            const SizedBox(height: 8),
-            _buildSavedLocationTile("Rumah", "Jl. Merdeka No. 10, Sintang", Icons.home, Colors.orange.shade700),
-            const SizedBox(height: 8),
-            _buildSavedLocationTile("Kantor", "Jl. Ahmad Yani No. 20, Sintang", Icons.work, AppTheme.primaryBlue),
+            if (_pesanCari.isNotEmpty && !_loadingSuggestions)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(_pesanCari, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                    ),
+                    TextButton(
+                      onPressed: () => _mulaiGeser(false),
+                      child: const Text('Geser peta'),
+                    ),
+                  ],
+                ),
+              ),
+
+            // "Lokasi tersimpan" Rumah/Kantor dibuang 9 Okt 2026: alamatnya
+            // karangan, dan mengetuknya diam-diam memindahkan titik jemput ke
+            // koordinat tetap. Pasang lagi kalau user_addresses sudah
+            // menyimpan koordinat, bukan cuma tulisan.
             const SizedBox(height: 20),
             
             ElevatedButton(
@@ -1182,41 +1219,6 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           ],
         ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildSavedLocationTile(String type, String address, IconData icon, Color iconColor) {
-    return InkWell(
-      onTap: () {
-        setState(() {
-          _destinationController.text = address;
-          _destinationLatLng = type == "Rumah"
-              ? const LatLng(-0.0700, 111.4980)
-              : const LatLng(-0.0650, 111.5050);
-          _currentLatLng = const LatLng(-0.0784, 111.4933);
-        });
-        _calculateFareFromDistance();
-        _fitMapBounds();
-      },
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(color: iconColor.withOpacity(0.12), shape: BoxShape.circle),
-            child: Icon(icon, color: iconColor, size: 16),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(type, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                Text(address, style: const TextStyle(color: Colors.grey, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }

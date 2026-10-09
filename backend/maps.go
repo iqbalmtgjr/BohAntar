@@ -17,11 +17,13 @@ import (
 //
 // Dua penyedia, dipilih per kebutuhan, bukan karena selera:
 //
-//   - Cari alamat dan detail tempat: Google Places. OpenStreetMap tidak punya
-//     datanya di Sintang — Overpass cuma menemukan empat tempat bernama di
-//     seluruh kota, jadi penyedia gratis mana pun membalas nol. Kedua endpoint
-//     ini membalas 503 selama GOOGLE_MAPS_API_KEY belum dipasang, dan hidup
-//     sendiri begitu diisi tanpa perlu ubah kode.
+//   - Cari alamat dan detail tempat: Google Places kalau GOOGLE_MAPS_API_KEY
+//     terpasang, Photon kalau belum. Uji 9 Okt 2026: Photon menemukan tempat
+//     yang tepat untuk sekitar separuh kueri di Sintang (jalan utama, RSUD
+//     dengan nama lengkap, bandara, terminal, polres, kampus), tapi gagal untuk
+//     nama sehari-hari seperti "rsud sintang" atau alun-alun. Cukup supaya
+//     kolom cari tidak mati; begitu kunci diisi, backend pindah ke Google
+//     sendiri tanpa perlu ubah kode.
 //   - Rute dan geocoding balik: OSRM dan Photon. Gratis, tanpa kunci, tanpa
 //     billing, dan sudah diuji benar di Sintang. Tidak ada alasan membayar
 //     Google untuk dua ini.
@@ -48,7 +50,17 @@ const (
 	urlAutocomplete = "https://places.googleapis.com/v1/places:autocomplete"
 	urlPlaceDetails = "https://places.googleapis.com/v1/places/"
 	urlPhotonRevers = "https://photon.komoot.io/reverse"
+	urlPhotonCari   = "https://photon.komoot.io/api/"
 	urlOSRMRoute    = "https://router.project-osrm.org/route/v1/driving/"
+
+	// Saran Photon membawa koordinatnya sendiri di dalam place_id, jadi
+	// /api/maps/place tidak perlu bertanya ke mana pun untuk menukarnya.
+	awalanIDPhoton = "photon:"
+
+	// Photon tidak bisa membatasi wilayah, hanya mencondongkan. Tanpa saringan
+	// ini "Jalan M.T. Haryono" juga menawarkan yang di Pontianak dan Ketapang,
+	// dan penumpang yang salah ketuk mendapat ongkos ratusan kilometer.
+	radiusCariGratisKM = 100
 
 	// Layanan gratis berbasis OpenStreetMap minta pemakainya memperkenalkan diri
 	// supaya bisa dihubungi kalau ada yang menyalahgunakan. Jangan dikosongkan.
@@ -60,8 +72,9 @@ var mapsClient = &http.Client{Timeout: 12 * time.Second}
 func mapsAPIKey() string { return getEnv("GOOGLE_MAPS_API_KEY", "") }
 
 // mapsSiap menolak permintaan lebih awal kalau kunci belum dipasang, supaya
-// pesannya jelas ketimbang balasan aneh dari Google. Hanya dipakai dua endpoint
-// Places; rute dan geocoding balik tidak butuh kunci apa pun.
+// pesannya jelas ketimbang balasan aneh dari Google. Sekarang hanya tersisa
+// untuk detail tempat dengan place_id Google, yang memang mustahil dijawab
+// tanpa kunci.
 func mapsSiap(w http.ResponseWriter) bool {
 	if mapsAPIKey() == "" {
 		writeJSONResponse(w, 503, map[string]string{"error": "Pencarian alamat belum aktif. Tekan langsung titik tujuan di peta."})
@@ -111,12 +124,13 @@ func kirimPermintaan(req *http.Request) (map[string]interface{}, error) {
 // sampai penumpang memilih satu tempat; tanpa itu setiap huruf ditagih sebagai
 // permintaan terpisah.
 func mapsAutocompleteHandler(w http.ResponseWriter, r *http.Request) {
-	if !mapsSiap(w) {
-		return
-	}
 	q := r.URL.Query().Get("q")
 	if len(q) < 3 {
 		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "suggestions": []interface{}{}})
+		return
+	}
+	if mapsAPIKey() == "" {
+		cariTempatGratis(w, r, q)
 		return
 	}
 
@@ -182,6 +196,115 @@ func mapsAutocompleteHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "suggestions": saran})
 }
 
+// cariTempatGratis adalah pencarian lewat Photon, dipakai selama kunci Google
+// belum ada. Bentuk balasannya sama persis dengan jalur Google, jadi aplikasi
+// tidak tahu — dan tidak perlu tahu — penyedia mana yang menjawab.
+func cariTempatGratis(w http.ResponseWriter, r *http.Request, q string) {
+	v := url.Values{"q": {q}, "limit": {"15"}}
+	lat, lng, adaLokasi := bacaKoordinat(r, "lat", "lng")
+	if adaLokasi {
+		v.Set("lat", strconv.FormatFloat(lat, 'f', 6, 64))
+		v.Set("lon", strconv.FormatFloat(lng, 'f', 6, 64))
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, urlPhotonCari+"?"+v.Encode(), nil)
+	if err != nil {
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyiapkan permintaan"})
+		return
+	}
+	hasil, err := kirimPermintaan(req)
+	if err != nil {
+		writeJSONResponse(w, 502, map[string]string{"error": "Pencarian alamat sedang bermasalah. Geser peta ke titik tujuan."})
+		return
+	}
+	var dekat *[2]float64
+	if adaLokasi {
+		dekat = &[2]float64{lat, lng}
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "suggestions": saranPhoton(hasil, dekat)})
+}
+
+// saranPhoton mengubah balasan Photon jadi daftar saran: yang terlalu jauh dari
+// penumpang dibuang, dan potongan jalan yang namanya serta kelurahannya sama
+// persis cuma ditampilkan sekali. Paling banyak enam, sama panjangnya dengan
+// daftar Google.
+func saranPhoton(hasil map[string]interface{}, dekat *[2]float64) []map[string]string {
+	saran := []map[string]string{}
+	sudah := map[string]bool{}
+	daftar, _ := hasil["features"].([]interface{})
+	for _, item := range daftar {
+		f, _ := item.(map[string]interface{})
+		geo, _ := f["geometry"].(map[string]interface{})
+		koord, _ := geo["coordinates"].([]interface{})
+		if len(koord) != 2 {
+			continue
+		}
+		// GeoJSON menulis bujur dulu, baru lintang.
+		lng, _ := koord[0].(float64)
+		lat, _ := koord[1].(float64)
+		if !koordinatValid(lat, lng) {
+			continue
+		}
+		if dekat != nil && jarakKM(dekat[0], dekat[1], lat, lng) > radiusCariGratisKM {
+			continue
+		}
+		p, _ := f["properties"].(map[string]interface{})
+		nama, alamat := namaDanAlamatPhoton(p)
+		if nama == "" || sudah[nama+"|"+alamat] {
+			continue
+		}
+		sudah[nama+"|"+alamat] = true
+		saran = append(saran, map[string]string{
+			"place_id": fmt.Sprintf("%s%.6f,%.6f", awalanIDPhoton, lat, lng),
+			"name":     nama,
+			"address":  alamat,
+		})
+		if len(saran) == 6 {
+			break
+		}
+	}
+	return saran
+}
+
+// namaDanAlamatPhoton memisahkan judul saran dari baris keterangannya. Provinsi
+// dan kabupaten sengaja tidak ikut: di Sintang hasilnya cuma "Sintang, Sintang,
+// Kalimantan Barat" di setiap baris, tanpa membedakan apa pun.
+func namaDanAlamatPhoton(p map[string]interface{}) (nama, alamat string) {
+	ambil := func(k string) string { s, _ := p[k].(string); return strings.TrimSpace(s) }
+	jalan := strings.TrimSpace(ambil("street") + " " + ambil("housenumber"))
+	nama = ambil("name")
+	if nama == "" {
+		nama = jalan
+	}
+	kota := ambil("city")
+	if kota == "" {
+		kota = ambil("county")
+	}
+	bagian := []string{}
+	for _, s := range []string{jalan, ambil("district"), kota} {
+		if s != "" && s != nama && !slices.Contains(bagian, s) {
+			bagian = append(bagian, s)
+		}
+	}
+	return nama, strings.Join(bagian, ", ")
+}
+
+// koordinatDariIDPhoton membongkar place_id buatan saranPhoton. Isinya datang
+// dari aplikasi, tapi koordinat karangan tidak membuka apa pun: penumpang
+// memang boleh mengetuk titik mana saja di peta.
+func koordinatDariIDPhoton(id string) (float64, float64, bool) {
+	isi, ok := strings.CutPrefix(id, awalanIDPhoton)
+	if !ok {
+		return 0, 0, false
+	}
+	a, b, ok := strings.Cut(isi, ",")
+	lat, e1 := strconv.ParseFloat(a, 64)
+	lng, e2 := strconv.ParseFloat(b, 64)
+	if !ok || e1 != nil || e2 != nil || !koordinatValid(lat, lng) {
+		return 0, 0, false
+	}
+	return lat, lng, true
+}
+
 // teksDari membaca bentuk {"text": "..."} yang dipakai Places API.
 func teksDari(v interface{}) string {
 	m, ok := v.(map[string]interface{})
@@ -197,12 +320,19 @@ func teksDari(v interface{}) string {
 // mapsPlaceHandler: GET /api/maps/place?place_id=&session=
 // Menukar place_id hasil autocomplete jadi koordinat.
 func mapsPlaceHandler(w http.ResponseWriter, r *http.Request) {
-	if !mapsSiap(w) {
-		return
-	}
 	id := r.URL.Query().Get("place_id")
 	if id == "" {
 		writeJSONResponse(w, 400, map[string]string{"error": "place_id diperlukan"})
+		return
+	}
+	// Saran Photon sudah membawa koordinatnya: tidak ada yang perlu ditanyakan
+	// lagi. Nama dikosongkan supaya aplikasi memakai nama dari saran yang
+	// diketuk penumpang.
+	if lat, lng, ok := koordinatDariIDPhoton(id); ok {
+		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "lat": lat, "lng": lng, "name": "", "address": ""})
+		return
+	}
+	if !mapsSiap(w) {
 		return
 	}
 
