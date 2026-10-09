@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:mobile/tarif.dart';
 
 class ApiService {
   static final ApiService _instance = ApiService._internal();
@@ -302,6 +303,33 @@ class ApiService {
     final data = _handleResponse(response);
     await clearToken();
     return data;
+  }
+
+  /// Taksiran ongkos untuk satu rute. Yang dikirim koordinat, bukan jarak:
+  /// server memakai jarak versinya sendiri untuk menagih, jadi taksirannya pun
+  /// harus lahir dari jarak yang sama.
+  Future<EstimasiTarif> estimasiTarif({
+    required String layanan,
+    required double dariLat,
+    required double dariLng,
+    required double keLat,
+    required double keLng,
+  }) async {
+    if (_token == null) {
+      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+    }
+    final uri = Uri.parse('$baseUrl/api/tarif/estimasi').replace(queryParameters: {
+      'layanan': layanan,
+      'from_lat': '$dariLat',
+      'from_lng': '$dariLng',
+      'to_lat': '$keLat',
+      'to_lng': '$keLng',
+    });
+    final response = await http.get(uri, headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $_token',
+    });
+    return EstimasiTarif.dariJson(_handleResponse(response));
   }
 
   // Kirim posisi driver. Nomor driver diambil backend dari token, tidak dikirim

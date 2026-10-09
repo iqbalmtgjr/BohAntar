@@ -62,9 +62,17 @@ export const api = {
   // QR-nya digambar server dan endpointnya butuh token admin, jadi tidak bisa
   // dipasang langsung sebagai src <img>; diambil sebagai blob lalu jadi objectURL.
   qrSetoran: (id) => authFetch(`${BASE}/admin/setoran/qr/${id}`).then(r => r.blob()).then(b => URL.createObjectURL(b)),
+  // Tagihan QR warung: penerimanya diambil backend dari token, jadi nominal
+  // saja yang dikirim. Arah uangnya kebalikan setoran — saldo penumpang turun.
+  buatTagihan: (amount) => post(`/tagihan`, { amount }),
+  cekTagihan: (id) => json(`/tagihan?id=${encodeURIComponent(id)}`),
+  qrTagihan: (id) => authFetch(`${BASE}/tagihan/qr/${id}`).then(r => r.blob()).then(b => URL.createObjectURL(b)),
   getAnalytics: () => json(`/admin/analytics`),
   getTarif: () => json(`/admin/tarif`),
   saveTarif: (data) => json(`/admin/tarif`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
+  // Pratinjau untuk angka yang belum disimpan. Rumusnya ada di backend supaya
+  // kolom contoh di halaman tarif tidak pernah menghitung versinya sendiri.
+  contohTarif: (data) => post(`/admin/tarif/contoh`, data),
   getApplications: (status) => json(`/admin/applications${status ? "?status=" + status : ""}`),
   registerDriver: (data) => post(`/admin/drivers/register`, data),
   // Content-Type sengaja tidak diset supaya browser menulis boundary multipart-nya sendiri.

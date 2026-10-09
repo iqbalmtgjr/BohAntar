@@ -45,7 +45,11 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   String _paymentMethod = "Tunai"; // "PayAntar" or "Tunai"
   double _fare = 0.0;
   double _biayaJasa = 0.0;
-  
+  // Taksiran dari server. Null berarti belum pernah berhasil diambil untuk
+  // tujuan yang sekarang.
+  EstimasiTarif? _estimasi;
+  bool _estimasiGagal = false;
+
   int _inputStep = 0; // 0 = address picker, 1 = item details (BohAntar/BohSend), 2 = estimate
   
   // Package shipping details state
@@ -95,6 +99,14 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // sampai titiknya berhenti berpindah.
   Timer? _ruteDebounce;
 
+  // Mode geser: pin diam di tengah layar dan petanya yang digeser, seperti
+  // pemilih lokasi ojek online. Panel ditutup selama mode ini supaya peta
+  // dapat satu layar penuh. Titik ikut ke tengah peta sambil digeser —
+  // tombol "Pilih Lokasi" hanya menutup modenya.
+  bool _geserPeta = false;
+  bool _geserJemput = false; // true = yang digeser titik jemput, bukan tujuan
+  Timer? _geserDebounce;
+
   // Routing points
   List<LatLng> _routePoints = [];
 
@@ -142,6 +154,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     _radarController.dispose();
     _debounceTimer?.cancel();
     _ruteDebounce?.cancel();
+    _geserDebounce?.cancel();
     super.dispose();
   }
 
@@ -455,43 +468,58 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     }
   }
 
-  // Jarak dan rincian ongkos untuk tujuan yang sedang dipilih. Rumusnya ada di
-  // lib/tarif.dart supaya bisa diuji terhadap angka yang sama dengan server.
-  ({double km, double base, double perKm, double biayaJasa, double ongkos, double total}) _rincianTarif() {
-    final tujuan = _destinationLatLng;
-    final km = tujuan == null
-        ? 0.0
-        : Geolocator.distanceBetween(
-              _currentLatLng.latitude,
-              _currentLatLng.longitude,
-              tujuan.latitude,
-              tujuan.longitude,
-            ) /
-            1000.0;
-    final tarif = Tarif.untuk(_selectedService);
-    return (
-      km: km,
-      base: tarif.base,
-      perKm: tarif.perKM,
-      biayaJasa: tarif.biayaJasa,
-      ongkos: tarif.hitung(km),
-      total: tarif.totalBayar(km),
-    );
+  // Taksiran ongkos datang dari server, bukan dihitung di sini. Rumus dan
+  // jaraknya harus sama persis dengan yang dipakai saat pesanan dibuat —
+  // aplikasi ini pernah menyimpan salinan rumusnya sendiri, dan salinan itu
+  // tidak pernah ikut berubah saat tarif diubah dari dashboard.
+  Future<void> _ambilEstimasi(LatLng tujuan, String layanan) async {
+    try {
+      final hasil = await ApiService().estimasiTarif(
+        layanan: layanan,
+        dariLat: _currentLatLng.latitude,
+        dariLng: _currentLatLng.longitude,
+        keLat: tujuan.latitude,
+        keLng: tujuan.longitude,
+      );
+      // Tujuan atau layanan bisa sudah berganti selama permintaan berjalan;
+      // balasan yang sudah basi tidak boleh menimpa angka yang sedang tampil.
+      if (!mounted || _destinationLatLng != tujuan || _selectedService != layanan) return;
+      setState(() {
+        _estimasi = hasil;
+        // _fare adalah ongkos perjalanan saja, sama seperti kolom `fare` di
+        // server. Biaya jasa disimpan terpisah supaya rinciannya bisa
+        // ditampilkan dan supaya angka yang dibandingkan dengan balasan server
+        // tetap sepadan.
+        _fare = hasil.ongkos;
+        _biayaJasa = hasil.biayaJasa;
+        _estimasiGagal = false;
+      });
+    } catch (e) {
+      debugPrint("Estimasi tarif gagal: $e");
+      if (!mounted || _destinationLatLng != tujuan) return;
+      setState(() {
+        _estimasi = null;
+        _fare = 0;
+        _estimasiGagal = true;
+      });
+    }
   }
 
   void _calculateFareFromDistance() {
-    if (_destinationLatLng == null) return;
+    final tujuan = _destinationLatLng;
+    if (tujuan == null) return;
+    final layanan = _selectedService;
     setState(() {
-      // _fare adalah ongkos perjalanan saja, sama seperti kolom `fare` di
-      // server. Biaya jasa disimpan terpisah supaya rinciannya bisa ditampilkan
-      // dan supaya angka yang dibandingkan dengan balasan server tetap sepadan.
-      final r = _rincianTarif();
-      _fare = r.ongkos;
-      _biayaJasa = r.biayaJasa;
+      _estimasi = null;
+      _estimasiGagal = false;
     });
-    // Tarif dihitung langsung (gratis, hitungan lokal); rutenya ditahan.
+    // Estimasi dan rute sama-sama panggilan jaringan, jadi keduanya ditahan
+    // sampai titiknya berhenti berpindah.
     _ruteDebounce?.cancel();
-    _ruteDebounce = Timer(const Duration(milliseconds: 500), _fetchRoute);
+    _ruteDebounce = Timer(const Duration(milliseconds: 500), () {
+      _ambilEstimasi(tujuan, layanan);
+      _fetchRoute();
+    });
   }
 
   Future<void> _pilihTempat(PlaceSuggestion saran) async {
@@ -540,8 +568,11 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     final driver = _driverLatLng;
 
     return [
-      penandaPeta(titik: _currentLatLng, warna: Colors.green, judul: 'Titik jemput'),
-      if (tujuan != null)
+      // Titik yang sedang digeser diwakili pin tetap di tengah layar, jadi
+      // penandanya disembunyikan supaya tidak ada dua pin di tempat sama.
+      if (!(_geserPeta && _geserJemput))
+        penandaPeta(titik: _currentLatLng, warna: Colors.green, judul: 'Titik jemput'),
+      if (tujuan != null && !(_geserPeta && !_geserJemput))
         penandaPeta(titik: tujuan, warna: Colors.red, judul: 'Tujuan'),
       // Penanda driver tetap tampil sampai penumpang diantar, bukan hilang
       // begitu status berpindah dari "accepted" ke "picked_up".
@@ -793,7 +824,11 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
-            if (_orderStatus == "input") {
+            if (_geserPeta) {
+              // Keluar dari mode geser dulu, jangan langsung tutup layarnya.
+              _geserDebounce?.cancel();
+              setState(() => _geserPeta = false);
+            } else if (_orderStatus == "input") {
               if (_inputStep > 0) {
                 setState(() {
                   _inputStep--;
@@ -846,6 +881,25 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                   _calculateFareFromDistance();
                   _reverseGeocode(titik, true);
                 },
+                // Sambil digeser, titiknya ikut tengah peta. Alamatnya ditahan
+                // sampai peta berhenti, supaya satu geseran tidak jadi puluhan
+                // panggilan geocode.
+                onPositionChanged: (kamera, _) {
+                  if (!_geserPeta) return;
+                  final titik = kamera.center;
+                  if (_geserJemput) {
+                    _currentLatLng = titik;
+                    _gpsTerbaca = true;
+                  } else {
+                    _destinationLatLng = titik;
+                  }
+                  _geserDebounce?.cancel();
+                  _geserDebounce = Timer(const Duration(milliseconds: 600), () {
+                    if (!mounted || !_geserPeta) return;
+                    _calculateFareFromDistance();
+                    _reverseGeocode(titik, _geserJemput);
+                  });
+                },
               ),
               children: [
                 ubinOSM,
@@ -863,11 +917,13 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             ),
           ),
 
+          if (_geserPeta) ..._pinTengah(),
+
           // Main Interactive Panels
           SafeArea(
             child: Column(
               children: [
-                if (_orderStatus == "input") ...[
+                if (_orderStatus == "input" && !_geserPeta) ...[
                   if (_inputStep == 0) _buildDestinationPickerPanel(theme, isDark),
                   if (_inputStep == 1) _buildPackageDetailPanel(theme, isDark),
                   if (_inputStep == 2) _buildPriceEstimatePanel(theme, isDark),
@@ -885,10 +941,86 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     );
   }
 
+  // Ukuran pin tengah. Dengan Center + padding bawah setinggi pinnya, ujung
+  // bawah pin jatuh persis di titik tengah peta — tidak ada angka ajaib.
+  static const double _tinggiPin = 44;
+  static const double _tinggiTombolPin = 44;
+
+  void _mulaiGeser(bool jemput) {
+    setState(() {
+      _geserPeta = true;
+      _geserJemput = jemput;
+    });
+    // Pin mulai dari titik yang sedang dipilih, bukan dari tengah peta yang
+    // kebetulan sedang terlihat.
+    _pindahPeta(jemput ? _currentLatLng : (_destinationLatLng ?? _currentLatLng), 17);
+  }
+
+  void _selesaiGeser() {
+    _geserDebounce?.cancel();
+    final jemput = _geserJemput;
+    // Peta yang tidak sempat bergerak sama sekali belum pernah memanggil
+    // onPositionChanged, jadi titiknya diambil langsung dari kamera.
+    final titik = _petaSiap ? _mapController.camera.center : _currentLatLng;
+    setState(() {
+      _geserPeta = false;
+      if (jemput) {
+        _currentLatLng = titik;
+        _gpsTerbaca = true;
+      } else {
+        _destinationLatLng = titik;
+      }
+    });
+    _calculateFareFromDistance();
+    _reverseGeocode(titik, jemput);
+  }
+
+  // Pin diam di tengah layar + tombol di atasnya. Yang digeser petanya, jadi
+  // pin tidak perlu jadi widget yang bisa ditarik.
+  List<Widget> _pinTengah() {
+    return [
+      IgnorePointer(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: _tinggiPin),
+            child: Icon(
+              Icons.location_on,
+              size: _tinggiPin,
+              color: _geserJemput ? Colors.green : Colors.red,
+            ),
+          ),
+        ),
+      ),
+      Center(
+        child: Padding(
+          // Tinggi tombol + 2 × (jarak ke pin + tinggi pin): menaruh dasar
+          // tombol 8px di atas kepala pin.
+          padding: const EdgeInsets.only(bottom: _tinggiTombolPin + 2 * (_tinggiPin + 8)),
+          child: SizedBox(
+            height: _tinggiTombolPin,
+            child: ElevatedButton.icon(
+              onPressed: _selesaiGeser,
+              icon: const Icon(Icons.check, size: 18),
+              label: Text(_geserJemput ? "Pilih Titik Jemput" : "Pilih Lokasi"),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.primaryBlue,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              ),
+            ),
+          ),
+        ),
+      ),
+    ];
+  }
+
   Widget _buildDestinationPickerPanel(ThemeData theme, bool isDark) {
     return Container(
       padding: const EdgeInsets.all(20),
       margin: const EdgeInsets.all(16),
+      // Panel ini dulu memakan separuh layar lebih dan peta cuma kebagian sisa.
+      // Dibatasi 45% tinggi layar lalu digulung ke dalam.
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.45),
       decoration: BoxDecoration(
         color: isDark ? AppTheme.cardObsidianDark : Colors.white,
         borderRadius: BorderRadius.circular(24),
@@ -901,6 +1033,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       ),
       child: Form(
         key: _formKey,
+        child: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -923,9 +1056,20 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                         controller: _pickupController,
                         decoration: InputDecoration(
                           hintText: "Pilih lokasi penjemputan",
-                          suffixIcon: IconButton(
-                            icon: const Icon(Icons.my_location, color: AppTheme.primaryBlue, size: 18),
-                            onPressed: _getCurrentLocation,
+                          suffixIcon: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              IconButton(
+                                tooltip: "Geser peta",
+                                icon: const Icon(Icons.pin_drop_outlined, color: Colors.green, size: 18),
+                                onPressed: () => _mulaiGeser(true),
+                              ),
+                              IconButton(
+                                tooltip: "Pakai GPS",
+                                icon: const Icon(Icons.my_location, color: AppTheme.primaryBlue, size: 18),
+                                onPressed: _getCurrentLocation,
+                              ),
+                            ],
                           ),
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
@@ -940,7 +1084,12 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                       TextFormField(
                         controller: _destinationController,
                         decoration: InputDecoration(
-                          hintText: "Cari, atau ketuk titiknya di peta",
+                          hintText: "Cari, atau geser peta",
+                          suffixIcon: IconButton(
+                            tooltip: "Geser peta",
+                            icon: const Icon(Icons.pin_drop_outlined, color: Colors.red, size: 18),
+                            onPressed: () => _mulaiGeser(false),
+                          ),
                           border: InputBorder.none,
                           enabledBorder: InputBorder.none,
                           focusedBorder: InputBorder.none,
@@ -1031,6 +1180,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               child: const Text("Lanjutkan"),
             ),
           ],
+        ),
         ),
       ),
     );
@@ -1239,9 +1389,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     // layanan dan asuransi yang tidak pernah ditagih server, lalu menimpa _fare
     // dari dalam build(). Yang dilihat penumpang tidak pernah sama dengan yang
     // dibayarnya.
-    final tarif = _rincianTarif();
-    final distanceKm = tarif.km;
-    final distanceCost = tarif.km * tarif.perKm;
+    final tarif = _estimasi;
+    final distanceKm = tarif?.km ?? 0;
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1303,11 +1452,22 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
 
           const Text("Rincian Biaya", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           const SizedBox(height: 8),
-          _buildFareRow("Tarif dasar", tarif.base),
-          _buildFareRow("Jarak (${distanceKm.toStringAsFixed(1)} km)", distanceCost),
-          // Ditampilkan terpisah, bukan dilebur ke ongkos: penumpang berhak
-          // tahu mana yang untuk driver dan mana yang untuk aplikasi.
-          if (tarif.biayaJasa > 0) _buildFareRow("Biaya jasa aplikasi", tarif.biayaJasa),
+          if (tarif == null)
+            Text(
+              _estimasiGagal
+                  ? "Ongkos belum bisa dihitung. Periksa koneksi lalu pilih tujuannya lagi."
+                  : "Menghitung ongkos...",
+              style: TextStyle(fontSize: 13, color: _estimasiGagal ? AppTheme.errorColor : Colors.grey),
+            )
+          else ...[
+            // Ongkos ditampilkan sebagai satu angka, bukan dipecah jadi tarif
+            // dasar ditambah jarak: sejak ada jarak dasar dan pembulatan ke
+            // atas, dua baris itu tidak lagi menjumlah tepat ke yang ditagih.
+            _buildFareRow("Ongkos perjalanan (${distanceKm.toStringAsFixed(1)} km)", tarif.ongkos),
+            // Ditampilkan terpisah, bukan dilebur ke ongkos: penumpang berhak
+            // tahu mana yang untuk driver dan mana yang untuk aplikasi.
+            if (tarif.biayaJasa > 0) _buildFareRow("Biaya jasa aplikasi", tarif.biayaJasa),
+          ],
           // Asuransi dan penanganan khusus tidak muncul di sini karena server
           // tidak menagihnya: keduanya dikirim sebagai permintaan ke driver,
           // bukan sebagai biaya. Kalau memang mau ditagih, tempatnya di tabel
@@ -1318,7 +1478,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             children: [
               const Text("Total", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
               Text(
-                "Rp ${tarif.total.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}",
+                tarif == null
+                    ? "-"
+                    : "Rp ${tarif.total.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}",
                 style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppTheme.primaryBlue),
               ),
             ],

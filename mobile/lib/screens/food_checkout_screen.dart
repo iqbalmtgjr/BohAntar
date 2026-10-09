@@ -26,6 +26,7 @@ class FoodCheckoutScreen extends StatefulWidget {
 
 class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   LatLng? _tujuan;
+  EstimasiTarif? _estimasi;
   String _alamatTujuan = '';
   bool _mencariLokasi = true;
   String _metode = 'Tunai'; // "Tunai" | "PayAntar"
@@ -68,9 +69,11 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   Future<void> _pasangTujuan(LatLng titik) async {
     setState(() {
       _tujuan = titik;
+      _estimasi = null;
       _alamatTujuan = '';
       _mencariLokasi = true;
     });
+    _ambilEstimasi(titik);
     String? alamat;
     try {
       alamat = await MapsService().alamatDariTitik(titik);
@@ -119,18 +122,26 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
     );
   }
 
-  double get _jarakKm {
-    final t = _tujuan;
-    if (t == null) return 0;
-    return Geolocator.distanceBetween(_warung.posisi.latitude, _warung.posisi.longitude, t.latitude, t.longitude) / 1000.0;
+  /// Ongkir dan biaya jasa dihitung server, bukan di sini: jaraknya pun harus
+  /// jarak versi server, karena itu yang nanti ditagih. Biaya jasa ditagih
+  /// sekali per pesanan, bukan per porsi.
+  Future<void> _ambilEstimasi(LatLng tujuan) async {
+    try {
+      final hasil = await ApiService().estimasiTarif(
+        layanan: 'BohFood',
+        dariLat: _warung.posisi.latitude,
+        dariLng: _warung.posisi.longitude,
+        keLat: tujuan.latitude,
+        keLng: tujuan.longitude,
+      );
+      if (!mounted || _tujuan != tujuan) return;
+      setState(() => _estimasi = hasil);
+    } catch (e) {
+      debugPrint('Estimasi ongkir gagal: $e');
+      if (!mounted || _tujuan != tujuan) return;
+      setState(() => _estimasi = null);
+    }
   }
-
-  /// Taksiran; angka finalnya dihitung server dengan rumus yang sama.
-  double get _ongkir => _tujuan == null ? 0 : Tarif.untuk('BohFood').hitung(_jarakKm);
-
-  /// Biaya jasa aplikasi. Ditagih sekali per pesanan, bukan per porsi, dan
-  /// hanya kalau titik antarnya sudah dipilih — sebelum itu belum ada pesanan.
-  double get _biayaJasa => _tujuan == null ? 0 : Tarif.untuk('BohFood').biayaJasa;
 
   Future<void> _pesan() async {
     final tujuan = _tujuan;
@@ -170,7 +181,10 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final k = widget.keranjang;
-    final total = k.subtotal + _ongkir + _biayaJasa;
+    final estimasi = _estimasi;
+    final ongkir = estimasi?.ongkos ?? 0;
+    final biayaJasa = estimasi?.biayaJasa ?? 0;
+    final total = k.subtotal + ongkir + biayaJasa;
     final tunai = _metode == 'Tunai';
 
     return Scaffold(
@@ -284,11 +298,15 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                 children: [
                   _barisHarga('Makanan (${k.totalPorsi} porsi)', k.subtotal),
                   _barisHarga(
-                    _tujuan == null ? 'Ongkir' : 'Ongkir (${_jarakKm.toStringAsFixed(1).replaceAll('.', ',')} km)',
-                    _ongkir,
-                    keterangan: _tujuan == null ? 'pilih titik antar dulu' : null,
+                    estimasi == null ? 'Ongkir' : 'Ongkir (${estimasi.km.toStringAsFixed(1).replaceAll('.', ',')} km)',
+                    ongkir,
+                    keterangan: estimasi != null
+                        ? null
+                        : _tujuan == null
+                            ? 'pilih titik antar dulu'
+                            : 'sedang dihitung',
                   ),
-                  if (_biayaJasa > 0) _barisHarga('Biaya jasa aplikasi', _biayaJasa),
+                  if (biayaJasa > 0) _barisHarga('Biaya jasa aplikasi', biayaJasa),
                   const Divider(height: 20),
                   _barisHarga('Total', total, tebal: true),
                   const SizedBox(height: 10),
@@ -318,7 +336,10 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
           child: ElevatedButton(
-            onPressed: _tujuan == null || _mengirim || _mencariLokasi ? null : _pesan,
+            // Ongkirnya belum diketahui selama estimasi belum datang, dan
+            // tombolnya menyebut total — jadi jangan biarkan ditekan sebelum
+            // angka yang tertulis di situ benar.
+            onPressed: estimasi == null || _mengirim || _mencariLokasi ? null : _pesan,
             child: _mengirim
                 ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
                 : Text('Pesan sekarang · ${rupiah(total)}'),

@@ -405,6 +405,11 @@ func main() {
 	mux.HandleFunc("/api/maps/place", requireAuth(mapsPlaceHandler))
 	mux.HandleFunc("/api/maps/reverse", requireAuth(mapsReverseHandler))
 	mux.HandleFunc("/api/maps/route", requireAuth(mapsRouteHandler))
+	// Estimasi ongkos untuk layar pemesanan. Wajib bertoken seperti rute peta:
+	// balasannya memuat seluruh isi baris tarif, termasuk persentase komisi.
+	mux.HandleFunc("/api/tarif/estimasi", requireAuth(tarifEstimasiHandler))
+	// Tanpa token: kalkulator halaman depan. Hanya mengirim total, bukan komisi.
+	mux.HandleFunc("/api/tarif/publik", tarifPublikHandler)
 	// Halaman publik: Google Play menuntut URL kebijakan privasi dan URL
 	// permintaan hapus akun yang bisa dibuka tanpa memasang aplikasi.
 	// Didaftarkan di dua jalur dengan sengaja. Reverse proxy di depan hanya
@@ -421,6 +426,7 @@ func main() {
 	mux.HandleFunc("/api/admin/orders", admin(adminOrdersHandler))
 	mux.HandleFunc("/api/admin/analytics", admin(adminAnalyticsHandler))
 	mux.HandleFunc("/api/admin/tarif", admin(adminTarifHandler))
+	mux.HandleFunc("/api/admin/tarif/contoh", admin(adminTarifContohHandler))
 	mux.HandleFunc("/api/admin/komisi", admin(adminKomisiHandler))
 	mux.HandleFunc("/api/admin/setoran", admin(adminSetoranHandler))
 	mux.HandleFunc("/api/admin/setoran/qr/", admin(adminSetoranQRHandler))
@@ -828,6 +834,9 @@ func initDB() {
 			per_km DECIMAL(12,2) NOT NULL,
 			komisi_persen DECIMAL(5,2) NOT NULL DEFAULT 20,
 			biaya_jasa DECIMAL(12,2) NOT NULL DEFAULT 0,
+			jarak_dasar_km SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+			pembulatan SMALLINT UNSIGNED NOT NULL DEFAULT 100,
+			pembulatan_ke_atas BOOLEAN NOT NULL DEFAULT FALSE,
 			updated_at DATETIME
 		)`,
 		// Setoran komisi tunai. Barisnya dibuat petugas SESUDAH menerima uangnya,
@@ -934,6 +943,14 @@ func initDB() {
 	// pernah menagihnya, dan mengisinya surut akan memalsukan riwayat.
 	migrasiSkema("ALTER TABLE orders ADD COLUMN biaya_jasa DECIMAL(12,2) NOT NULL DEFAULT 0")
 	migrasiSkema("ALTER TABLE tarif ADD COLUMN biaya_jasa DECIMAL(12,2) NOT NULL DEFAULT 0")
+	// Jarak dasar dan pembulatan per layanan. Default-nya sengaja perilaku lama
+	// persis (0 km, ratusan terdekat), jadi menukar binary tanpa menjalankan
+	// migrasi/009 tidak mengubah satu harga pun — angka bohRide yang baru ikut
+	// dari berkas itu atau dari dashboard, bukan dari sini. UPDATE tidak ditaruh
+	// di Go karena akan menimpa tarif yang sudah diatur super admin setiap start.
+	migrasiSkema("ALTER TABLE tarif ADD COLUMN jarak_dasar_km SMALLINT UNSIGNED NOT NULL DEFAULT 0")
+	migrasiSkema("ALTER TABLE tarif ADD COLUMN pembulatan SMALLINT UNSIGNED NOT NULL DEFAULT 100")
+	migrasiSkema("ALTER TABLE tarif ADD COLUMN pembulatan_ke_atas BOOLEAN NOT NULL DEFAULT FALSE")
 	// Pesanan lama semuanya dibayar dari dompet, jadi baris yang sudah ada
 	// memang 'wallet'. Pesanan baru selalu menyebutkan metodenya sendiri.
 	migrasiSkema("ALTER TABLE orders ADD COLUMN payment_method VARCHAR(10) DEFAULT 'wallet'")
@@ -3459,7 +3476,11 @@ func adminTarifHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := simpanTarif(input); err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan tarif"})
+			// Sebabnya dicatat, bukan ditelan. Versi sebelumnya cuma membalas
+			// "Gagal menyimpan tarif" tanpa jejak apa pun, dan satu penolakan
+			// DATETIME dari MariaDB jadi tidak bisa didiagnosis sama sekali.
+			log.Printf("Gagal menyimpan tarif %s: %v", input.Layanan, err)
+			writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan tarif. Sebabnya dicatat di log server."})
 			return
 		}
 		// Perubahan hanya berlaku untuk pesanan berikutnya: yang sudah dibuat

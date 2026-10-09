@@ -1,46 +1,44 @@
-/// Taksiran ongkos di sisi aplikasi.
+/// Estimasi ongkos yang datang dari server.
 ///
-/// Server yang menentukan angka final (lihat `hitungTarif()` di
-/// backend/tarif.go). Rumus di sini cuma cermin, supaya penumpang melihat harga
-/// yang sama sebelum memesan dengan yang ditagih setelah selesai. Kalau keduanya
-/// melenceng, penumpang melihat satu angka lalu dipotong angka lain — jadi
-/// rumusnya ditaruh terpisah begini supaya bisa diuji, bukan terkubur di dalam
-/// State sebuah layar.
+/// Dulu berkas ini menyimpan rumusnya sendiri lengkap dengan angka buka pintu
+/// dan per km sebagai konstanta. Dua hal yang salah dengan itu: angkanya basi
+/// begitu super admin mengubah tarif dari dashboard, dan rumusnya harus diubah
+/// di dua tempat setiap kali cara menghitungnya berubah — yang sekali waktu
+/// pasti lupa, lalu penumpang melihat satu harga dan ditagih harga lain.
 ///
-/// Angka tarifnya sendiri sekarang tinggal di tabel `tarif` dan bisa diubah
-/// super admin. Nilai di bawah adalah cerminan isi awal tabel itu.
-///
-/// ponytail: nilainya masih tetap di sini. Kalau super admin mengubah tarif,
-/// taksiran di aplikasi ikut basi sampai versi berikutnya dirilis — angkanya
-/// tetap dikoreksi server saat pesanan dibuat, jadi tidak ada yang tertagih
-/// salah, hanya taksirannya yang meleset. Ambil dari endpoint tarif publik kalau
-/// perubahan harga sudah sering terjadi.
-class Tarif {
-  final double base;
-  final double perKM;
+/// Sekarang yang menghitung cuma `hitungOngkos()` di backend/tarif.go, termasuk
+/// jaraknya: jarak versi Geolocator memakai model bumi yang berbeda dan bisa
+/// menggeser harga satu langkah penuh di dekat batas jarak dasar.
+class EstimasiTarif {
+  /// Jarak yang dipakai server menghitung, bukan hasil hitungan di HP.
+  final double km;
 
-  /// Rupiah tetap yang dibayar penumpang di luar ongkos dan masuk utuh ke
-  /// bohAntar. Ditambahkan DI ATAS ongkos, jadi bagian driver tidak berkurang
-  /// karenanya. Cermin kolom `biaya_jasa` di tabel tarif server.
+  /// Ongkos perjalanan saja — sama dengan kolom `fare` di server, dan inilah
+  /// yang dibagi dengan driver.
+  final double ongkos;
+
+  /// Rupiah tetap yang masuk utuh ke bohAntar, ditambahkan di atas ongkos.
   final double biayaJasa;
 
-  const Tarif({required this.base, required this.perKM, this.biayaJasa = 1000});
+  /// Yang benar-benar dibayar penumpang.
+  final double total;
 
-  static const _mobil = Tarif(base: 16000, perKM: 3500);
-  static const _motor = Tarif(base: 8000, perKM: 2000);
+  const EstimasiTarif({
+    required this.km,
+    required this.ongkos,
+    required this.biayaJasa,
+    required this.total,
+  });
 
-  /// Tarif yang berlaku untuk sebuah layanan. Layanan tak dikenal jatuh ke
-  /// tarif motor, bukan ke nol.
-  factory Tarif.untuk(String layanan) => layanan == 'BohCar' ? _mobil : _motor;
-
-  /// Ongkos perjalanan untuk jarak tertentu, dibulatkan ke ratusan terdekat.
-  /// Belum termasuk biaya jasa aplikasi — ini angka yang dibagi dengan driver,
-  /// dan sama persis dengan kolom `fare` di server.
-  double hitung(double km) {
-    if (km < 0) km = 0;
-    return ((base + km * perKM) / 100.0).round() * 100.0;
+  factory EstimasiTarif.dariJson(Map<String, dynamic> json) {
+    final r = json['rincian'];
+    final m = r is Map ? r : const {};
+    double angka(String kunci) => (m[kunci] as num?)?.toDouble() ?? 0;
+    return EstimasiTarif(
+      km: angka('km'),
+      ongkos: angka('ongkos'),
+      biayaJasa: angka('biaya_jasa'),
+      total: angka('total'),
+    );
   }
-
-  /// Yang benar-benar dibayar penumpang: ongkos ditambah biaya jasa aplikasi.
-  double totalBayar(double km) => hitung(km) + biayaJasa;
 }

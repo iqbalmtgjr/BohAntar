@@ -3,6 +3,7 @@ import { motion, useInView, useScroll, useTransform, AnimatePresence, useMotionV
 import { useNavigate } from 'react-router-dom';
 import bgImage from '../assets/bg.jpg';
 import logoImg from '../assets/logo.png';
+import { BASE } from '../api';
 import {
     Bike, Car, Package, UtensilsCrossed, KeyRound, ShieldCheck, MapPin, Star,
     ArrowRight, Download, ExternalLink, ChevronDown, Clock, Sparkles, Smartphone,
@@ -177,7 +178,7 @@ export default function LandingPage({ onSelectPortal }) {
     const [dropoff, setDropoff] = useState('Kantor Gubernur Kalbar');
     const [selectedFleet, setSelectedFleet] = useState('ride');
     const [distanceKm] = useState(6.5);
-    const [estimatedPrice, setEstimatedPrice] = useState(14000);
+    const [estimatedPrice, setEstimatedPrice] = useState(null);
 
     // Parallax refs
     const heroRef = useRef(null);
@@ -214,13 +215,21 @@ export default function LandingPage({ onSelectPortal }) {
     }, [mobileMenuOpen]);
 
 
+    // Harga diminta dari server, bukan dihitung di sini: angka yang dulu tertulis
+    // di halaman ini tertinggal begitu tarif diubah lewat dashboard super admin.
+    const muatHarga = (armada) => {
+        const layanan = { ride: 'BohRide', car: 'BohCar', send: 'BohSend' }[armada];
+        if (!layanan) return;
+        fetch(`${BASE}/tarif/publik?layanan=${layanan}&km=${distanceKm}`)
+            .then(r => r.json())
+            .then(d => setEstimatedPrice(typeof d.total === 'number' ? d.total : null))
+            .catch(() => setEstimatedPrice(null));
+    };
+    useEffect(() => { muatHarga('ride'); }, []);
+
     const handleCalculateFare = (e) => {
         e.preventDefault();
-        let baseRate = 8000, perKm = 2000;
-        if (selectedFleet === 'car') { baseRate = 20000; perKm = 6000; }
-        else if (selectedFleet === 'send') { baseRate = 9000; perKm = 2500; }
-        else if (selectedFleet === 'rental') { setEstimatedPrice(450000); return; }
-        setEstimatedPrice(Math.round(baseRate + distanceKm * perKm));
+        muatHarga(selectedFleet);
     };
 
     /* â”€â”€â”€â”€ DATA â”€â”€â”€â”€ */
@@ -893,7 +902,9 @@ export default function LandingPage({ onSelectPortal }) {
                                     className="bg-white border border-slate-200 px-6 py-4 rounded-2xl flex items-center gap-4 shadow-sm"
                                 >
                                     <div>
-                                        <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Perkiraan Tarif</div>
+                                        <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                                            Perkiraan Tarif{selectedFleet !== 'rental' && ` · ${distanceKm.toLocaleString('id-ID')} km`}
+                                        </div>
                                         <AnimatePresence mode="wait">
                                             <motion.div
                                                 key={estimatedPrice}
@@ -902,7 +913,9 @@ export default function LandingPage({ onSelectPortal }) {
                                                 exit={{ opacity: 0, y: -10 }}
                                                 className="text-xl sm:text-2xl font-black text-blue-600"
                                             >
-                                                {selectedFleet === 'rental' ? 'Rp 450.000/Hari' : `Rp ${estimatedPrice.toLocaleString('id-ID')}`}
+                                                {selectedFleet === 'rental' ? 'Rp 450.000/Hari'
+                                                    : estimatedPrice == null ? '—'
+                                                    : `Rp ${estimatedPrice.toLocaleString('id-ID')}`}
                                             </motion.div>
                                         </AnimatePresence>
                                     </div>
