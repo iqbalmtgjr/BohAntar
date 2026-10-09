@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Car, Calendar, DollarSign, Clock, Wallet, Eye, EyeOff, TrendingUp, ConciergeBell, CalendarDays, BarChart3, CreditCard, ShoppingBag } from "lucide-react";
 import { BASE, authFetch } from "../../api";
 import { buildRows, bucketOf } from "./schedule";
+import TagihQR from "../../components/TagihQR";
 
 /* Ilustrasi dompet: SVG murni supaya tetap tajam di layar HD/retina */
 function WalletArt() {
@@ -261,6 +262,11 @@ export default function RentalDashboard({ ownerPhone }) {
             ))}
           </div>
         </div>
+      </div>
+
+      {/* Untuk penyewa yang membayar langsung di tempat, di luar pesanan aplikasi. */}
+      <div style={{ marginBottom: 22 }}>
+        <TagihQR saldoMilik="usaha Anda" warna="#2563EB" />
       </div>
 
       <div className="stats-grid portal-desktop-only">

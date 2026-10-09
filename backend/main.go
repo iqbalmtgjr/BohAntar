@@ -432,6 +432,14 @@ func main() {
 	mux.HandleFunc("/api/admin/setoran", admin(adminSetoranHandler))
 	mux.HandleFunc("/api/admin/setoran/qr/", admin(adminSetoranQRHandler))
 	mux.HandleFunc("/api/driver/setoran/klaim", requireRole("driver")(driverKlaimSetoranHandler))
+	// Tagihan QR warung: dibuat warung, dipindai penumpang. Cukup requireAuth —
+	// pembatasan rolenya ada di dalam handler, karena POST hanya untuk warung
+	// sedangkan GET dipakai penumpang yang mau melihat nominalnya dulu.
+	// Mitra rental yang langganannya habis ikut tertahan di sini, sama seperti
+	// fitur rental lain. Peran lain dilewatkan begitu saja oleh pembungkusnya.
+	mux.HandleFunc("/api/tagihan", requireAuth(requireActiveSubscription(tagihanHandler)))
+	mux.HandleFunc("/api/tagihan/qr/", requireAuth(tagihanQRHandler))
+	mux.HandleFunc("/api/tagihan/bayar", requireAuth(bayarTagihanHandler))
 	mux.HandleFunc("/api/admin/drivers/", admin(adminDriverApproveHandler))
 	mux.HandleFunc("/api/admin/applications", admin(adminDriverApplicationsHandler))
 	mux.HandleFunc("/api/admin/partner-applications", admin(adminPartnerApplicationsHandler))
@@ -870,6 +878,25 @@ func initDB() {
 		// menolak webhook yang datang dua kali, dan satu pembayaran akan
 		// menambah saldo berkali-kali. Tanpa FK ke users, mengikuti
 		// setoran_komisi: catatan pembayaran tetap sah dibaca walau akunnya hilang.
+		// Tagihan QR warung. Kebalikan setoran_komisi: barisnya dibuat warung,
+		// lalu dipindai penumpang untuk memindahkan saldonya sendiri. Tanpa FK
+		// ke users dengan alasan yang sama seperti setoran_komisi di atas —
+		// kolasi phone_number berbeda antara MySQL lokal dan MariaDB produksi,
+		// dan baris tagihan memang catatan sejarah yang tetap sah dibaca walau
+		// akunnya kelak hilang.
+		`CREATE TABLE IF NOT EXISTS tagihan_qr (
+			id VARCHAR(64) PRIMARY KEY,
+			penerima_phone VARCHAR(20) NOT NULL,
+			penerima_nama VARCHAR(100) NOT NULL,
+			amount DECIMAL(12,2) NOT NULL,
+			komisi DECIMAL(12,2) NOT NULL DEFAULT 0,
+			created_at DATETIME NOT NULL,
+			expires_at DATETIME NOT NULL,
+			paid_at DATETIME NULL,
+			payer_phone VARCHAR(20) NULL,
+			INDEX idx_tagihan_penerima (penerima_phone, created_at)
+		)`,
+
 		`CREATE TABLE IF NOT EXISTS topup_invoices (
 			id VARCHAR(64) PRIMARY KEY,
 			phone_number VARCHAR(20) NOT NULL,
@@ -952,6 +979,9 @@ func initDB() {
 	migrasiSkema("ALTER TABLE tarif ADD COLUMN jarak_dasar_km SMALLINT UNSIGNED NOT NULL DEFAULT 0")
 	migrasiSkema("ALTER TABLE tarif ADD COLUMN pembulatan SMALLINT UNSIGNED NOT NULL DEFAULT 100")
 	migrasiSkema("ALTER TABLE tarif ADD COLUMN pembulatan_ke_atas BOOLEAN NOT NULL DEFAULT FALSE")
+	// Potongan bohAntar per tagihan QR, dikunci saat tagihan dibuat. Untuk
+	// database yang tabelnya sudah lahir sebelum kolom ini ada.
+	migrasiSkema("ALTER TABLE tagihan_qr ADD COLUMN komisi DECIMAL(12,2) NOT NULL DEFAULT 0")
 	// Pesanan lama semuanya dibayar dari dompet, jadi baris yang sudah ada
 	// memang 'wallet'. Pesanan baru selalu menyebutkan metodenya sendiri.
 	migrasiSkema("ALTER TABLE orders ADD COLUMN payment_method VARCHAR(10) DEFAULT 'wallet'")

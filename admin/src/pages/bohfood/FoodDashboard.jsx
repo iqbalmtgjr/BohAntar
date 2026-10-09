@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Store, MapPin, Clock, Salad, Plus, Save, CheckCircle, Power, Tag } from "lucide-react";
 import { BASE, authFetch } from "../../api";
 import { toast } from "../../components/Feedback";
+import TagihQR from "../../components/TagihQR";
 
 // Status pesanan dari sudut pandang warung. Warung tidak mengubah status —
 // driver yang datang, membayar, dan mengantar — jadi daftarnya cuma jendela.
@@ -399,6 +400,10 @@ export default function FoodDashboard({ ownerPhone }) {
                   </div>
                 </div>
               )}
+
+              {/* Terpisah dari Pesanan Masuk karena dipakai untuk pembeli yang
+                  datang sendiri, bukan pesanan antar. */}
+              <TagihQR saldoMilik="warung" />
 
               {/* Pesanan masuk */}
               <div className="card">

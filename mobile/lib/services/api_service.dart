@@ -252,6 +252,49 @@ class ApiService {
     return _handleResponse(response);
   }
 
+  /// Awalan isi QR tagihan warung. Dipakai untuk menolak QR asing sebelum
+  /// permintaan dikirim, supaya QRIS bank atau QR promo tidak jadi pesan error
+  /// dari server.
+  static const awalanQRTagihan = 'bohantar:tagihan:';
+
+  /// Membaca tagihan yang baru dipindai — nominal dan nama warungnya datang
+  /// dari server, tidak pernah dari isi QR, supaya QR yang diedit orang tidak
+  /// bisa menampilkan angka palsu di layar konfirmasi.
+  Future<Map<String, dynamic>> lihatTagihan(String isiQR) async {
+    if (_token == null) {
+      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+    }
+    if (!isiQR.startsWith(awalanQRTagihan)) {
+      throw Exception('QR ini bukan QR pembayaran bohAntar.');
+    }
+    final id = isiQR.substring(awalanQRTagihan.length);
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/tagihan?id=${Uri.encodeQueryComponent(id)}'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_token',
+      },
+    );
+    return _handleResponse(response);
+  }
+
+  /// Membayar tagihan dari saldo. Nominalnya ditentukan warung saat membuat QR,
+  /// bukan dikirim dari sini — aplikasi cuma menyerahkan isi QR-nya.
+  Future<Map<String, dynamic>> bayarTagihan(String isiQR) async {
+    if (_token == null) {
+      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+    }
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/tagihan/bayar'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_token',
+      },
+      body: jsonEncode({'token': isiQR}),
+    );
+    return _handleResponse(response);
+  }
+
   Future<Map<String, dynamic>> topUp(double amount) async {
     if (_token == null) {
       throw Exception('Otorisasi diperlukan. Silakan login kembali.');

@@ -12,7 +12,7 @@ import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/screens/food_merchants_screen.dart';
 import 'package:mobile/screens/login_screen.dart';
 import 'package:mobile/screens/order_ride_screen.dart';
-import 'package:mobile/screens/pindai_setoran_screen.dart';
+import 'package:mobile/screens/pindai_qr_screen.dart';
 import 'package:mobile/services/api_service.dart';
 import 'package:mobile/services/maps_service.dart';
 import 'package:mobile/services/notifikasi_service.dart';
@@ -1001,12 +1001,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         width: 58,
         height: 58,
         child: FloatingActionButton(
-          onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Pindai QR sedang dalam pengembangan.'),
-              backgroundColor: AppTheme.primaryBlue,
-            ),
-          ),
+          onPressed: _pindaiBayar,
           backgroundColor: AppTheme.primaryBlue,
           elevation: 4,
           shape: const CircleBorder(),
@@ -2686,7 +2681,13 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   Future<void> _pindaiSetoran() async {
     final hasil = await Navigator.push<Map<String, dynamic>>(
       context,
-      MaterialPageRoute(builder: (_) => const PindaiSetoranScreen()),
+      MaterialPageRoute(
+        builder: (_) => PindaiQRScreen(
+          judul: 'Pindai QR Setoran',
+          petunjuk: 'Arahkan ke QR di layar petugas',
+          onKode: (isi) => ApiService().klaimSetoran(isi),
+        ),
+      ),
     );
     if (hasil == null || !mounted) return;
     // Saldo dibaca ulang dari server, bukan dihitung sendiri di sini: setoran
@@ -2700,6 +2701,95 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         backgroundColor: Colors.green,
       ),
     );
+  }
+
+  /// Pindai QR tagihan warung, lalu bayar dari saldo.
+  ///
+  /// Isi QR cuma id tagihan, jadi nominal dan nama warungnya dibaca ulang dari
+  /// server sebelum ditampilkan: QR yang diedit orang tidak bisa memunculkan
+  /// angka palsu di layar konfirmasi, dan tidak ada uang yang berpindah sebelum
+  /// tombol bayar ditekan.
+  Future<void> _pindaiBayar() async {
+    final hasil = await Navigator.push<Map<String, dynamic>>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PindaiQRScreen(
+          judul: 'Bayar dengan QR',
+          petunjuk: 'Arahkan ke QR tagihan di kasir',
+          onKode: (isi) async {
+            final detail = await ApiService().lihatTagihan(isi);
+            final t = (detail['tagihan'] as Map<String, dynamic>?) ?? {};
+            if (t['paid_at'] != null) {
+              throw Exception('Tagihan ini sudah pernah dibayar.');
+            }
+            final nominal = (t['amount'] as num?)?.toDouble() ?? 0;
+            // Saldo disegarkan dulu supaya tombol bayar tidak mati gara-gara
+            // angka lama — top up yang baru masuk belum tentu terbaca layar ini.
+            await _fetchUserProfile();
+            final setuju = await _konfirmasiBayar(
+              (t['penerima_nama'] ?? 'Warung').toString(),
+              nominal,
+            );
+            if (!setuju) return null;
+            return ApiService().bayarTagihan(isi);
+          },
+        ),
+      ),
+    );
+    if (hasil == null || !mounted) return;
+    // Saldo dibaca ulang dari server, bukan dikurangi sendiri di sini: angka
+    // yang benar hanya ada di database.
+    await _fetchUserProfile();
+    if (!mounted) return;
+    final jumlah = (hasil['amount'] as num?)?.toDouble() ?? 0;
+    final penerima = (hasil['penerima_nama'] ?? 'warung').toString();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('${_rupiah(jumlah)} dibayar ke $penerima.'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  /// Layar konfirmasi sebelum saldo berpindah. Tombolnya mati kalau saldonya
+  /// kurang — pesan server memang menolak, tapi menahannya di sini membuat
+  /// alasannya terbaca sebelum pelanggan menunggu di depan kasir.
+  Future<bool> _konfirmasiBayar(String penerima, double nominal) async {
+    if (!mounted) return false;
+    final cukup = _walletBalance >= nominal;
+    final setuju = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Bayar tagihan'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(penerima, style: const TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Text(_rupiah(nominal), style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 10),
+            Text(
+              cukup
+                  ? 'Saldo Anda ${_rupiah(_walletBalance)}'
+                  : 'Saldo Anda ${_rupiah(_walletBalance)} — kurang. Top up dulu.',
+              style: TextStyle(
+                fontSize: 12,
+                color: cukup ? Colors.grey : AppTheme.errorColor,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+          ElevatedButton(
+            onPressed: cukup ? () => Navigator.pop(ctx, true) : null,
+            child: const Text('Bayar sekarang'),
+          ),
+        ],
+      ),
+    );
+    return setuju ?? false;
   }
 
   Widget _buildRiwayatTile(dynamic o, bool isDark) {
