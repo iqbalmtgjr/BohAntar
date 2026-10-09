@@ -193,6 +193,17 @@ class ApiService {
     return data;
   }
 
+  // Lupa password: token Google membuktikan pemilik email akun, lalu password
+  // baru disimpan. Sesi tidak dibuat — pengguna masuk seperti biasa sesudahnya.
+  Future<Map<String, dynamic>> resetPasswordGoogle(String idToken, String newPassword) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/auth/reset-password-google'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'id_token': idToken, 'new_password': newPassword}),
+    );
+    return _handleResponse(response);
+  }
+
   // Fetch User Profile
   Future<Map<String, dynamic>> getProfile() async {
     if (_token == null) {

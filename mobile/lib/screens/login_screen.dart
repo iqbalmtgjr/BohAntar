@@ -179,6 +179,143 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
+  // Nomor WhatsApp admin, sama dengan tombol "hubungi admin" di Portal Mitra.
+  static const _waAdmin = '628996979079';
+
+  /// Dua jalan pulih tanpa layanan email/SMS: atur ulang sendiri lewat Google
+  /// kalau email akunnya akun Google, atau minta admin mengganti password-nya
+  /// lewat dashboard.
+  Future<void> _lupaPassword() async {
+    final pilihan = await showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Lupa password?', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              const Text('Kalau email akun Anda akun Google (Gmail), Anda bisa membuat password baru sendiri sekarang.'),
+              const SizedBox(height: 16),
+              ElevatedButton.icon(
+                onPressed: () => Navigator.pop(context, 'google'),
+                icon: const Icon(Icons.lock_reset),
+                label: const Text('Buat password baru lewat Google'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryBlue,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 50),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text('Email Anda bukan Gmail? Admin bisa mengatur ulang password Anda.'),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.pop(context, 'admin'),
+                icon: const Icon(Icons.chat_outlined),
+                label: const Text('Hubungi admin lewat WhatsApp'),
+                style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 50)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (!mounted || pilihan == null) return;
+
+    if (pilihan == 'admin') {
+      final email = _emailController.text.trim();
+      final pesan = 'Halo Admin bohAntar, saya lupa password akun saya'
+          '${email.isEmpty ? '' : ' dengan email $email'}. Mohon dibantu atur ulang.';
+      final url = Uri.parse('https://wa.me/$_waAdmin?text=${Uri.encodeComponent(pesan)}');
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication) && mounted) {
+        setState(() => _errorMessage = 'WhatsApp tidak bisa dibuka. Hubungi admin di +$_waAdmin.');
+      }
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+    try {
+      final googleUser = await GoogleSignIn.instance.authenticate();
+      final idToken = googleUser.authentication.idToken;
+      if (idToken == null || idToken.isEmpty) {
+        throw Exception('Google tidak mengembalikan id_token.');
+      }
+      if (!mounted) return;
+      final baru = await _mintaPasswordBaru(googleUser.email);
+      if (baru == null) return;
+
+      final res = await ApiService().resetPasswordGoogle(idToken, baru);
+      if (!mounted) return;
+      _emailController.text = res['email'] ?? googleUser.email;
+      _passwordController.clear();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(res['message'] ?? 'Password baru tersimpan. Silakan masuk.')),
+      );
+    } on GoogleSignInException catch (e) {
+      // Menutup pemilih akun bukan galat yang perlu diumumkan.
+      if (e.code != GoogleSignInExceptionCode.canceled && mounted) {
+        setState(() => _errorMessage = 'Gagal masuk ke Google: ${e.description ?? e.code.name}');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _errorMessage = e.toString().replaceAll('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<String?> _mintaPasswordBaru(String email) {
+    final pass = TextEditingController();
+    final ulang = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Password baru'),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Untuk akun $email', style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: pass,
+                obscureText: true,
+                autofillHints: const [AutofillHints.newPassword],
+                decoration: const InputDecoration(hintText: 'Minimal 8 karakter'),
+                validator: (v) => (v == null || v.length < 8) ? 'Minimal 8 karakter' : null,
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: ulang,
+                obscureText: true,
+                decoration: const InputDecoration(hintText: 'Ketik ulang password'),
+                validator: (v) => v != pass.text ? 'Tidak sama dengan yang di atas' : null,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
+          ElevatedButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) Navigator.pop(context, pass.text);
+            },
+            child: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<String?> _showPhoneInputDialog(BuildContext context) async {
     final controller = TextEditingController();
     final formKey = GlobalKey<FormState>();
@@ -504,6 +641,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 }
                 return null;
               },
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _isLoading ? null : _lupaPassword,
+                child: const Text('Lupa password?'),
+              ),
             ),
 
             if (_errorMessage.isNotEmpty) ...[

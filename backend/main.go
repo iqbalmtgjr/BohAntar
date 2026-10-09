@@ -387,6 +387,7 @@ func main() {
 	// mux.HandleFunc("/api/auth/verify-otp", verifyOTPHandler)
 	mux.HandleFunc("/api/auth/register", registerHandler)
 	mux.HandleFunc("/api/auth/google", googleLoginHandler)
+	mux.HandleFunc("/api/auth/reset-password-google", resetPasswordGoogleHandler)
 	mux.HandleFunc("/api/users/profile", profileHandler)
 	mux.HandleFunc("/api/users/topup", topUpHandler)
 	mux.HandleFunc("/api/users/addresses", addressesHandler)
@@ -2160,6 +2161,63 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "token": token, "user": u})
+}
+
+// resetPasswordGoogleHandler: POST /api/auth/reset-password-google
+//
+// Jalan pulih untuk yang lupa password. Driver dan mitra menerima password awal
+// yang cuma ditampilkan sekali; sebelum ini, kehilangan password berarti buntu
+// sampai admin mengetik yang baru.
+//
+// Bukti kepemilikan akunnya token Google yang sudah diverifikasi: siapa yang
+// bisa masuk ke akun Google itu, memegang email akun bohAntar-nya. Tidak perlu
+// SMTP atau SMS. Akun yang emailnya bukan akun Google tidak bisa lewat sini —
+// aplikasinya mengarahkan mereka ke admin, yang bisa mengganti password lewat
+// halaman Pengguna di dashboard.
+//
+// Token yang sama sudah cukup untuk masuk lewat googleLoginHandler, jadi jalur
+// ini tidak membuka apa pun yang belum terbuka. Pemeriksaan pengajuan driver
+// juga tidak dilewati: password baru tidak mengizinkan masuk, login yang
+// memutuskannya.
+func resetPasswordGoogleHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
+		return
+	}
+	var input struct {
+		IDToken     string `json:"id_token"`
+		Nonce       string `json:"nonce"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.IDToken == "" {
+		writeJSONResponse(w, 400, map[string]string{"error": "id_token Google diperlukan"})
+		return
+	}
+	// Sama dengan syarat ganti password di profileHandler.
+	if len(input.NewPassword) < 8 {
+		writeJSONResponse(w, 400, map[string]string{"error": "Password baru minimal 8 karakter"})
+		return
+	}
+	email, _, err := verifyGoogleIDToken(r.Context(), input.IDToken, input.Nonce)
+	if err != nil {
+		writeJSONResponse(w, 401, map[string]string{"error": err.Error()})
+		return
+	}
+	u, _, found := dbFindUserByEmail(email)
+	if !found {
+		writeJSONResponse(w, 404, map[string]string{"error": "Email Google " + email + " tidak terdaftar di bohAntar. Pilih akun Google yang emailnya sama dengan akun bohAntar Anda, atau hubungi admin."})
+		return
+	}
+	if err := dbSetPassword(u.PhoneNumber, input.NewPassword); err != nil {
+		log.Printf("Atur ulang password %s gagal: %v", u.PhoneNumber, err)
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan password baru"})
+		return
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{
+		"status":  "success",
+		"message": "Password baru tersimpan. Silakan masuk.",
+		"email":   email,
+	})
 }
 
 // ==================== USER HANDLERS ====================

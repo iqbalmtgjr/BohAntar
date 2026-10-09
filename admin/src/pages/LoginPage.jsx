@@ -292,6 +292,25 @@ export default function LoginPage({ onLogin, role }) {
                   {showPassword ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
                 </button>
               </div>
+              {/* Password mitra cuma ditampilkan sekali saat disetujui. Dua jalan
+                  pulih tanpa email/SMS: Google, atau admin yang menggantinya
+                  lewat halaman Pengguna. */}
+              {role !== 'admin' && <details className="mt-2 text-xs text-slate-500">
+                <summary className="cursor-pointer font-semibold text-blue-600 text-right list-none">Lupa password?</summary>
+                <div className="mt-2 p-3 bg-slate-50 rounded-xl space-y-1.5 leading-relaxed">
+                  <p>Email akun Anda Gmail? Tekan <strong>Masuk dengan Google</strong> di bawah — tidak perlu password.</p>
+                  <p>
+                    Bukan Gmail?{' '}
+                    <a
+                      href={`https://wa.me/628996979079?text=${encodeURIComponent(`Halo Admin bohAntar, saya lupa password akun mitra saya${email ? ` dengan email ${email}` : ''}. Mohon dibantu atur ulang.`)}`}
+                      target="_blank" rel="noopener noreferrer"
+                      className="font-semibold text-blue-600 underline"
+                    >
+                      Minta admin mengatur ulang lewat WhatsApp
+                    </a>
+                  </p>
+                </div>
+              </details>}
             </div>
 
             <Alert type="error" style={{ marginBottom: 0 }}>{error}</Alert>
