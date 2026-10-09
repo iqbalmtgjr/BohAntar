@@ -28,6 +28,12 @@ async function loadAdmin(next) {
     const n = res.applications?.length || 0;
     if (n > 0) next.push({ id: "partner", text: `${n} pengajuan mitra menunggu`, sub: "Tinjau calon mitra Food & Rental", to: "/partner-applications", tone: "warning", count: n });
   } catch { /* daftar pengajuan mitra gagal dimuat */ }
+
+  try {
+    const res = await api.adminPencairan("menunggu");
+    const n = res.pencairan?.length || 0;
+    if (n > 0) next.push({ id: "pencairan", text: `${n} pencairan saldo menunggu`, sub: "Transfer lalu tandai selesai", to: "/pencairan", tone: "warning", count: n });
+  } catch { /* daftar pencairan gagal dimuat */ }
 }
 
 async function loadRental(next) {

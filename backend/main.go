@@ -433,6 +433,10 @@ func main() {
 	mux.HandleFunc("/api/admin/setoran", admin(adminSetoranHandler))
 	mux.HandleFunc("/api/admin/setoran/qr/", admin(adminSetoranQRHandler))
 	mux.HandleFunc("/api/driver/setoran/klaim", requireRole("driver")(driverKlaimSetoranHandler))
+	// Pencairan saldo manual: diajukan pemilik saldo, diproses admin.
+	mux.HandleFunc("/api/pencairan", requireRole(peranBolehCair...)(pencairanHandler))
+	mux.HandleFunc("/api/admin/pencairan", admin(adminPencairanHandler))
+	mux.HandleFunc("/api/admin/pencairan/", admin(adminProsesPencairanHandler))
 	// Tagihan QR warung: dibuat warung, dipindai penumpang. Cukup requireAuth —
 	// pembatasan rolenya ada di dalam handler, karena POST hanya untuk warung
 	// sedangkan GET dipakai penumpang yang mau melihat nominalnya dulu.
@@ -874,11 +878,6 @@ func initDB() {
 			INDEX idx_setoran_driver (driver_phone, created_at)
 		)`,
 
-		// Invoice top up dompet. Baris PENDING lahir saat pengguna minta QR dan
-		// baru jadi PAID lewat webhook Xendit. Tanpa baris ini tidak ada cara
-		// menolak webhook yang datang dua kali, dan satu pembayaran akan
-		// menambah saldo berkali-kali. Tanpa FK ke users, mengikuti
-		// setoran_komisi: catatan pembayaran tetap sah dibaca walau akunnya hilang.
 		// Tagihan QR warung. Kebalikan setoran_komisi: barisnya dibuat warung,
 		// lalu dipindai penumpang untuk memindahkan saldonya sendiri. Tanpa FK
 		// ke users dengan alasan yang sama seperti setoran_komisi di atas —
@@ -898,6 +897,11 @@ func initDB() {
 			INDEX idx_tagihan_penerima (penerima_phone, created_at)
 		)`,
 
+		// Invoice top up dompet. Baris PENDING lahir saat pengguna minta QR dan
+		// baru jadi PAID lewat webhook Xendit. Tanpa baris ini tidak ada cara
+		// menolak webhook yang datang dua kali, dan satu pembayaran akan
+		// menambah saldo berkali-kali. Tanpa FK ke users, mengikuti
+		// setoran_komisi: catatan pembayaran tetap sah dibaca walau akunnya hilang.
 		`CREATE TABLE IF NOT EXISTS topup_invoices (
 			id VARCHAR(64) PRIMARY KEY,
 			phone_number VARCHAR(20) NOT NULL,
@@ -907,6 +911,29 @@ func initDB() {
 			created_at DATETIME NOT NULL,
 			paid_at DATETIME NULL,
 			INDEX idx_topup_phone (phone_number, created_at)
+		)`,
+
+		// Pencairan saldo manual (pencairan.go). Saldo sudah dipotong saat
+		// baris ini lahir; admin menandainya selesai setelah transfer, atau
+		// menolaknya dan saldo dikembalikan. Nama dan peran disalin ke baris
+		// supaya daftar admin tidak perlu JOIN ke users, dan tanpa FK dengan
+		// alasan yang sama seperti tabel uang lain di atas.
+		`CREATE TABLE IF NOT EXISTS pencairan_saldo (
+			id VARCHAR(64) PRIMARY KEY,
+			phone_number VARCHAR(20) NOT NULL,
+			nama_akun VARCHAR(100) NOT NULL,
+			peran VARCHAR(20) NOT NULL,
+			amount DECIMAL(12,2) NOT NULL,
+			bank VARCHAR(50) NOT NULL,
+			nomor_rekening VARCHAR(30) NOT NULL,
+			nama_pemilik VARCHAR(100) NOT NULL,
+			status VARCHAR(10) NOT NULL DEFAULT 'menunggu',
+			catatan VARCHAR(200) NULL,
+			diproses_oleh VARCHAR(20) NULL,
+			created_at DATETIME NOT NULL,
+			processed_at DATETIME NULL,
+			INDEX idx_pencairan_status (status, created_at),
+			INDEX idx_pencairan_phone (phone_number, created_at)
 		)`,
 	}
 
@@ -2834,17 +2861,18 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Pesanan berhasil diterima", "order": o})
 }
 
-// klaimMu menyerialkan gerbang saldo dan klaim. Tanpa kunci ini dua klaim dari
-// driver yang sama di milidetik yang sama sama-sama membaca komisi tertahan
-// sebelum klaim yang lain tercatat, lalu sama-sama lolos terhadap saldo yang
-// sama — dan saldonya tekor saat kedua pesanan ditutup.
+// gerbangSaldoMu menyerialkan semua yang menghitung saldo tertahan lalu
+// bertindak atasnya: klaim pesanan dan pengajuan pencairan. Tanpa kunci ini dua
+// klaim dari driver yang sama di milidetik yang sama sama-sama membaca komisi
+// tertahan sebelum klaim yang lain tercatat, lalu sama-sama lolos terhadap
+// saldo yang sama — dan saldonya tekor saat kedua pesanan ditutup.
 //
-// ponytail: satu kunci untuk semua driver, dan hanya berlaku di proses ini —
-// backend memang satu binary di satu mesin, sama seperti rem login. Isinya tiga
-// query singkat tanpa panggilan jaringan, jadi antreannya tidak terasa. Ganti
-// dengan SELECT ... FOR UPDATE pada baris users driver kalau suatu hari ada
-// lebih dari satu instance.
-var klaimMu sync.Mutex
+// ponytail: satu kunci untuk semua akun, dan hanya berlaku di proses ini —
+// backend memang satu binary di satu mesin, sama seperti rem login. Isinya
+// beberapa query singkat tanpa panggilan jaringan, jadi antreannya tidak
+// terasa. Ganti dengan SELECT ... FOR UPDATE pada baris users kalau suatu hari
+// ada lebih dari satu instance.
+var gerbangSaldoMu sync.Mutex
 
 // klaimBergerbangSaldo menjalankan gerbang saldo lalu klaim, dan mengembalikan
 // kode HTTP beserta pesannya (200 berarti pesanan jadi milik driver ini).
@@ -2853,8 +2881,8 @@ var klaimMu sync.Mutex
 // baru tahu saldonya kurang setelah mengantar sudah terlanjur bekerja gratis,
 // dan penumpangnya sudah terlanjur menunggu.
 func klaimBergerbangSaldo(o Order, driverPhone, driverName, now string) (int, string) {
-	klaimMu.Lock()
-	defer klaimMu.Unlock()
+	gerbangSaldoMu.Lock()
+	defer gerbangSaldoMu.Unlock()
 
 	tertahan, err := dbKomisiTertahan(driverPhone)
 	if err != nil {

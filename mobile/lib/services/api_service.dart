@@ -263,6 +263,39 @@ class ApiService {
     return _handleResponse(response);
   }
 
+  /// Riwayat pencairan saldo milik akun ini, terbaru dulu.
+  Future<List<dynamic>> getPencairan() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/api/pencairan'),
+      headers: {'Authorization': 'Bearer $_token'},
+    );
+    return (_handleResponse(response)['pencairan'] as List?) ?? [];
+  }
+
+  /// Mengajukan pencairan. Saldo dipotong server saat itu juga; admin
+  /// mentransfer lalu menandai selesai, atau menolak dan saldonya kembali.
+  Future<Map<String, dynamic>> ajukanPencairan({
+    required int amount,
+    required String bank,
+    required String nomorRekening,
+    required String namaPemilik,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/pencairan'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_token',
+      },
+      body: jsonEncode({
+        'amount': amount,
+        'bank': bank,
+        'nomor_rekening': nomorRekening,
+        'nama_pemilik': namaPemilik,
+      }),
+    );
+    return _handleResponse(response);
+  }
+
   /// Awalan isi QR tagihan warung. Dipakai untuk menolak QR asing sebelum
   /// permintaan dikirim, supaya QRIS bank atau QR promo tidak jadi pesan error
   /// dari server.

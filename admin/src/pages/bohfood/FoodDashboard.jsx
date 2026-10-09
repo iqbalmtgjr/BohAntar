@@ -3,6 +3,7 @@ import { Store, MapPin, Clock, Salad, Plus, Save, CheckCircle, Power, Tag } from
 import { BASE, authFetch } from "../../api";
 import { toast } from "../../components/Feedback";
 import TagihQR from "../../components/TagihQR";
+import SaldoMitra from "../../components/SaldoMitra";
 
 // Status pesanan dari sudut pandang warung. Warung tidak mengubah status —
 // driver yang datang, membayar, dan mengantar — jadi daftarnya cuma jendela.
@@ -81,6 +82,7 @@ export default function FoodDashboard({ ownerPhone }) {
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
   const [orders, setOrders] = useState([]);
+  const [versiSaldo, setVersiSaldo] = useState(0);
 
   const fetchMerchantAndMenus = () => {
     authFetch(`${BASE}/food/merchant?owner_phone=${encodeURIComponent(ownerPhone)}`)
@@ -403,7 +405,8 @@ export default function FoodDashboard({ ownerPhone }) {
 
               {/* Terpisah dari Pesanan Masuk karena dipakai untuk pembeli yang
                   datang sendiri, bukan pesanan antar. */}
-              <TagihQR saldoMilik="warung" />
+              <SaldoMitra versi={versiSaldo} />
+              <TagihQR saldoMilik="warung" onLunas={() => setVersiSaldo(v => v + 1)} />
 
               {/* Pesanan masuk */}
               <div className="card">

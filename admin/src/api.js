@@ -98,5 +98,11 @@ export const api = {
   getSubscriptionStatus: () => json(`/subscription/status`),
   getRentalBookings: () => json(`/rental/bookings`),
   getProfile: () => json(`/users/profile`),
+  // Pencairan saldo manual: mitra mengajukan, super admin memproses. Saldo
+  // sudah dipotong backend saat pengajuan lahir.
+  getPencairan: () => json(`/pencairan`),
+  ajukanPencairan: (data) => post(`/pencairan`, data),
+  adminPencairan: (status) => json(`/admin/pencairan?status=${status}`),
+  prosesPencairan: (id, aksi, catatan) => post(`/admin/pencairan/${id}/${aksi}`, { catatan }),
   updateProfile: (data) => json(`/users/profile`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
 };

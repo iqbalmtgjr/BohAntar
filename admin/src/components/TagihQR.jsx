@@ -12,7 +12,7 @@ const rupiah = (n) => "Rp " + Math.round(n || 0).toLocaleString("id-ID");
    Tagihan dibuat SESUDAH transaksinya jelas, lalu QR-nya ditunjukkan ke
    pelanggan. Uang berpindah cuma kalau kedua pihak bertindak: kasir memasukkan
    nominal, pelanggan memindai dan menekan bayar. */
-export default function TagihQR({ saldoMilik = "warung", warna = "#F59E0B" }) {
+export default function TagihQR({ saldoMilik = "warung", warna = "#F59E0B", onLunas }) {
   const [tagihan, setTagihan] = useState(null); // { nominal, komisi, id, qr, lunas }
 
   const mulai = async () => {
@@ -43,6 +43,10 @@ export default function TagihQR({ saldoMilik = "warung", warna = "#F59E0B" }) {
 
   const tutup = () => {
     if (tagihan?.qr) URL.revokeObjectURL(tagihan.qr);
+    // Saldo di halaman induk dibaca ulang saat jendela yang sudah lunas
+    // ditutup — bukan dari dalam polling, supaya callback induk yang berganti
+    // tiap render tidak ikut mengulang interval.
+    if (tagihan?.lunas) onLunas?.();
     setTagihan(null);
   };
 

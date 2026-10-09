@@ -2493,6 +2493,17 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                             padding: const EdgeInsets.symmetric(horizontal: 10),
                           ),
                         ),
+                        // Ongkos pesanan dompet menumpuk di saldo ini; tanpa
+                        // tombol ini driver tidak punya jalan mencairkannya.
+                        TextButton.icon(
+                          onPressed: _bukaPencairan,
+                          icon: const Icon(Icons.account_balance_outlined, size: 15, color: Colors.white),
+                          label: const Text('Tarik', style: TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
+                          style: TextButton.styleFrom(
+                            minimumSize: const Size(0, 32),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                          ),
+                        ),
                       ],
                     ),
                     Text(
@@ -2553,6 +2564,140 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   /// sampai empat komisi pesanan pendek, cukup untuk sempat top up sebelum
   /// gerbang saldo di server mulai menolak pesanan tunai.
   static const double _ambangSaldoMenipis = 10000;
+
+  /// Tarik saldo ke rekening. Pencairan manual: saldo dipotong server saat
+  /// diajukan, admin mentransfer lalu menandai selesai — atau menolak dan
+  /// saldonya kembali. Rekening diisi dari pengajuan terakhir.
+  Future<void> _bukaPencairan() async {
+    List<dynamic> riwayat = [];
+    try {
+      riwayat = await ApiService().getPencairan();
+    } catch (e) {
+      // Riwayat cuma pelengkap; formulirnya tetap bisa dipakai.
+      debugPrint('Riwayat pencairan gagal dimuat: $e');
+    }
+    if (!mounted) return;
+
+    final akhir = riwayat.isNotEmpty ? riwayat.first as Map : null;
+    final menunggu = riwayat.cast<Map>().where((p) => p['status'] == 'menunggu').firstOrNull;
+    final nominal = TextEditingController();
+    final bank = TextEditingController(text: akhir?['bank'] ?? '');
+    final nomor = TextEditingController(text: akhir?['nomor_rekening'] ?? '');
+    final pemilik = TextEditingController(text: akhir?['nama_pemilik'] ?? '');
+    final formKey = GlobalKey<FormState>();
+    const label = {'menunggu': 'Diproses admin', 'selesai': 'Ditransfer', 'ditolak': 'Ditolak'};
+    final angka = RegExp(r'[^0-9]');
+    var mengirim = false;
+    var galat = '';
+
+    final terkirim = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => Padding(
+          padding: EdgeInsets.fromLTRB(20, 0, 20, MediaQuery.of(ctx).viewInsets.bottom + 20),
+          child: SingleChildScrollView(
+            child: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('Tarik saldo', style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Saldo ${_rupiah(_walletBalance)}. Dipotong saat diajukan; kalau admin tidak bisa mentransfer, saldo dikembalikan utuh.',
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 12),
+                  if (menunggu != null)
+                    Text('Pencairan ${_rupiah((menunggu['amount'] as num).toDouble())} ke ${menunggu['bank']} masih diproses admin. '
+                        'Tunggu sampai selesai untuk mengajukan lagi.')
+                  else ...[
+                    TextFormField(
+                      controller: nominal,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Nominal (minimal Rp10.000)'),
+                      validator: (v) => (int.tryParse((v ?? '').replaceAll(angka, '')) ?? 0) < 10000 ? 'Minimal Rp10.000' : null,
+                    ),
+                    TextFormField(
+                      controller: bank,
+                      decoration: const InputDecoration(labelText: 'Bank atau e-wallet (BRI, DANA, ...)'),
+                      validator: (v) => (v ?? '').trim().length < 2 ? 'Wajib diisi' : null,
+                    ),
+                    TextFormField(
+                      controller: nomor,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Nomor rekening'),
+                      validator: (v) {
+                        final n = (v ?? '').replaceAll(angka, '').length;
+                        return n < 5 || n > 30 ? 'Nomor rekening 5–30 angka' : null;
+                      },
+                    ),
+                    TextFormField(
+                      controller: pemilik,
+                      decoration: const InputDecoration(labelText: 'Nama pemilik rekening'),
+                      validator: (v) => (v ?? '').trim().length < 2 ? 'Wajib diisi' : null,
+                    ),
+                    if (galat.isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Text(galat, style: const TextStyle(color: AppTheme.errorColor, fontWeight: FontWeight.w500)),
+                    ],
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: mengirim
+                          ? null
+                          : () async {
+                              if (!formKey.currentState!.validate()) return;
+                              setSheet(() {
+                                mengirim = true;
+                                galat = '';
+                              });
+                              try {
+                                await ApiService().ajukanPencairan(
+                                  amount: int.parse(nominal.text.replaceAll(angka, '')),
+                                  bank: bank.text.trim(),
+                                  nomorRekening: nomor.text,
+                                  namaPemilik: pemilik.text.trim(),
+                                );
+                                if (ctx.mounted) Navigator.pop(ctx, true);
+                              } catch (e) {
+                                setSheet(() {
+                                  mengirim = false;
+                                  galat = e.toString().replaceAll('Exception: ', '');
+                                });
+                              }
+                            },
+                      style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 48)),
+                      child: Text(mengirim ? 'Mengirim...' : 'Ajukan pencairan'),
+                    ),
+                  ],
+                  if (riwayat.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    const Text('Riwayat', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ...riwayat.take(5).cast<Map>().map((p) => ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          title: Text(_rupiah((p['amount'] as num).toDouble())),
+                          subtitle: Text([p['bank'], p['catatan']].where((s) => s != null && s != '').join(' · ')),
+                          trailing: Text(label[p['status']] ?? '${p['status']}'),
+                        )),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (terkirim == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pengajuan terkirim. Admin akan mentransfer ke rekening Anda.')),
+      );
+      _fetchUserProfile();
+    }
+  }
 
   /// Pita peringatan saldo di layar utama driver.
   ///
