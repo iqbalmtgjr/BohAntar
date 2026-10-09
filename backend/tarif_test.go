@@ -376,6 +376,43 @@ func TestContohTarifMenghitungAngkaYangBelumDisimpan(t *testing.T) {
 	}
 }
 
+// Dashboard versi lama yang ter-cache di browser tidak mengirim kolom yang lahir
+// sesudahnya. Kolom yang tidak dikirim harus tetap, bukan tersimpan jadi nol —
+// biaya jasa yang hilang diam-diam berarti pendapatan yang hilang diam-diam.
+func TestSimpanTarifMempertahankanKolomYangTidakDikirim(t *testing.T) {
+	bukaDBTes(t)
+	const nama = "UjiTarifLama"
+	if err := simpanTarif(tarifLayanan{Layanan: nama, Base: 10000, PerKM: 2500, JarakDasarKM: 3,
+		Pembulatan: 1000, KeAtas: true, KomisiPersen: 20, BiayaJasa: 1500}); err != nil {
+		t.Fatalf("gagal menyiapkan tarif uji: %v", err)
+	}
+	t.Cleanup(func() { db.Exec("DELETE FROM tarif WHERE layanan = ?", nama) })
+
+	// Bentuk kiriman dashboard sebelum 17 September: tanpa biaya_jasa, jarak
+	// dasar, dan pembulatan.
+	w := httptest.NewRecorder()
+	adminTarifHandler(w, httptest.NewRequest("PUT", "/api/admin/tarif",
+		strings.NewReader(`{"layanan":"`+nama+`","base":12000,"per_km":2500,"komisi_persen":20}`)))
+	if w.Code != 200 {
+		t.Fatalf("simpan ditolak: %d %s", w.Code, w.Body.String())
+	}
+	got := ambilTarif(nama)
+	if got.Base != 12000 {
+		t.Errorf("base %v, harusnya ikut berubah jadi 12000", got.Base)
+	}
+	if got.BiayaJasa != 1500 || got.JarakDasarKM != 3 || got.Pembulatan != 1000 || !got.KeAtas {
+		t.Errorf("kolom yang tidak dikirim berubah: biaya jasa %v, jarak dasar %v, pembulatan %v ke atas %v",
+			got.BiayaJasa, got.JarakDasarKM, got.Pembulatan, got.KeAtas)
+	}
+
+	// Tanpa nama layanan jangan sampai jatuh ke baris cadangan BohRide.
+	w = httptest.NewRecorder()
+	adminTarifHandler(w, httptest.NewRequest("PUT", "/api/admin/tarif", strings.NewReader(`{"base":1}`)))
+	if w.Code != 400 {
+		t.Errorf("kiriman tanpa layanan dibalas %d, harusnya 400", w.Code)
+	}
+}
+
 func TestContohTarifMenolakPembulatanNol(t *testing.T) {
 	w := httptest.NewRecorder()
 	adminTarifContohHandler(w, httptest.NewRequest("POST", "/api/admin/tarif/contoh",

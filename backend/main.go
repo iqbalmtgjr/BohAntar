@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	mysql "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
@@ -2107,12 +2108,17 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 		})
 	} else if targetRole == "food_merchant" {
 		merchantID := newID("merchant")
+		// Alamat sengaja kosong, diisi mitra sendiri di portal. Alamat contoh
+		// yang salah kota lebih buruk daripada kolom kosong: yang kosong
+		// terlihat dan diisi, yang salah ikut tercetak di pesanan.
+		//
+		// Komentar ini dulu terselip DI DALAM string SQL di bawah, jadi MySQL
+		// menolak seluruh INSERT dan warung yang mendaftar lewat Google lahir
+		// tanpa baris food_merchants (17 Sep – 9 Okt 2026). Jejaknya hanya satu
+		// baris PERINGATAN di log.
 		if _, err := db.Exec(`
 			INSERT INTO food_merchants (id, owner_phone, restaurant_name, address, image_url, is_open, created_at)
 			VALUES (?, ?, ?, ?, ?, 1, ?)
-			// Alamat sengaja kosong, diisi mitra sendiri di portal. Alamat contoh
-			// yang salah kota lebih buruk daripada kolom kosong: yang kosong
-			// terlihat dan diisi, yang salah ikut tercetak di pesanan.
 		`, merchantID, phone, name+" Restaurant", "", "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400", time.Now()); err != nil {
 			log.Printf("PERINGATAN: merchant %s untuk %s gagal dibuat saat pendaftaran: %v", merchantID, phone, err)
 		}
@@ -2239,6 +2245,11 @@ const (
 	// menghabiskan untungnya sendiri. Atas: menahan salah ketik nol.
 	topUpMinimal  = 10000
 	topUpMaksimal = 2000000
+
+	// Orang sungguhan membuat satu atau dua invoice lalu membayar. Lima dalam
+	// sepuluh menit sudah longgar untuk yang salah ketik nominal berkali-kali.
+	batasTopUpPerJendela = 5
+	jendelaTopUp         = 10 * time.Minute
 )
 
 // nominalTopUpSah membulatkan permintaan ke rupiah utuh dan menolak yang di luar
@@ -2290,6 +2301,25 @@ func topUpHandler(w http.ResponseWriter, r *http.Request) {
 	u, exists := dbGetUser(phone)
 	if !exists {
 		writeJSONResponse(w, 404, map[string]string{"error": "User tidak ditemukan"})
+		return
+	}
+	// Rem laju. Tiap permintaan membuat satu invoice sungguhan di akun Xendit
+	// yang dipakai bersama Kasvo, jadi satu skrip yang mengulang tombol ini bisa
+	// membanjiri dasbor dan kuota API milik aplikasi lain.
+	//
+	// ponytail: dihitung dari tabel, bukan peta di memori — selamat dari
+	// restart. Dua permintaan yang tiba di milidetik yang sama bisa sama-sama
+	// lolos di hitungan terakhir; selisih satu invoice tidak sepadan dengan kunci.
+	var baruSaja int
+	if err := db.QueryRow(
+		"SELECT COUNT(*) FROM topup_invoices WHERE phone_number = ? AND created_at > ?",
+		phone, waktuKeDB(time.Now().Add(-jendelaTopUp).Format(time.RFC3339)),
+	).Scan(&baruSaja); err != nil {
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal memeriksa riwayat top up"})
+		return
+	}
+	if baruSaja >= batasTopUpPerJendela {
+		writeJSONResponse(w, 429, map[string]string{"error": "Terlalu banyak permintaan top up. Selesaikan pembayaran yang sudah dibuat, atau coba lagi 10 menit lagi."})
 		return
 	}
 
@@ -2460,6 +2490,16 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 400, map[string]string{"error": "Data pemesanan tidak valid"})
 		return
 	}
+	if pesan := teksPesananKepanjangan(input); pesan != "" {
+		writeJSONResponse(w, 400, map[string]string{"error": pesan})
+		return
+	}
+	// Baris tarif ini ongkosnya nol; tanpa penolakan ini siapa pun bisa
+	// memesan ojek gratis cukup dengan mengirim nama layanan itu.
+	if input.ServiceType == layananTagihanQR {
+		writeJSONResponse(w, 400, map[string]string{"error": "Jenis layanan tidak dikenal"})
+		return
+	}
 	// Pesanan makanan: titik jemputnya ditulis ulang jadi lokasi warung, isinya
 	// dicocokkan dengan menu, dan uang makanannya dihitung di sini.
 	var warung FoodMerchant
@@ -2536,11 +2576,46 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 		ReceiverName: strings.TrimSpace(input.ReceiverName), ReceiverPhone: strings.TrimSpace(input.ReceiverPhone),
 		MerchantID: warung.ID, MerchantName: warung.RestaurantName, Items: items, FoodTotal: foodTotal,
 	}
-	dbSaveOrder(o)
+	// Galatnya dulu dibuang: penumpang menerima 201 "berhasil" untuk pesanan
+	// yang tidak pernah tersimpan, lalu menunggu driver yang tidak akan datang.
+	if err := dbSaveOrder(o); err != nil {
+		log.Printf("Pesanan %s gagal disimpan: %v", oid, err)
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan pesanan. Coba lagi."})
+		return
+	}
 	// Inti dari notifikasi: tanpa ini driver harus menatap layar terbuka supaya
 	// tidak kehilangan orderan.
 	notifikasiDriverSiaga(o)
 	writeJSONResponse(w, 201, map[string]interface{}{"status": "success", "message": "Pesanan berhasil dibuat", "order": o})
+}
+
+// teksPesananKepanjangan menolak isian yang tidak muat di kolomnya. Tanpa ini
+// nomor penerima seperti "+62 812-3456-7890 (rumah)" ditolak MySQL karena
+// receiver_phone cuma VARCHAR(20), dan penumpang menerima galat server tanpa
+// tahu isian mana yang salah. Angkanya mengikuti lebar kolom di tabel orders;
+// kolom TEXT dibatasi 500 supaya satu pesanan tidak bisa membawa novel.
+func teksPesananKepanjangan(in CreateOrderInput) string {
+	batas := []struct {
+		nama  string
+		nilai string
+		maks  int
+	}{
+		{"Jenis layanan", in.ServiceType, 20},
+		{"Alamat jemput", in.Pickup, 500},
+		{"Alamat tujuan", in.Dropoff, 500},
+		{"Jenis paket", in.PackageType, 50},
+		{"Berat paket", in.PackageWeight, 20},
+		{"Catatan paket", in.PackageNotes, 500},
+		{"Nama penerima", in.ReceiverName, 100},
+		{"Nomor penerima", in.ReceiverPhone, 20},
+	}
+	for _, b := range batas {
+		// VARCHAR utf8mb4 menghitung karakter, bukan byte — begitu juga di sini.
+		if utf8.RuneCountInString(strings.TrimSpace(b.nilai)) > b.maks {
+			return fmt.Sprintf("%s terlalu panjang, maksimal %d karakter", b.nama, b.maks)
+		}
+	}
+	return ""
 }
 
 func getActiveOrdersHandler(w http.ResponseWriter, r *http.Request) {
@@ -2651,32 +2726,9 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		writeJSONResponse(w, 404, map[string]string{"error": "Pesanan tidak ditemukan"})
 		return
 	}
-	// Gerbang saldo. Diperiksa sebelum klaim, bukan saat pesanan ditutup: driver
-	// yang baru tahu saldonya kurang setelah mengantar sudah terlanjur bekerja
-	// gratis, dan penumpangnya sudah terlanjur menunggu.
-	tertahan, err := dbKomisiTertahan(driver.PhoneNumber)
-	if err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal memeriksa saldo"})
-		return
-	}
-	tagihan := tagihanAplikator(o.Komisi, o.BiayaJasa)
-	if !saldoCukupUntukKomisi(o.PaymentMethod, driver.Balance, tertahan, tagihan) {
-		pesan := fmt.Sprintf("Saldo Anda Rp%.0f, kurang dari setoran pesanan ini Rp%.0f. Top up dulu untuk menerima pesanan tunai.", driver.Balance, tagihan)
-		if tertahan > 0 {
-			pesan = fmt.Sprintf("Saldo Anda Rp%.0f, dan Rp%.0f sudah dipakai pesanan lain yang belum selesai. Setoran pesanan ini Rp%.0f — top up dulu.", driver.Balance, tertahan, tagihan)
-		}
-		writeJSONResponse(w, 402, map[string]string{"error": pesan})
-		return
-	}
-
 	now := time.Now().Format(time.RFC3339)
-	menang, err := dbClaimOrder(orderID, driver.PhoneNumber, driver.Name, now)
-	if err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan pesanan"})
-		return
-	}
-	if !menang {
-		writeJSONResponse(w, 409, map[string]string{"error": "Pesanan sudah diambil oleh driver lain"})
+	if kode, pesan := klaimBergerbangSaldo(o, driver.PhoneNumber, driver.Name, now); kode != 200 {
+		writeJSONResponse(w, kode, map[string]string{"error": pesan})
 		return
 	}
 	o.Status = "accepted"
@@ -2692,6 +2744,58 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		"order_id": o.ID,
 	})
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Pesanan berhasil diterima", "order": o})
+}
+
+// klaimMu menyerialkan gerbang saldo dan klaim. Tanpa kunci ini dua klaim dari
+// driver yang sama di milidetik yang sama sama-sama membaca komisi tertahan
+// sebelum klaim yang lain tercatat, lalu sama-sama lolos terhadap saldo yang
+// sama — dan saldonya tekor saat kedua pesanan ditutup.
+//
+// ponytail: satu kunci untuk semua driver, dan hanya berlaku di proses ini —
+// backend memang satu binary di satu mesin, sama seperti rem login. Isinya tiga
+// query singkat tanpa panggilan jaringan, jadi antreannya tidak terasa. Ganti
+// dengan SELECT ... FOR UPDATE pada baris users driver kalau suatu hari ada
+// lebih dari satu instance.
+var klaimMu sync.Mutex
+
+// klaimBergerbangSaldo menjalankan gerbang saldo lalu klaim, dan mengembalikan
+// kode HTTP beserta pesannya (200 berarti pesanan jadi milik driver ini).
+//
+// Gerbangnya diperiksa sebelum klaim, bukan saat pesanan ditutup: driver yang
+// baru tahu saldonya kurang setelah mengantar sudah terlanjur bekerja gratis,
+// dan penumpangnya sudah terlanjur menunggu.
+func klaimBergerbangSaldo(o Order, driverPhone, driverName, now string) (int, string) {
+	klaimMu.Lock()
+	defer klaimMu.Unlock()
+
+	tertahan, err := dbKomisiTertahan(driverPhone)
+	if err != nil {
+		return 500, "Gagal memeriksa saldo"
+	}
+	// Saldo dibaca SESUDAH komisi tertahan, dan baru di dalam kunci. Pesanan
+	// lain yang selesai di antara keduanya memotong saldo setelah komisinya
+	// terhitung tertahan, jadi gerbangnya hanya bisa jadi lebih ketat sesaat,
+	// tidak pernah lebih longgar.
+	d, ada := dbGetUser(driverPhone)
+	if !ada {
+		return 500, "Gagal memeriksa saldo"
+	}
+	tagihan := tagihanAplikator(o.Komisi, o.BiayaJasa)
+	if !saldoCukupUntukKomisi(o.PaymentMethod, d.Balance, tertahan, tagihan) {
+		if tertahan > 0 {
+			return 402, fmt.Sprintf("Saldo Anda Rp%.0f, dan Rp%.0f sudah dipakai pesanan lain yang belum selesai. Setoran pesanan ini Rp%.0f — top up dulu.", d.Balance, tertahan, tagihan)
+		}
+		return 402, fmt.Sprintf("Saldo Anda Rp%.0f, kurang dari setoran pesanan ini Rp%.0f. Top up dulu untuk menerima pesanan tunai.", d.Balance, tagihan)
+	}
+
+	menang, err := dbClaimOrder(o.ID, driverPhone, driverName, now)
+	if err != nil {
+		return 500, "Gagal menyimpan pesanan"
+	}
+	if !menang {
+		return 409, "Pesanan sudah diambil oleh driver lain"
+	}
+	return 200, ""
 }
 
 // rateOrder menyimpan penilaian penumpang untuk driver pada satu pesanan.
@@ -2926,6 +3030,10 @@ func bacaBuktiSerah(r *http.Request) (buktiSerah, bool) {
 	if b.PhotoURL != "" && !isUploadedFileURL(b.PhotoURL) {
 		return b, false
 	}
+	// received_by VARCHAR(100); yang lebih panjang hanya akan ditolak MySQL.
+	if utf8.RuneCountInString(b.ReceivedBy) > 100 {
+		return b, false
+	}
 	return b, true
 }
 
@@ -2944,7 +3052,7 @@ func pickupOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	}
 	bukti, ok := bacaBuktiSerah(r)
 	if !ok {
-		writeJSONResponse(w, 400, map[string]string{"error": "Foto bukti harus hasil unggahan bohAntar"})
+		writeJSONResponse(w, 400, map[string]string{"error": "Bukti tidak valid: foto harus hasil unggahan bohAntar, nama penerima maksimal 100 karakter"})
 		return
 	}
 	o.Status = "picked_up"
@@ -2979,7 +3087,7 @@ func completeOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	}
 	bukti, ok := bacaBuktiSerah(r)
 	if !ok {
-		writeJSONResponse(w, 400, map[string]string{"error": "Foto bukti harus hasil unggahan bohAntar"})
+		writeJSONResponse(w, 400, map[string]string{"error": "Bukti tidak valid: foto harus hasil unggahan bohAntar, nama penerima maksimal 100 karakter"})
 		return
 	}
 	o.DeliveryPhotoURL = bukti.PhotoURL
@@ -3466,8 +3574,21 @@ func adminTarifHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "tarif": daftar})
 	case http.MethodPut:
-		var input tarifLayanan
-		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		badan, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+		var kunci struct {
+			Layanan string `json:"layanan"`
+		}
+		if err != nil || json.Unmarshal(badan, &kunci) != nil || kunci.Layanan == "" {
+			writeJSONResponse(w, 400, map[string]string{"error": "Data tarif tidak valid"})
+			return
+		}
+		// Ditimpakan ke baris yang tersimpan, bukan ke struct kosong. Dashboard
+		// versi lama yang masih ter-cache di browser tidak mengenal kolom yang
+		// lahir sesudahnya (biaya_jasa, jarak_dasar_km, pembulatan) dan tidak
+		// mengirimnya; dengan struct kosong kolom-kolom itu tersimpan jadi nol
+		// dan biaya jasa hilang diam-diam. Sekarang yang tidak dikirim tetap.
+		input := ambilTarif(kunci.Layanan)
+		if err := json.Unmarshal(badan, &input); err != nil {
 			writeJSONResponse(w, 400, map[string]string{"error": "Data tarif tidak valid"})
 			return
 		}

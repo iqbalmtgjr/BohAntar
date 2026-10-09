@@ -2,6 +2,9 @@ package main
 
 import (
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -141,5 +144,36 @@ func TestDbKreditTopUpInvoiceTakDikenal(t *testing.T) {
 	bukaDBTes(t)
 	if _, jumlah, err := dbKreditTopUp("topup-karangan-xyz", 50000); !errors.Is(err, errTopUpTakDitemukan) || jumlah != 0 {
 		t.Fatalf("invoice karangan diterima: jumlah %.0f, err %v", jumlah, err)
+	}
+}
+
+// Tiap permintaan top up membuat invoice sungguhan di akun Xendit yang dipakai
+// bersama Kasvo, jadi permintaan keenam dalam sepuluh menit harus ditahan
+// sebelum sampai ke Xendit.
+func TestTopUpDiremSetelahLimaInvoice(t *testing.T) {
+	bukaDBTes(t)
+	const phone = "+62800000400"
+	t.Cleanup(func() { db.Exec("DELETE FROM topup_invoices WHERE phone_number = ?", phone) })
+
+	minta := func() int {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/users/topup", strings.NewReader(`{"amount":50000}`))
+		r.Header.Set("Authorization", "Bearer "+mustToken(t, phone, "rider"))
+		topUpHandler(w, r)
+		return w.Code
+	}
+
+	for i := 0; i < batasTopUpPerJendela; i++ {
+		invoiceTopUpUji(t, phone, 50000)
+	}
+	if kode := minta(); kode != 429 {
+		t.Fatalf("permintaan ke-%d dibalas %d, harusnya 429", batasTopUpPerJendela+1, kode)
+	}
+
+	// Invoice yang sudah lewat jendela tidak ikut dihitung.
+	db.Exec("UPDATE topup_invoices SET created_at = ? WHERE phone_number = ?",
+		waktuKeDB(time.Now().Add(-jendelaTopUp-time.Minute).Format(time.RFC3339)), phone)
+	if kode := minta(); kode != 200 {
+		t.Fatalf("setelah jendela lewat dibalas %d, harusnya 200 (jalur pembayaran tiruan)", kode)
 	}
 }

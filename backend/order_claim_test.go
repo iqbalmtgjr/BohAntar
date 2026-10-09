@@ -112,6 +112,69 @@ func TestDbClaimOrderHanyaSatuPemenang(t *testing.T) {
 	}
 }
 
+// Dua klaim dari driver yang sama di milidetik yang sama: tanpa kunci, keduanya
+// membaca komisi tertahan sebelum yang lain tercatat dan sama-sama lolos
+// terhadap saldo yang hanya cukup untuk satu.
+func TestKlaimDriverSamaTidakMenembusSaldo(t *testing.T) {
+	bukaDBTes(t)
+	const driver = "+62800000300"
+	penggunaUji(t, driver)
+	// pesananUji: tunai, ongkos 10000, komisi 1000, biaya jasa 0. Saldo 1500
+	// cukup untuk satu setoran, tidak untuk dua.
+	db.Exec("UPDATE users SET role = 'driver', is_driver_active = 1, balance = 1500 WHERE phone_number = ?", driver)
+
+	const jumlahPesanan = 6
+	pesanan := make([]Order, jumlahPesanan)
+	for i := range pesanan {
+		oid := pesananUji(t, fmt.Sprintf("+6280000031%d", i), "cash", "pending", 10000)
+		pesanan[i], _ = dbGetOrder(oid)
+	}
+
+	var siap, mulai sync.WaitGroup
+	var kunci sync.Mutex
+	diterima := 0
+	siap.Add(jumlahPesanan)
+	mulai.Add(1)
+	for _, o := range pesanan {
+		go func(o Order) {
+			defer siap.Done()
+			mulai.Wait()
+			kode, pesan := klaimBergerbangSaldo(o, driver, "Driver Uji", time.Now().Format(time.RFC3339))
+			if kode == 200 {
+				kunci.Lock()
+				diterima++
+				kunci.Unlock()
+			} else if kode != 402 {
+				t.Errorf("klaim dibalas %d (%s), harusnya 200 atau 402", kode, pesan)
+			}
+		}(o)
+	}
+	mulai.Done()
+	siap.Wait()
+
+	if diterima != 1 {
+		t.Fatalf("%d pesanan tunai diterima dengan saldo yang cukup untuk satu setoran", diterima)
+	}
+}
+
+// Isian yang melebihi lebar kolomnya ditolak dengan nama isiannya, bukan
+// diteruskan ke MySQL lalu kembali sebagai galat server.
+func TestTeksPesananKepanjangan(t *testing.T) {
+	if pesan := teksPesananKepanjangan(CreateOrderInput{
+		Pickup: "Jl. MT Haryono", ReceiverPhone: "+6281234567890", ReceiverName: "Ibu Sari",
+	}); pesan != "" {
+		t.Fatalf("isian wajar ditolak: %s", pesan)
+	}
+	pesan := teksPesananKepanjangan(CreateOrderInput{ReceiverPhone: "+62 812-3456-7890 (rumah)"})
+	if !strings.Contains(pesan, "Nomor penerima") {
+		t.Fatalf("nomor 25 karakter harus ditolak dengan menyebut isiannya, dapat %q", pesan)
+	}
+	// Dihitung per karakter: 100 huruf beraksen muat di VARCHAR(100) utf8mb4.
+	if pesan := teksPesananKepanjangan(CreateOrderInput{ReceiverName: strings.Repeat("é", 100)}); pesan != "" {
+		t.Fatalf("100 karakter multibyte ditolak: %s", pesan)
+	}
+}
+
 // Batas pembatalan itu soal uang: setelah penumpang naik, driver sudah bekerja.
 func TestDbCancelOrderMenghormatiStatus(t *testing.T) {
 	bukaDBTes(t)
