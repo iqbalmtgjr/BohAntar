@@ -107,6 +107,10 @@ buat=$(curl -s -X POST "$API/api/orders" -H "Authorization: Bearer $tok_rider" \
 ORDER_ID=$(ambil id "$buat")
 fare=$(ambil fare "$buat")
 komisi=$(ambil komisi "$buat")
+# Biaya jasa aplikasi: dibayar penumpang DI ATAS ongkos dan masuk utuh ke
+# bohAntar, jadi ia menambah debit penumpang tanpa mengurangi bagian driver.
+biaya_jasa=$(ambil biaya_jasa "$buat")
+[ -n "$biaya_jasa" ] || biaya_jasa=0
 periksa "pesanan lahir" "ada" "$([ -n "$ORDER_ID" ] && echo ada || echo kosong)"
 periksa "status awal" "pending" "$(status_pesanan "$buat")"
 [ -n "$ORDER_ID" ] || { echo "Tidak ada pesanan untuk diuji. Balasan: $buat"; exit 1; }
@@ -116,6 +120,15 @@ periksa "status awal" "pending" "$(status_pesanan "$buat")"
 periksa "ongkos di atas nol" "ya" "$(awk -v f="$fare" 'BEGIN{print (f>0)?"ya":"tidak"}')"
 periksa "komisi 20% dari ongkos" "$(awk -v f="$fare" 'BEGIN{printf "%.0f", (f*20/100)+0.5}')" \
         "$(awk -v k="$komisi" 'BEGIN{printf "%.0f", k}')"
+
+# Biaya jasa harus sama dengan yang diatur super admin di tabel tarif. Kalau
+# migrasi 007 terpasang tapi UPDATE pengisinya tidak pernah jalan, angkanya 0
+# di kedua sisi dan diam-diam lolos — jadi nol ditolak terpisah di bawah.
+periksa "biaya jasa sesuai tabel tarif" \
+  "$(sql "SELECT biaya_jasa FROM tarif WHERE layanan='BohRide';" | awk '{printf "%.2f", $1}')" \
+  "$(awk -v b="$biaya_jasa" 'BEGIN{printf "%.2f", b}')"
+periksa "biaya jasa benar-benar ditagih" "ya" \
+  "$(awk -v b="$biaya_jasa" 'BEGIN{print (b>0)?"ya":"tidak"}')"
 
 echo "== 3. Driver menerima, menjemput, menyelesaikan =="
 terima=$(curl -s -X POST "$API/api/orders/$ORDER_ID/accept" -H "Authorization: Bearer $tok_driver")
@@ -134,9 +147,11 @@ periksa "diselesaikan" "completed" "$(status_pesanan "$selesai")"
 echo "== 4. Uangnya berpindah persis =="
 saldo_rider_akhir=$(sql "SELECT balance FROM users WHERE phone_number='+62${RIDER_PHONE#0}';")
 saldo_driver_akhir=$(sql "SELECT balance FROM users WHERE phone_number='+62${DRIVER_PHONE#0}';")
-periksa "saldo penumpang berkurang sebesar ongkos" \
-  "$(awk -v a="$saldo_rider_awal" -v f="$fare" 'BEGIN{printf "%.2f", a-f}')" \
+periksa "saldo penumpang berkurang sebesar ongkos + biaya jasa" \
+  "$(awk -v a="$saldo_rider_awal" -v f="$fare" -v j="$biaya_jasa" 'BEGIN{printf "%.2f", a-f-j}')" \
   "$(awk -v b="$saldo_rider_akhir" 'BEGIN{printf "%.2f", b}')"
+# Biaya jasa sengaja TIDAK ada di rumus driver: ia tidak pernah jadi miliknya.
+# Kalau suatu saat angka ini ikut biaya jasa, ada yang salah membaginya.
 periksa "saldo driver bertambah sebesar ongkos dikurangi komisi" \
   "$(awk -v a="$saldo_driver_awal" -v f="$fare" -v k="$komisi" 'BEGIN{printf "%.2f", a+f-k}')" \
   "$(awk -v b="$saldo_driver_akhir" 'BEGIN{printf "%.2f", b}')"
@@ -147,3 +162,8 @@ periksa "saldo driver bertambah sebesar ongkos dikurangi komisi" \
 periksa "status tersimpan di database" "completed" "$(sql "SELECT status FROM orders WHERE id='$ORDER_ID';")"
 periksa "komisi tercatat di pesanan" "$(awk -v k="$komisi" 'BEGIN{printf "%.2f", k}')" \
         "$(sql "SELECT komisi FROM orders WHERE id='$ORDER_ID';")"
+# Terkunci di baris pesanan, bukan dibaca ulang dari tabel tarif saat ditutup:
+# super admin yang mengubah biaya jasa siang ini tidak boleh mengubah harga
+# pesanan yang sudah disetujui penumpang pagi tadi.
+periksa "biaya jasa terkunci di pesanan" "$(awk -v j="$biaya_jasa" 'BEGIN{printf "%.2f", j}')" \
+        "$(sql "SELECT biaya_jasa FROM orders WHERE id='$ORDER_ID';")"
