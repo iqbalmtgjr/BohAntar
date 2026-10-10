@@ -16,7 +16,22 @@
 set -euo pipefail
 
 BOH=/www/wwwroot/bohantar-backend/run.sh
-KAS=/www/wwwroot/orderkuy.indotechconsulting.com/.env
+
+# Folder proyek Kasvo (kasvo.id). Situs domain lama orderkuy.indotechconsulting.com
+# sudah dihentikan di aaPanel, jadi folder yang hidup dicari lewat berkas yang
+# hanya ada di Kasvo yang hidup. Bisa ditimpa: KASVO_DIR=/www/wwwroot/<folder>
+if [ -z "${KASVO_DIR:-}" ]; then
+  mapfile -t kandidat < <(for f in /www/wwwroot/*/app/Http/Controllers/Api/BohfoodController.php; do
+    [ -f "$f" ] && readlink -f "${f%/app/Http/Controllers/Api/BohfoodController.php}"; done | sort -u)
+  if [ ${#kandidat[@]} -ne 1 ]; then
+    echo "FATAL: folder Kasvo tidak bisa dipastikan (${#kandidat[@]} kandidat: ${kandidat[*]:-tidak ada})."
+    echo "Jalankan ulang dengan KASVO_DIR=/www/wwwroot/<folder> bash $0"
+    exit 1
+  fi
+  KASVO_DIR="${kandidat[0]}"
+fi
+KAS="$KASVO_DIR/.env"
+echo "Folder Kasvo: $KASVO_DIR"
 
 # Semua syarat diperiksa SEBELUM ada satu berkas pun disentuh. Gagal di tengah
 # berarti satu aplikasi punya token baru dan satunya tidak.

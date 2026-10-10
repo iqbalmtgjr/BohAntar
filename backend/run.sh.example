@@ -53,7 +53,7 @@ export GOOGLE_MAPS_API_KEY=""
 # Kosong = integrasi mati: tombol Gabung di Kasvo ditolak 401 dan warung Kasvo
 # tidak punya menu. Token HARUS sama dengan BOHANTAR_INTEGRASI_TOKEN di .env
 # Kasvo. Buat sekali: openssl rand -hex 32
-export KASVO_URL="https://orderkuy.indotechconsulting.com"
+export KASVO_URL="https://kasvo.id"
 export KASVO_INTEGRASI_TOKEN=""
 
 # ---- Notifikasi push ----
