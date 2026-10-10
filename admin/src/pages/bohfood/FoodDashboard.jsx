@@ -427,7 +427,7 @@ export default function FoodDashboard({ ownerPhone }) {
                           <span className={`badge ${STATUS_BADGE[o.status] || "badge-muted"}`}>{STATUS_LABEL[o.status] || o.status}</span>
                         </div>
                         <div style={{ fontSize: 13, marginTop: 6 }}>
-                          {(o.items || []).map(it => `${it.qty}× ${it.name}`).join(", ") || "—"}
+                          {(o.items || []).map(it => `${it.qty}× ${it.name}${it.options?.length ? ` (${it.options.map(x => x.name).join(", ")})` : ""}`).join(", ") || "—"}
                         </div>
                         {o.package_notes && (
                           <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>Catatan: {o.package_notes}</div>

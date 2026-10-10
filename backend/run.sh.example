@@ -49,6 +49,13 @@ export XENDIT_CALLBACK_TOKEN="xxx"
 # Places API (New) dengan billing account hidup.
 export GOOGLE_MAPS_API_KEY=""
 
+# ---- Integrasi Kasvo (toko Kasvo bergabung ke BohFood) ----
+# Kosong = integrasi mati: tombol Gabung di Kasvo ditolak 401 dan warung Kasvo
+# tidak punya menu. Token HARUS sama dengan BOHANTAR_INTEGRASI_TOKEN di .env
+# Kasvo. Buat sekali: openssl rand -hex 32
+export KASVO_URL="https://orderkuy.indotechconsulting.com"
+export KASVO_INTEGRASI_TOKEN=""
+
 # ---- Notifikasi push ----
 # Path absolut ke service account JSON dari Firebase Console -> Project settings ->
 # Service accounts -> Generate new private key. INI RAHASIA SUNGGUHAN: chmod 600,

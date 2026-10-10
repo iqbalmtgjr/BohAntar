@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -21,20 +22,31 @@ import (
 // warungnya mulai mengeluh driver datang sebelum makanannya siap.
 
 // OrderItem adalah satu baris menu di pesanan. Nama dan harga disalin dari
-// food_menus saat pesanan dibuat, supaya warung yang menaikkan harga besok
-// tidak mengubah tagihan pesanan kemarin.
+// menu saat pesanan dibuat, supaya warung yang menaikkan harga besok tidak
+// mengubah tagihan pesanan kemarin. Price adalah harga satu porsi SUDAH
+// termasuk varian yang dipilih.
 type OrderItem struct {
-	MenuID string  `json:"menu_id"`
-	Name   string  `json:"name"`
-	Price  float64 `json:"price"`
-	Qty    int     `json:"qty"`
+	MenuID  string         `json:"menu_id"`
+	Name    string         `json:"name"`
+	Price   float64        `json:"price"`
+	Qty     int            `json:"qty"`
+	Options []OpsiTerpilih `json:"options,omitempty"`
 }
 
-// itemPesanan adalah yang dikirim aplikasi: cuma id dan jumlah. Harga sengaja
-// tidak ada di sini.
+// OpsiTerpilih adalah varian yang ikut tersalin ke pesanan — cukup nama dan
+// harganya, supaya driver tahu persis apa yang harus dibeli di kasir.
+type OpsiTerpilih struct {
+	Group string  `json:"group"`
+	Name  string  `json:"name"`
+	Price float64 `json:"price"`
+}
+
+// itemPesanan adalah yang dikirim aplikasi: id menu, jumlah, dan id varian.
+// Harga sengaja tidak ada di sini.
 type itemPesanan struct {
-	MenuID string `json:"menu_id"`
-	Qty    int    `json:"qty"`
+	MenuID  string   `json:"menu_id"`
+	Qty     int      `json:"qty"`
+	Options []string `json:"options"`
 }
 
 const (
@@ -58,35 +70,102 @@ func susunItemMakanan(diminta []itemPesanan, menu []FoodMenu) ([]OrderItem, floa
 	for _, m := range menu {
 		byID[m.ID] = m
 	}
-	// Menu yang sama dikirim dua kali digabung, bukan ditolak.
-	qty := map[string]int{}
+	// Menu yang sama dengan varian yang sama digabung, bukan ditolak. Varian
+	// berbeda tetap baris terpisah: es teh manis dan es teh tawar dua pesanan.
+	baris := map[string]*OrderItem{}
 	var urutan []string
 	for _, d := range diminta {
 		if d.Qty < 1 || d.Qty > maksPorsiPerMenu {
 			return nil, 0, "Jumlah porsi tidak masuk akal"
 		}
-		if _, ada := qty[d.MenuID]; !ada {
-			urutan = append(urutan, d.MenuID)
-		}
-		qty[d.MenuID] += d.Qty
-	}
-	var hasil []OrderItem
-	var total float64
-	for _, id := range urutan {
-		m, ada := byID[id]
+		m, ada := byID[d.MenuID]
 		if !ada {
 			return nil, 0, "Ada menu yang sudah tidak dijual warung ini"
 		}
 		if !m.IsAvailable {
 			return nil, 0, m.Name + " sedang habis"
 		}
-		if qty[id] > maksPorsiPerMenu {
+		opsi, tambahan, pesan := pilihOpsi(m, d.Options)
+		if pesan != "" {
+			return nil, 0, pesan
+		}
+		if m.Price+tambahan < 0 {
+			return nil, 0, "Harga " + m.Name + " tidak sah"
+		}
+		ids := append([]string(nil), d.Options...)
+		sort.Strings(ids)
+		kunci := d.MenuID + "|" + strings.Join(ids, ",")
+		if b, ada := baris[kunci]; ada {
+			b.Qty += d.Qty
+			continue
+		}
+		baris[kunci] = &OrderItem{MenuID: m.ID, Name: m.Name, Price: m.Price + tambahan, Qty: d.Qty, Options: opsi}
+		urutan = append(urutan, kunci)
+	}
+	if len(urutan) > maksJenisMenu {
+		return nil, 0, "Terlalu banyak jenis menu dalam satu pesanan"
+	}
+	var hasil []OrderItem
+	var total float64
+	for _, k := range urutan {
+		b := baris[k]
+		if b.Qty > maksPorsiPerMenu {
 			return nil, 0, "Jumlah porsi tidak masuk akal"
 		}
-		hasil = append(hasil, OrderItem{MenuID: m.ID, Name: m.Name, Price: m.Price, Qty: qty[id]})
-		total += m.Price * float64(qty[id])
+		hasil = append(hasil, *b)
+		total += b.Price * float64(b.Qty)
 	}
 	return hasil, total, ""
+}
+
+// pilihOpsi memeriksa varian yang dipilih untuk satu menu, dengan aturan yang
+// sama seperti kasir Kasvo: grup "single" paling banyak satu pilihan, grup
+// wajib minimal satu (grup "multiple" wajib minimal min_pilih), dan grup
+// "multiple" dengan max lebih dari satu dibatasi max-nya. Hasilnya diurutkan
+// mengikuti urutan grup di menu, bukan urutan kiriman aplikasi.
+func pilihOpsi(m FoodMenu, ids []string) ([]OpsiTerpilih, float64, string) {
+	dipilih := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if dipilih[id] {
+			return nil, 0, "Pilihan varian " + m.Name + " tidak sah"
+		}
+		dipilih[id] = true
+	}
+	var hasil []OpsiTerpilih
+	var tambahan float64
+	terpakai := 0
+	for _, g := range m.OptionGroups {
+		n := 0
+		for _, o := range g.Options {
+			if dipilih[o.ID] {
+				n++
+				hasil = append(hasil, OpsiTerpilih{Group: g.Name, Name: o.Name, Price: o.Price})
+				tambahan += o.Price
+			}
+		}
+		terpakai += n
+		minimal := 0
+		if g.Required {
+			minimal = 1
+			if g.Type != "single" && g.Min > 1 {
+				minimal = g.Min
+			}
+		}
+		switch {
+		case g.Type == "single" && n > 1:
+			return nil, 0, "Pilih satu saja untuk " + g.Name
+		case n < minimal:
+			return nil, 0, "Pilih " + g.Name + " untuk " + m.Name
+		case g.Type != "single" && g.Max > 1 && n > g.Max:
+			return nil, 0, fmt.Sprintf("%s paling banyak %d pilihan", g.Name, g.Max)
+		}
+	}
+	// Id yang tidak ada di grup mana pun: varian yang baru dihapus warung, atau
+	// kiriman karangan.
+	if terpakai != len(dipilih) {
+		return nil, 0, "Ada varian " + m.Name + " yang sudah tidak tersedia"
+	}
+	return hasil, tambahan, ""
 }
 
 // uraiItems membaca kolom items_json. Kosong atau rusak sama-sama jadi nil —
@@ -105,9 +184,24 @@ func uraiItems(s string) []OrderItem {
 func dbGetFoodMerchant(id string) (FoodMerchant, bool) {
 	var m FoodMerchant
 	err := db.QueryRow(
-		"SELECT id, owner_phone, restaurant_name, address, COALESCE(image_url, ''), is_open, created_at, lat, lng FROM food_merchants WHERE id = ?", id,
-	).Scan(&m.ID, &m.OwnerPhone, &m.RestaurantName, &m.Address, &m.ImageURL, &m.IsOpen, &m.CreatedAt, &m.Lat, &m.Lng)
+		"SELECT id, owner_phone, restaurant_name, address, COALESCE(image_url, ''), is_open, created_at, lat, lng, COALESCE(kasvo_toko_uuid, '') FROM food_merchants WHERE id = ?", id,
+	).Scan(&m.ID, &m.OwnerPhone, &m.RestaurantName, &m.Address, &m.ImageURL, &m.IsOpen, &m.CreatedAt, &m.Lat, &m.Lng, &m.KasvoTokoUUID)
 	return m, err == nil
+}
+
+// menuWarung adalah menu yang berlaku untuk satu warung, plus apakah warung itu
+// sedang menerima pesanan. Toko Kasvo dibaca langsung dari kasirnya, termasuk
+// jam bukanya; is_open di sini tetap berlaku sebagai saklar dari sisi bohAntar.
+func menuWarung(m FoodMerchant) ([]FoodMenu, bool, error) {
+	if m.KasvoTokoUUID == "" {
+		menus, err := dbGetFoodMenus(m.ID)
+		return menus, m.IsOpen, err
+	}
+	buka, menus, err := ambilMenuKasvo(m.KasvoTokoUUID)
+	for i := range menus {
+		menus[i].MerchantID = m.ID
+	}
+	return menus, buka && m.IsOpen, err
 }
 
 func dbGetFoodMenus(merchantID string) ([]FoodMenu, error) {
@@ -134,15 +228,15 @@ func siapkanPesananMakanan(input *CreateOrderInput) (FoodMerchant, []OrderItem, 
 	if !ok {
 		return m, nil, 0, "Warung tidak ditemukan", 404
 	}
-	if !m.IsOpen {
-		return m, nil, 0, "Warung sedang tutup", 400
-	}
 	if !koordinatValid(m.Lat, m.Lng) {
 		return m, nil, 0, "Warung ini belum mengatur lokasinya, jadi belum bisa menerima pesanan", 400
 	}
-	menu, err := dbGetFoodMenus(m.ID)
+	menu, buka, err := menuWarung(m)
 	if err != nil {
-		return m, nil, 0, "Gagal membaca menu warung", 500
+		return m, nil, 0, "Gagal membaca menu warung, coba lagi sebentar", 502
+	}
+	if !buka {
+		return m, nil, 0, "Warung sedang tutup", 400
 	}
 	items, total, pesan := susunItemMakanan(input.Items, menu)
 	if pesan != "" {
@@ -167,7 +261,7 @@ func foodMerchantsHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
 		return
 	}
-	rows, err := db.Query("SELECT id, restaurant_name, address, COALESCE(image_url, ''), is_open, lat, lng FROM food_merchants WHERE lat <> 0 AND lng <> 0")
+	rows, err := db.Query("SELECT id, restaurant_name, address, COALESCE(image_url, ''), is_open, lat, lng, COALESCE(kasvo_toko_uuid, '') FROM food_merchants WHERE lat <> 0 AND lng <> 0")
 	if err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal membaca daftar warung"})
 		return
@@ -189,16 +283,32 @@ func foodMerchantsHandler(w http.ResponseWriter, r *http.Request) {
 	adaPosisi := koordinatValid(lat, lng)
 
 	daftar := make([]warung, 0)
+	kasvo := map[int]string{} // indeks di daftar → uuid toko Kasvo
 	for rows.Next() {
 		var x warung
-		if err := rows.Scan(&x.ID, &x.Nama, &x.Alamat, &x.Gambar, &x.Buka, &x.Lat, &x.Lng); err != nil {
+		var uuid string
+		if err := rows.Scan(&x.ID, &x.Nama, &x.Alamat, &x.Gambar, &x.Buka, &x.Lat, &x.Lng, &uuid); err != nil {
 			continue
 		}
 		x.JarakKM = -1
 		if adaPosisi {
 			x.JarakKM = jarakKM(lat, lng, x.Lat, x.Lng)
 		}
+		if uuid != "" {
+			kasvo[len(daftar)] = uuid
+		}
 		daftar = append(daftar, x)
+	}
+	// Jam buka toko Kasvo diatur di Kasvo; satu panggilan untuk semuanya.
+	if len(kasvo) > 0 {
+		uuids := make([]string, 0, len(kasvo))
+		for _, u := range kasvo {
+			uuids = append(uuids, u)
+		}
+		buka := bukaKasvo(uuids)
+		for i, u := range kasvo {
+			daftar[i].Buka = daftar[i].Buka && buka[u]
+		}
 	}
 	// Yang buka dulu, lalu yang terdekat.
 	sort.SliceStable(daftar, func(i, j int) bool {

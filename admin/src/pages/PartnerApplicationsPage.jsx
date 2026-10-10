@@ -165,6 +165,11 @@ export default function PartnerApplicationsPage() {
                         {isFood ? <Store size={10} /> : <KeyRound size={10} />}
                         {isFood ? "Mitra Resto Food" : "Mitra Rental"}
                       </span>
+                      {app.kasvo_toko_uuid && (
+                        <span className="badge badge-info" style={{ marginLeft: 6, marginBottom: 8, fontSize: 10, fontWeight: 700 }}>
+                          DARI KASVO · MENU OTOMATIS
+                        </span>
+                      )}
                       <div style={{ fontWeight: 800, fontSize: 16, color: "var(--text-primary)" }}>{app.business_name}</div>
                       <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>{app.name} (Pemilik)</div>
                     </div>
@@ -180,6 +185,7 @@ export default function PartnerApplicationsPage() {
                       { label: "Alamat Email", value: app.email },
                       { label: "Nomor KTP", value: app.ktp_number },
                       { label: isFood ? "Alamat Restoran" : "Alamat Kantor Rental", value: app.address },
+                      ...(app.lat ? [{ label: "Titik Lokasi", value: `${app.lat}, ${app.lng}` }] : []),
                     ].map((f, idx) => (
                       <div key={idx} style={{ display: "flex", flexDirection: "column" }}>
                         <span style={{ fontSize: 9, color: "var(--text-muted)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>{f.label}</span>

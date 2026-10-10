@@ -111,19 +111,31 @@ export default function MenuManagement({ ownerPhone }) {
       .catch(err => toast.error(err.message || "Gagal menghapus menu"));
   };
 
+  // Toko Kasvo: menu dibaca langsung dari kasirnya, jadi di sini hanya dilihat.
+  const dariKasvo = !!merchant?.kasvo_toko_uuid;
+
   return (
     <div className="page">
       <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div>
           <h1>Kelola Daftar Menu Jualan</h1>
-          <p>Tambahkan, edit ketersediaan, serta atur harga jualan menu kuliner Anda</p>
+          <p>{dariKasvo ? "Menu warung ini mengikuti Kasvo" : "Tambahkan, edit ketersediaan, serta atur harga jualan menu kuliner Anda"}</p>
         </div>
-        <button onClick={() => setShowAddForm(!showAddForm)} className="btn btn-primary" style={{ background: "#F59E0B" }}>
-          <Plus size={18} /> {showAddForm ? "Tutup Form" : "Tambah Menu"}
-        </button>
+        {!dariKasvo && (
+          <button onClick={() => setShowAddForm(!showAddForm)} className="btn btn-primary" style={{ background: "#F59E0B" }}>
+            <Plus size={18} /> {showAddForm ? "Tutup Form" : "Tambah Menu"}
+          </button>
+        )}
       </div>
 
-      {showAddForm && (
+      {dariKasvo && (
+        <div className="card" style={{ marginBottom: 20, fontSize: 13 }}>
+          Menu, harga, varian, dan stok habis diatur di <b>Kasvo</b> dan langsung berlaku di bohFood.
+          Yang tampil hanya menu yang aktif dan tampil ke publik di Kasvo.
+        </div>
+      )}
+
+      {showAddForm && !dariKasvo && (
         <div className="card" style={{ marginBottom: 28, maxWidth: 600 }}>
           <div className="card-title">Form Tambah Menu Jualan Baru</div>
           <Alert type="error">{error}</Alert>
@@ -186,7 +198,9 @@ export default function MenuManagement({ ownerPhone }) {
         <div className="card" style={{ textAlign: "center", padding: 50, color: "var(--text-muted)" }}>
           <Salad size={48} style={{ margin: "0 auto 16px", color: "var(--border)" }} />
           <h3>Daftar Menu Masih Kosong</h3>
-          <p style={{ fontSize: 13, marginTop: 4 }}>Klik tombol Tambah Menu untuk menambahkan menu jualan pertama Anda</p>
+          <p style={{ fontSize: 13, marginTop: 4 }}>
+            {dariKasvo ? "Belum ada menu yang aktif dan tampil ke publik di Kasvo" : "Klik tombol Tambah Menu untuk menambahkan menu jualan pertama Anda"}
+          </p>
         </div>
       ) : (
         <div className="grid-3">
@@ -212,8 +226,14 @@ export default function MenuManagement({ ownerPhone }) {
                     <span className="badge badge-info" style={{ background: "rgba(245,158,11,0.15)", color: "#F59E0B" }}>{menu.category}</span>
                   </div>
                   <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6, marginBottom: 16 }}>
-                    {menu.description || "Tidak ada deskripsi"}
+                    {menu.description || (menu.option_groups?.length ? "" : "Tidak ada deskripsi")}
                   </p>
+                  {(menu.option_groups || []).map(g => (
+                    <p key={g.id} style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: -10, marginBottom: 16 }}>
+                      <b>{g.name}{g.required ? " (wajib)" : ""}:</b>{" "}
+                      {g.options.map(o => o.price > 0 ? `${o.name} +Rp${o.price.toLocaleString("id-ID")}` : o.name).join(", ")}
+                    </p>
+                  ))}
                 </div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid var(--border)", paddingTop: 16 }}>
                   <div>
@@ -222,9 +242,11 @@ export default function MenuManagement({ ownerPhone }) {
                       Rp {menu.price.toLocaleString("id-ID")}
                     </div>
                   </div>
-                  <button onClick={() => handleDelete(menu.id)} className="btn btn-danger btn-sm" style={{ padding: 8 }}>
-                    <Trash2 size={16} />
-                  </button>
+                  {!dariKasvo && (
+                    <button onClick={() => handleDelete(menu.id)} className="btn btn-danger btn-sm" style={{ padding: 8 }}>
+                      <Trash2 size={16} />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

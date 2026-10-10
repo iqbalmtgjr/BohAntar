@@ -234,9 +234,18 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
                       child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           SizedBox(width: 32, child: Text('${b.jumlah}×', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
-                          Expanded(child: Text(b.menu.nama, style: const TextStyle(fontSize: 13))),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(b.menu.nama, style: const TextStyle(fontSize: 13)),
+                                if (b.opsi.isNotEmpty) Text(b.teksOpsi, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                              ],
+                            ),
+                          ),
                           Text(rupiah(b.subtotal), style: const TextStyle(fontSize: 13)),
                         ],
                       ),

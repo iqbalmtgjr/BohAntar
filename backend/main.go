@@ -162,6 +162,12 @@ type PartnerApplication struct {
 	Status       string `json:"status"`
 	CreatedAt    string `json:"created_at"`
 	Notes        string `json:"notes"`
+	// Hanya terisi untuk pengajuan dari tombol "Gabung bohFood" di Kasvo;
+	// lokasi dan fotonya ikut disalin ke warung saat disetujui.
+	KasvoTokoUUID string  `json:"kasvo_toko_uuid"`
+	Lat           float64 `json:"lat"`
+	Lng           float64 `json:"lng"`
+	ImageURL      string  `json:"image_url"`
 }
 
 type ChatMessage struct {
@@ -186,17 +192,40 @@ type FoodMerchant struct {
 	// warungnya belum muncul di aplikasi pemesan.
 	Lat float64 `json:"lat"`
 	Lng float64 `json:"lng"`
+	// Terisi kalau warung ini toko Kasvo: menunya dibaca dari Kasvo, bukan
+	// dari food_menus. Lihat kasvo.go.
+	KasvoTokoUUID string `json:"kasvo_toko_uuid"`
 }
 
 type FoodMenu struct {
-	ID          string  `json:"id"`
-	MerchantID  string  `json:"merchant_id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Price       float64 `json:"price"`
-	Category    string  `json:"category"`
-	ImageURL    string  `json:"image_url"`
-	IsAvailable bool    `json:"is_available"`
+	ID           string     `json:"id"`
+	MerchantID   string     `json:"merchant_id"`
+	Name         string     `json:"name"`
+	Description  string     `json:"description"`
+	Price        float64    `json:"price"`
+	Category     string     `json:"category"`
+	ImageURL     string     `json:"image_url"`
+	IsAvailable  bool       `json:"is_available"`
+	OptionGroups []GrupOpsi `json:"option_groups,omitempty"`
+}
+
+// GrupOpsi adalah satu kelompok varian menu ("Suhu", "Level pedas", "Topping").
+// ponytail: hanya menu dari Kasvo yang punya varian; warung biasa belum bisa
+// mengisinya dari portal. Tambahkan editornya kalau warung non-Kasvo memintanya.
+type GrupOpsi struct {
+	ID       string     `json:"id"`
+	Name     string     `json:"name"`
+	Type     string     `json:"type"` // "single" atau "multiple"
+	Required bool       `json:"required"`
+	Min      int        `json:"min"`
+	Max      int        `json:"max"`
+	Options  []OpsiMenu `json:"options"`
+}
+
+type OpsiMenu struct {
+	ID    string  `json:"id"`
+	Name  string  `json:"name"`
+	Price float64 `json:"price"` // tambahan di atas harga menu
 }
 
 type RentalCar struct {
@@ -462,6 +491,9 @@ func main() {
 	mux.HandleFunc("/api/food/menus/", requireAuth(foodMenuDetailHandler))
 	mux.HandleFunc("/api/food/merchants", requireAuth(foodMerchantsHandler)) // daftar warung untuk pemesan
 	mux.HandleFunc("/api/food/orders", requireAuth(foodOrdersHandler))       // pesanan masuk, untuk warung
+	// Dipanggil server Kasvo, bukan aplikasi — dijaga token integrasi, bukan JWT.
+	mux.HandleFunc("/api/integrasi/kasvo/gabung", kasvoGabungHandler)
+	mux.HandleFunc("/api/integrasi/kasvo/status", kasvoStatusHandler)
 	// Modul rental juga menuntut langganan aktif; halaman langganan sendiri tetap terbuka.
 	rental := func(h http.HandlerFunc) http.HandlerFunc { return requireAuth(requireActiveSubscription(h)) }
 	mux.HandleFunc("/api/rental/cars", rental(rentalCarsHandler))
@@ -743,6 +775,8 @@ func initDB() {
 			created_at DATETIME,
 			lat DOUBLE NOT NULL DEFAULT 0,
 			lng DOUBLE NOT NULL DEFAULT 0,
+			kasvo_toko_uuid VARCHAR(36) NULL,
+			UNIQUE KEY uq_food_merchants_kasvo (kasvo_toko_uuid),
 			FOREIGN KEY (owner_phone) REFERENCES users(phone_number) ON DELETE CASCADE
 		)`,
 		`CREATE TABLE IF NOT EXISTS food_menus (
@@ -823,7 +857,11 @@ func initDB() {
 			address TEXT,
 			status VARCHAR(20) DEFAULT 'pending',
 			created_at DATETIME,
-			notes TEXT
+			notes TEXT,
+			kasvo_toko_uuid VARCHAR(36) NULL,
+			lat DOUBLE NOT NULL DEFAULT 0,
+			lng DOUBLE NOT NULL DEFAULT 0,
+			image_url TEXT
 		)`,
 		`CREATE TABLE IF NOT EXISTS partner_subscriptions (
 			phone_number VARCHAR(20) PRIMARY KEY,
@@ -1027,6 +1065,13 @@ func initDB() {
 	migrasiSkema("ALTER TABLE orders ADD COLUMN items_json TEXT")
 	migrasiSkema("ALTER TABLE orders ADD COLUMN food_total DECIMAL(12,2) NOT NULL DEFAULT 0")
 	migrasiSkema("ALTER TABLE orders ADD INDEX idx_orders_merchant (merchant_id, created_at)")
+	// Toko Kasvo yang bergabung ke BohFood. Lihat migrasi/011 dan kasvo.go.
+	migrasiSkema("ALTER TABLE food_merchants ADD COLUMN kasvo_toko_uuid VARCHAR(36) NULL")
+	migrasiSkema("ALTER TABLE food_merchants ADD UNIQUE INDEX uq_food_merchants_kasvo (kasvo_toko_uuid)")
+	migrasiSkema("ALTER TABLE partner_applications ADD COLUMN kasvo_toko_uuid VARCHAR(36) NULL")
+	migrasiSkema("ALTER TABLE partner_applications ADD COLUMN lat DOUBLE NOT NULL DEFAULT 0")
+	migrasiSkema("ALTER TABLE partner_applications ADD COLUMN lng DOUBLE NOT NULL DEFAULT 0")
+	migrasiSkema("ALTER TABLE partner_applications ADD COLUMN image_url TEXT")
 	// Posisi driver terakhir. Satu baris per driver, ditimpa terus — riwayat
 	// perjalanan tidak disimpan karena tidak ada yang membacanya, dan menyimpan
 	// jejak lokasi orang tanpa alasan justru menambah yang harus dijaga.
@@ -1674,18 +1719,22 @@ func dbGetApplications(statusFilter string) ([]DriverApplication, error) {
 
 func dbSavePartnerApplication(a PartnerApplication) error {
 	_, err := db.Exec(`
-		INSERT INTO partner_applications (id, type, phone_number, name, email, ktp_number, business_name, address, status, created_at, notes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO partner_applications (id, type, phone_number, name, email, ktp_number, business_name, address, status, created_at, notes, kasvo_toko_uuid, lat, lng, image_url)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?)
 		ON DUPLICATE KEY UPDATE status = VALUES(status)
-	`, a.ID, a.Type, a.PhoneNumber, a.Name, a.Email, a.KTPNumber, a.BusinessName, a.Address, a.Status, waktuKeDB(a.CreatedAt), a.Notes)
+	`, a.ID, a.Type, a.PhoneNumber, a.Name, a.Email, a.KTPNumber, a.BusinessName, a.Address, a.Status, waktuKeDB(a.CreatedAt), a.Notes, a.KasvoTokoUUID, a.Lat, a.Lng, a.ImageURL)
 	return err
 }
 
+// kolomPengajuanMitra dipakai kedua pembaca pengajuan supaya urutan Scan-nya
+// tidak bisa berselisih.
+const kolomPengajuanMitra = "id, type, phone_number, name, email, ktp_number, business_name, address, status, created_at, notes, COALESCE(kasvo_toko_uuid, ''), lat, lng, COALESCE(image_url, '')"
+
 func dbGetPartnerApplication(id string) (PartnerApplication, bool) {
 	var a PartnerApplication
-	row := db.QueryRow("SELECT id, type, phone_number, name, email, ktp_number, business_name, address, status, created_at, notes FROM partner_applications WHERE id = ?", id)
+	row := db.QueryRow("SELECT "+kolomPengajuanMitra+" FROM partner_applications WHERE id = ?", id)
 	var notes sql.NullString
-	err := row.Scan(&a.ID, &a.Type, &a.PhoneNumber, &a.Name, &a.Email, &a.KTPNumber, &a.BusinessName, &a.Address, &a.Status, &a.CreatedAt, &notes)
+	err := row.Scan(&a.ID, &a.Type, &a.PhoneNumber, &a.Name, &a.Email, &a.KTPNumber, &a.BusinessName, &a.Address, &a.Status, &a.CreatedAt, &notes, &a.KasvoTokoUUID, &a.Lat, &a.Lng, &a.ImageURL)
 	if err != nil {
 		return a, false
 	}
@@ -1696,7 +1745,7 @@ func dbGetPartnerApplication(id string) (PartnerApplication, bool) {
 func dbGetPartnerApplications(typeFilter, statusFilter string) ([]PartnerApplication, error) {
 	var rows *sql.Rows
 	var err error
-	q := "SELECT id, type, phone_number, name, email, ktp_number, business_name, address, status, created_at, notes FROM partner_applications WHERE 1=1"
+	q := "SELECT " + kolomPengajuanMitra + " FROM partner_applications WHERE 1=1"
 	var args []interface{}
 	if typeFilter != "" {
 		q += " AND type = ?"
@@ -1718,7 +1767,7 @@ func dbGetPartnerApplications(typeFilter, statusFilter string) ([]PartnerApplica
 	for rows.Next() {
 		var a PartnerApplication
 		var notes sql.NullString
-		if err := rows.Scan(&a.ID, &a.Type, &a.PhoneNumber, &a.Name, &a.Email, &a.KTPNumber, &a.BusinessName, &a.Address, &a.Status, &a.CreatedAt, &notes); err == nil {
+		if err := rows.Scan(&a.ID, &a.Type, &a.PhoneNumber, &a.Name, &a.Email, &a.KTPNumber, &a.BusinessName, &a.Address, &a.Status, &a.CreatedAt, &notes, &a.KasvoTokoUUID, &a.Lat, &a.Lng, &a.ImageURL); err == nil {
 			a.Notes = notes.String
 			result = append(result, a)
 		}
@@ -4110,18 +4159,11 @@ func adminPartnerApplicationActionHandler(w http.ResponseWriter, r *http.Request
 			}
 		}
 
-		// Additional mapping: if it's a food merchant, automatically create an entry in food_merchants table
+		// Warung yang disetujui langsung dapat baris food_merchants; pengajuan
+		// dari Kasvo sekalian tersambung ke tokonya.
 		if app.Type == "food" {
-			var existID string
-			err := db.QueryRow("SELECT id FROM food_merchants WHERE owner_phone = ?", app.PhoneNumber).Scan(&existID)
-			if err != nil { // Not exists
-				merchantID := newID("merchant")
-				if _, err := db.Exec(`
-					INSERT INTO food_merchants (id, owner_phone, restaurant_name, address, image_url, is_open, created_at)
-					VALUES (?, ?, ?, ?, ?, 1, ?)
-				`, merchantID, app.PhoneNumber, app.BusinessName, app.Address, "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400", time.Now()); err != nil {
-					log.Printf("PERINGATAN: merchant %s untuk %s gagal dibuat saat persetujuan: %v", merchantID, app.PhoneNumber, err)
-				}
+			if err := warungDariPengajuan(app); err != nil {
+				log.Printf("PERINGATAN: warung untuk %s gagal dibuat saat persetujuan: %v", app.PhoneNumber, err)
 			}
 		}
 
@@ -4333,7 +4375,7 @@ func foodMerchantHandler(w http.ResponseWriter, r *http.Request) {
 			phone = q
 		}
 		var m FoodMerchant
-		err := db.QueryRow("SELECT id, owner_phone, restaurant_name, address, COALESCE(image_url, ''), is_open, created_at, lat, lng FROM food_merchants WHERE owner_phone = ?", phone).Scan(&m.ID, &m.OwnerPhone, &m.RestaurantName, &m.Address, &m.ImageURL, &m.IsOpen, &m.CreatedAt, &m.Lat, &m.Lng)
+		err := db.QueryRow("SELECT id, owner_phone, restaurant_name, address, COALESCE(image_url, ''), is_open, created_at, lat, lng, COALESCE(kasvo_toko_uuid, '') FROM food_merchants WHERE owner_phone = ?", phone).Scan(&m.ID, &m.OwnerPhone, &m.RestaurantName, &m.Address, &m.ImageURL, &m.IsOpen, &m.CreatedAt, &m.Lat, &m.Lng, &m.KasvoTokoUUID)
 		if err != nil {
 			writeJSONResponse(w, 404, map[string]string{"error": "Merchant not found"})
 			return
@@ -4378,13 +4420,18 @@ func foodMenusHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONResponse(w, 400, map[string]string{"error": "merchant_id is required"})
 			return
 		}
-		if !ownsMerchant(r, merchantID) {
-			denyOwnership(w)
+		// Menu dibaca pemesan, jadi siapa pun yang sudah masuk boleh melihatnya.
+		// Dulu dijaga ownsMerchant, sehingga penumpang selalu dapat 403 dan
+		// BohFood tidak pernah bisa dipesan dari aplikasi.
+		m, ok := dbGetFoodMerchant(merchantID)
+		if !ok {
+			writeJSONResponse(w, 404, map[string]string{"error": "Warung tidak ditemukan"})
 			return
 		}
-		menus, err := dbGetFoodMenus(merchantID)
+		menus, _, err := menuWarung(m)
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			log.Printf("menu warung %s gagal dibaca: %v", merchantID, err)
+			writeJSONResponse(w, 502, map[string]string{"error": "Menu warung tidak bisa dibaca sekarang, coba lagi sebentar"})
 			return
 		}
 		writeJSONResponse(w, 200, menus)
@@ -4403,6 +4450,10 @@ func foodMenusHandler(w http.ResponseWriter, r *http.Request) {
 			m.ID = newID("menu")
 		} else if !ownsMenu(r, m.ID) || !ownsMerchant(r, m.MerchantID) {
 			denyOwnership(w)
+			return
+		}
+		if wm, _ := dbGetFoodMerchant(m.MerchantID); wm.KasvoTokoUUID != "" {
+			writeJSONResponse(w, 409, map[string]string{"error": "Menu warung ini dikelola dari Kasvo. Ubah menu di Kasvo, BohFood ikut otomatis."})
 			return
 		}
 		if m.Price < 0 {

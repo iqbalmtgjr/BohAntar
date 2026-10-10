@@ -28,4 +28,49 @@ void main() {
     expect(rupiah(41000), 'Rp 41.000');
     expect(rupiah(8000), 'Rp 8.000');
   });
+
+  final warungKopi = Warung.dariJson({'id': 'w1', 'restaurant_name': 'Kopi Uji'});
+  final tehVarian = MenuMakanan.dariJson({
+    'id': 'teh',
+    'name': 'Es Teh',
+    'price': 5000,
+    'is_available': true,
+    'option_groups': [
+      {
+        'id': '1', 'name': 'Rasa', 'type': 'single', 'required': true,
+        'options': [{'id': 'manis', 'name': 'Manis', 'price': 0}, {'id': 'lemon', 'name': 'Lemon', 'price': 2000}],
+      },
+      {
+        'id': '2', 'name': 'Ekstra', 'type': 'multiple', 'required': false, 'max': 2,
+        'options': [{'id': 'jelly', 'name': 'Jelly', 'price': 1000}, {'id': 'es', 'name': 'Es banyak', 'price': 0}],
+      },
+    ],
+  });
+  OpsiMenu opsi(String id) => tehVarian.grup.expand((g) => g.opsi).firstWhere((o) => o.id == id);
+
+  test('varian sama digabung apa pun urutannya, varian beda jadi baris sendiri', () {
+    final k = Keranjang(warungKopi)
+      ..tambah(tehVarian, [opsi('manis')])
+      ..tambah(tehVarian, [opsi('lemon'), opsi('jelly')], 2)
+      ..tambah(tehVarian, [opsi('jelly'), opsi('lemon')]);
+    expect(k.baris.length, 2);
+    expect(k.jumlah(tehVarian), 4);
+    expect(k.subtotal, 5000 + 3 * 8000);
+    expect(k.keJson()[1], {'menu_id': 'teh', 'qty': 3, 'options': ['lemon', 'jelly']});
+  });
+
+  test('kurangi memotong varian yang terakhir ditambahkan', () {
+    final k = Keranjang(warungKopi)
+      ..tambah(tehVarian, [opsi('manis')])
+      ..tambah(tehVarian, [opsi('lemon')]);
+    k.kurangi(tehVarian);
+    expect(k.baris.single.teksOpsi, 'Manis');
+  });
+
+  test('aturan grup sama dengan server', () {
+    expect(tehVarian.grup[0].minimal, 1);
+    expect(tehVarian.grup[0].batas, 1);
+    expect(tehVarian.grup[1].minimal, 0);
+    expect(tehVarian.grup[1].batas, 2);
+  });
 }

@@ -55,6 +55,25 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
 
   List<MenuMakanan> get _tersaring => _kategori == 'Semua' ? _menu : _menu.where((m) => m.kategori == _kategori).toList();
 
+  /// Menu tanpa varian langsung masuk keranjang; yang bervarian memilih dulu
+  /// lewat lembar bawah, seperti GoFood.
+  Future<void> _tambah(MenuMakanan m) async {
+    if (!m.punyaVarian) {
+      setState(() => _keranjang.tambah(m));
+      return;
+    }
+    final pilihan = await showModalBottomSheet<BarisKeranjang>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => _LembarVarian(m),
+    );
+    if (pilihan != null && mounted) {
+      setState(() => _keranjang.tambah(m, pilihan.opsi, pilihan.jumlah));
+    }
+  }
+
   Future<void> _lanjut() async {
     final orderId = await Navigator.push<String>(
       context,
@@ -187,7 +206,7 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
                       jumlah: _keranjang.jumlah(m),
                       bisaPesan: w.buka && m.tersedia,
                       isDark: isDark,
-                      saatTambah: () => setState(() => _keranjang.tambah(m)),
+                      saatTambah: () => _tambah(m),
                       saatKurang: () => setState(() => _keranjang.kurangi(m)),
                     );
                   },
@@ -240,6 +259,10 @@ class _BarisMenu extends StatelessWidget {
                       ],
                     ],
                   ),
+                  if (m.punyaVarian) ...[
+                    const SizedBox(height: 4),
+                    const Text('Bisa pilih varian', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                  ],
                 ],
               ),
             ),
@@ -355,4 +378,138 @@ class _BarKeranjang extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Lembar pilih varian satu menu. Mengembalikan BarisKeranjang (varian +
+/// jumlah porsi), atau null kalau ditutup tanpa memilih.
+class _LembarVarian extends StatefulWidget {
+  final MenuMakanan menu;
+  const _LembarVarian(this.menu);
+
+  @override
+  State<_LembarVarian> createState() => _LembarVarianState();
+}
+
+class _LembarVarianState extends State<_LembarVarian> {
+  // id grup → id varian yang dipilih, urut sesuai ketukan.
+  final Map<String, List<String>> _pilih = {};
+  int _jumlah = 1;
+
+  List<OpsiMenu> get _terpilih => [
+        for (final g in widget.menu.grup)
+          for (final o in g.opsi)
+            if (_pilih[g.id]?.contains(o.id) ?? false) o,
+      ];
+
+  bool get _sah => widget.menu.grup.every((g) => (_pilih[g.id]?.length ?? 0) >= g.minimal);
+
+  double get _total => (widget.menu.harga + _terpilih.fold(0.0, (a, o) => a + o.harga)) * _jumlah;
+
+  void _ketuk(GrupOpsi g, OpsiMenu o) {
+    setState(() {
+      final daftar = _pilih.putIfAbsent(g.id, () => []);
+      if (daftar.contains(o.id)) {
+        daftar.remove(o.id);
+      } else if (g.tunggal) {
+        daftar
+          ..clear()
+          ..add(o.id);
+      } else if (g.batas == null || daftar.length < g.batas!) {
+        daftar.add(o.id);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final m = widget.menu;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
+              children: [
+                Text(m.nama, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                const SizedBox(height: 4),
+                Text(rupiah(m.harga), style: const TextStyle(color: Colors.grey, fontSize: 13)),
+                for (final g in m.grup) ...[
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(child: Text(g.nama, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14))),
+                      Pil(g.wajib ? 'Wajib' : 'Opsional', warna: g.wajib ? Colors.orange.withValues(alpha: 0.15) : Colors.grey.withValues(alpha: 0.15), warnaTeks: g.wajib ? Colors.orange.shade800 : Colors.grey.shade700),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Text(g.petunjuk, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                  const SizedBox(height: 6),
+                  for (final o in g.opsi) _barisOpsi(g, o),
+                ],
+              ],
+            ),
+          ),
+          SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
+              child: Row(
+                children: [
+                  _tombolJumlah(Icons.remove, _jumlah > 1 ? () => setState(() => _jumlah--) : null),
+                  SizedBox(width: 36, child: Text('$_jumlah', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+                  _tombolJumlah(Icons.add, _jumlah < 50 ? () => setState(() => _jumlah++) : null),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed: _sah ? () => Navigator.pop(context, BarisKeranjang(m, _terpilih, _jumlah)) : null,
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppTheme.primaryBlue,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: Text(_sah ? 'Tambah · ${rupiah(_total)}' : 'Lengkapi pilihan wajib', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _barisOpsi(GrupOpsi g, OpsiMenu o) {
+    final dipilih = _pilih[g.id]?.contains(o.id) ?? false;
+    final penuh = !g.tunggal && g.batas != null && (_pilih[g.id]?.length ?? 0) >= g.batas!;
+    return InkWell(
+      onTap: dipilih || !penuh ? () => _ketuk(g, o) : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            Icon(
+              g.tunggal
+                  ? (dipilih ? Icons.radio_button_checked : Icons.radio_button_unchecked)
+                  : (dipilih ? Icons.check_box : Icons.check_box_outline_blank),
+              size: 22,
+              color: dipilih ? AppTheme.primaryBlue : (penuh ? Colors.grey.shade300 : Colors.grey),
+            ),
+            const SizedBox(width: 12),
+            Expanded(child: Text(o.nama, style: TextStyle(fontSize: 14, color: penuh && !dipilih ? Colors.grey : null))),
+            Text(o.harga > 0 ? '+${rupiah(o.harga)}' : 'Gratis', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _tombolJumlah(IconData ikon, VoidCallback? aksi) => SizedBox(
+        width: 36,
+        height: 36,
+        child: IconButton.outlined(onPressed: aksi, icon: Icon(ikon, size: 18), padding: EdgeInsets.zero),
+      );
 }

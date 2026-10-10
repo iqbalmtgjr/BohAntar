@@ -3142,9 +3142,24 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   SizedBox(width: 30, child: Text('${it['qty'] ?? 0}×', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
-                  Expanded(child: Text((it['name'] ?? '').toString(), style: const TextStyle(fontSize: 12))),
+                  // Varian ikut tampil: driver memesan di kasir persis sesuai
+                  // daftar ini, jadi "Kopi" saja tidak cukup.
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text((it['name'] ?? '').toString(), style: const TextStyle(fontSize: 12)),
+                        if ((it['options'] as List?)?.isNotEmpty ?? false)
+                          Text(
+                            [for (final o in it['options'] as List) '${o['group']}: ${o['name']}'].join(' · '),
+                            style: TextStyle(fontSize: 11, color: Colors.orange.shade900, fontWeight: FontWeight.w600),
+                          ),
+                      ],
+                    ),
+                  ),
                   Text(
                     _rupiah(((it['price'] as num?)?.toDouble() ?? 0) * ((it['qty'] as num?)?.toDouble() ?? 0)),
                     style: const TextStyle(fontSize: 12, color: Colors.grey),
