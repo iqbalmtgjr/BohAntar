@@ -511,14 +511,16 @@ class ApiService {
   }
 
   /// Daftar warung BohFood. Dengan posisi, server mengurutkan yang terdekat dan
-  /// mengisi jarak_km.
-  Future<List<dynamic>> getFoodMerchants({double? lat, double? lng}) async {
+  /// mengisi jarak_km serta ongkir. Dengan q, server mencocokkan nama warung,
+  /// alamat, dan nama menu.
+  Future<List<dynamic>> getFoodMerchants({double? lat, double? lng, String q = ''}) async {
     if (_token == null) {
       throw Exception('Otorisasi diperlukan. Silakan login kembali.');
     }
     final uri = Uri.parse('$baseUrl/api/food/merchants').replace(queryParameters: {
       if (lat != null && lng != null) 'lat': '$lat',
       if (lat != null && lng != null) 'lng': '$lng',
+      if (q.trim().isNotEmpty) 'q': q.trim(),
     });
     final data = _handleResponse(await http.get(uri, headers: {'Authorization': 'Bearer $_token'}));
     return (data['merchants'] as List?) ?? [];

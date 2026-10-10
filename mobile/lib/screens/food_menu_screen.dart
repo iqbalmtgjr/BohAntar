@@ -5,8 +5,8 @@ import 'package:mobile/services/api_service.dart';
 import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/food_widgets.dart';
 
-/// Langkah 2 dari 3: pilih menu. Keranjang hidup di layar ini; batang di bawah
-/// selalu memperlihatkan isinya dan satu ketukan membawa ke konfirmasi.
+/// Pilih menu. Keranjang hidup di layar ini; batang di bawah selalu
+/// memperlihatkan isinya dan satu ketukan membawa ke konfirmasi.
 class FoodMenuScreen extends StatefulWidget {
   final Warung warung;
   final String riderName;
@@ -74,6 +74,25 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
     }
   }
 
+  /// Menu bervarian bisa ada di beberapa baris (es teh manis, es teh lemon).
+  /// "−" tidak boleh menebak baris mana yang dikurangi, jadi pemesan memilih.
+  Future<void> _kurangi(MenuMakanan m) async {
+    final baris = _keranjang.barisMenu(m);
+    if (baris.length <= 1) {
+      setState(() => _keranjang.kurangi(m));
+      return;
+    }
+    final tambahLain = await showModalBottomSheet<bool>(
+      context: context,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => _LembarBarisMenu(_keranjang, m),
+    );
+    if (!mounted) return;
+    setState(() {});
+    if (tambahLain == true) _tambah(m);
+  }
+
   Future<void> _lanjut() async {
     final orderId = await Navigator.push<String>(
       context,
@@ -89,6 +108,30 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Keranjang hanya hidup di layar ini. Kembali tanpa bertanya membuang
+    // pilihan yang mungkin sudah lama disusun, termasuk variannya.
+    return PopScope(
+      canPop: _keranjang.kosong,
+      onPopInvokedWithResult: (sudahKeluar, _) async {
+        if (sudahKeluar) return;
+        final keluar = await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Kosongkan keranjang?'),
+            content: Text('${_keranjang.totalPorsi} porsi dari ${widget.warung.nama} akan dihapus kalau kamu keluar.'),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Tetap di sini')),
+              TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Keluar')),
+            ],
+          ),
+        );
+        if (keluar == true && context.mounted) Navigator.pop(context);
+      },
+      child: _halaman(context),
+    );
+  }
+
+  Widget _halaman(BuildContext context) {
     final w = widget.warung;
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
@@ -130,9 +173,9 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.place_outlined, size: 15, color: Colors.grey),
+                      Icon(Icons.place_outlined, size: 15, color: AppTheme.teksRedup(context)),
                       const SizedBox(width: 4),
-                      Expanded(child: Text(w.alamat, style: const TextStyle(color: Colors.grey, fontSize: 12), maxLines: 2, overflow: TextOverflow.ellipsis)),
+                      Expanded(child: Text(w.alamat, style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12), maxLines: 2, overflow: TextOverflow.ellipsis)),
                       if (w.jarakKm >= 0) ...[
                         const SizedBox(width: 8),
                         Pil('${w.jarakKm.toStringAsFixed(1).replaceAll('.', ',')} km', warna: AppTheme.primaryBlue.withOpacity(0.12), warnaTeks: AppTheme.primaryBlue),
@@ -144,19 +187,24 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
                     Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(color: Colors.orange.withOpacity(0.12), borderRadius: BorderRadius.circular(12)),
-                      child: const Row(
+                      child: Row(
                         children: [
-                          Icon(Icons.schedule, size: 18, color: Colors.orange),
-                          SizedBox(width: 10),
+                          Icon(Icons.schedule, size: 18, color: Colors.orange.shade800),
+                          const SizedBox(width: 10),
                           Expanded(
-                            child: Text('Warung sedang tutup. Kamu bisa lihat menunya, tapi belum bisa memesan.', style: TextStyle(fontSize: 12)),
+                            child: Text(
+                              [
+                                'Warung sedang tutup.',
+                                if (w.infoBuka.isNotEmpty) '${w.infoBuka}.',
+                                'Kamu bisa lihat menunya, tapi belum bisa memesan.',
+                              ].join(' '),
+                              style: const TextStyle(fontSize: 12),
+                            ),
                           ),
                         ],
                       ),
                     ),
                   ],
-                  const SizedBox(height: 14),
-                  const LangkahPesan(aktif: 2),
                   if (_kategoriTersedia.length > 2) ...[
                     const SizedBox(height: 14),
                     SizedBox(
@@ -164,7 +212,7 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
                       child: ListView.separated(
                         scrollDirection: Axis.horizontal,
                         itemCount: _kategoriTersedia.length,
-                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        separatorBuilder: (_, _) => const SizedBox(width: 8),
                         itemBuilder: (_, i) {
                           final k = _kategoriTersedia[i];
                           return ChoiceChip(
@@ -207,7 +255,7 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
                       bisaPesan: w.buka && m.tersedia,
                       isDark: isDark,
                       saatTambah: () => _tambah(m),
-                      saatKurang: () => setState(() => _keranjang.kurangi(m)),
+                      saatKurang: () => _kurangi(m),
                     );
                   },
                   childCount: _tersaring.length,
@@ -247,12 +295,12 @@ class _BarisMenu extends StatelessWidget {
                   Text(m.nama, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                   if (m.deskripsi.isNotEmpty) ...[
                     const SizedBox(height: 4),
-                    Text(m.deskripsi, style: const TextStyle(color: Colors.grey, fontSize: 12), maxLines: 2, overflow: TextOverflow.ellipsis),
+                    Text(m.deskripsi, style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12), maxLines: 2, overflow: TextOverflow.ellipsis),
                   ],
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      Text(rupiah(m.harga), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.primaryBlue)),
+                      Text(m.teksHarga, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.primaryBlue)),
                       if (!m.tersedia) ...[
                         const SizedBox(width: 8),
                         Pil('Habis', warna: Colors.grey.shade600),
@@ -261,7 +309,7 @@ class _BarisMenu extends StatelessWidget {
                   ),
                   if (m.punyaVarian) ...[
                     const SizedBox(height: 4),
-                    const Text('Bisa pilih varian', style: TextStyle(color: Colors.grey, fontSize: 11)),
+                    Text('Bisa pilih varian', style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 11)),
                   ],
                 ],
               ),
@@ -271,12 +319,12 @@ class _BarisMenu extends StatelessWidget {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: SizedBox(width: 84, height: 84, child: GambarJaringan(url: m.gambar, pengganti: Icons.fastfood_outlined)),
+                  child: SizedBox(width: 112, height: 112, child: GambarJaringan(url: m.gambar, pengganti: Icons.fastfood_outlined)),
                 ),
                 const SizedBox(height: 8),
                 SizedBox(
-                  width: 84,
-                  height: 32,
+                  width: 112,
+                  height: 44,
                   child: jumlah == 0
                       ? OutlinedButton(
                           onPressed: bisaPesan ? saatTambah : null,
@@ -289,7 +337,7 @@ class _BarisMenu extends StatelessWidget {
                           ),
                           child: const Text('Tambah'),
                         )
-                      : _Stepper(jumlah: jumlah, saatTambah: saatTambah, saatKurang: saatKurang),
+                      : PengaturJumlah(jumlah: jumlah, saatTambah: bisaPesan ? saatTambah : null, saatKurang: saatKurang),
                 ),
               ],
             ),
@@ -300,27 +348,65 @@ class _BarisMenu extends StatelessWidget {
   }
 }
 
-class _Stepper extends StatelessWidget {
-  final int jumlah;
-  final VoidCallback saatTambah;
-  final VoidCallback saatKurang;
-  const _Stepper({required this.jumlah, required this.saatTambah, required this.saatKurang});
+/// Baris-baris satu menu bervarian di keranjang, masing-masing dengan −/+.
+/// Mengembalikan true kalau pemesan ingin menambah varian lain.
+class _LembarBarisMenu extends StatefulWidget {
+  final Keranjang keranjang;
+  final MenuMakanan menu;
+  const _LembarBarisMenu(this.keranjang, this.menu);
 
   @override
+  State<_LembarBarisMenu> createState() => _LembarBarisMenuState();
+}
+
+class _LembarBarisMenuState extends State<_LembarBarisMenu> {
+  @override
   Widget build(BuildContext context) {
-    Widget tombol(IconData ikon, VoidCallback aksi) => InkWell(
-          onTap: aksi,
-          borderRadius: BorderRadius.circular(10),
-          child: SizedBox(width: 28, height: 32, child: Icon(ikon, size: 16, color: Colors.white)),
-        );
-    return Container(
-      decoration: BoxDecoration(color: AppTheme.primaryBlue, borderRadius: BorderRadius.circular(10)),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    final baris = widget.keranjang.barisMenu(widget.menu);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          tombol(Icons.remove, saatKurang),
-          Text('$jumlah', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)),
-          tombol(Icons.add, saatTambah),
+          Text(widget.menu.nama, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+          const SizedBox(height: 4),
+          Text('Pilih varian yang mau diubah', style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 13)),
+          const SizedBox(height: 12),
+          for (final b in baris)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(b.teksOpsi.isEmpty ? 'Tanpa varian' : b.teksOpsi, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                        Text(rupiah(b.subtotal), style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12)),
+                      ],
+                    ),
+                  ),
+                  PengaturJumlah(
+                    jumlah: b.jumlah,
+                    saatKurang: () => setState(() => widget.keranjang.ubah(b, -1)),
+                    saatTambah: b.jumlah < Keranjang.maksPorsi ? () => setState(() => widget.keranjang.ubah(b, 1)) : null,
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              TextButton.icon(
+                onPressed: () => Navigator.pop(context, true),
+                icon: const Icon(Icons.add),
+                label: const Text('Varian lain'),
+              ),
+              const Spacer(),
+              FilledButton(onPressed: () => Navigator.pop(context, false), child: const Text('Selesai')),
+            ],
+          ),
         ],
       ),
     );
@@ -435,7 +521,7 @@ class _LembarVarianState extends State<_LembarVarian> {
               children: [
                 Text(m.nama, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
                 const SizedBox(height: 4),
-                Text(rupiah(m.harga), style: const TextStyle(color: Colors.grey, fontSize: 13)),
+                Text(m.teksHarga, style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 13)),
                 for (final g in m.grup) ...[
                   const SizedBox(height: 20),
                   Row(
@@ -445,7 +531,7 @@ class _LembarVarianState extends State<_LembarVarian> {
                     ],
                   ),
                   const SizedBox(height: 2),
-                  Text(g.petunjuk, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                  Text(g.petunjuk, style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 11)),
                   const SizedBox(height: 6),
                   for (final o in g.opsi) _barisOpsi(g, o),
                 ],
@@ -499,8 +585,8 @@ class _LembarVarianState extends State<_LembarVarian> {
               color: dipilih ? AppTheme.primaryBlue : (penuh ? Colors.grey.shade300 : Colors.grey),
             ),
             const SizedBox(width: 12),
-            Expanded(child: Text(o.nama, style: TextStyle(fontSize: 14, color: penuh && !dipilih ? Colors.grey : null))),
-            Text(o.harga > 0 ? '+${rupiah(o.harga)}' : 'Gratis', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+            Expanded(child: Text(o.nama, style: TextStyle(fontSize: 14, color: penuh && !dipilih ? AppTheme.teksRedup(context) : null))),
+            if (o.harga > 0) Text('+${rupiah(o.harga)}', style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12)),
           ],
         ),
       ),
@@ -508,8 +594,8 @@ class _LembarVarianState extends State<_LembarVarian> {
   }
 
   Widget _tombolJumlah(IconData ikon, VoidCallback? aksi) => SizedBox(
-        width: 36,
-        height: 36,
+        width: 44,
+        height: 44,
         child: IconButton.outlined(onPressed: aksi, icon: Icon(ikon, size: 18), padding: EdgeInsets.zero),
       );
 }

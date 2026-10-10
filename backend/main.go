@@ -3314,8 +3314,10 @@ func completeOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	}
 	pesanBayar := "Terima kasih sudah memakai bohAntar."
 	if o.PaymentMethod != "wallet" {
-		// Makanan: ongkir plus uang makanan yang sudah ditalangi driver.
-		pesanBayar = fmt.Sprintf("Bayar tunai Rp%.0f ke driver.", o.Fare+o.FoodTotal)
+		// Ongkir, biaya jasa, dan (makanan) uang yang ditalangi driver. Biaya
+		// jasa dulu tertinggal di sini, sehingga penumpang membayar kurang dan
+		// selisihnya dipotong dari saldo driver (lihat bagiPembayaran).
+		pesanBayar = fmt.Sprintf("Bayar tunai Rp%.0f ke driver.", o.Fare+o.BiayaJasa+o.FoodTotal)
 	}
 	judul := "Perjalanan selesai"
 	if pesananMakanan(o) {
@@ -3357,8 +3359,28 @@ func getOrderStatus(w http.ResponseWriter, r *http.Request, orderID string) {
 		if lat, lng, at, ok := dbGetDriverLocation(o.DriverPhone); ok {
 			resp["driver_location"] = map[string]interface{}{"lat": lat, "lng": lng, "updated_at": at}
 		}
+		resp["driver"] = infoDriver(o.DriverPhone)
 	}
 	writeJSONResponse(w, 200, resp)
+}
+
+// infoDriver adalah yang dilihat penumpang tentang driver yang menjemputnya:
+// motor dan plat dari pengajuan terakhir yang disetujui, dan rata-rata bintang
+// dari ulasan sungguhan. Driver lama yang dibuat admin tanpa pengajuan tidak
+// punya motor dan plat; aplikasi menyembunyikan barisnya alih-alih mengarang.
+func infoDriver(phone string) map[string]interface{} {
+	var motor, plat sql.NullString
+	db.QueryRow(`SELECT vehicle_model, vehicle_plate FROM driver_applications
+		WHERE phone_number = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1`, phone).Scan(&motor, &plat)
+	var rata sql.NullFloat64
+	var ulasan int
+	db.QueryRow("SELECT AVG(stars), COUNT(*) FROM order_ratings WHERE driver_phone = ?", phone).Scan(&rata, &ulasan)
+	return map[string]interface{}{
+		"kendaraan":     strings.TrimSpace(motor.String),
+		"plat":          strings.TrimSpace(plat.String),
+		"rating":        math.Round(rata.Float64*10) / 10,
+		"jumlah_ulasan": ulasan,
+	}
 }
 
 // ==================== ADMIN HANDLERS ====================

@@ -10,7 +10,7 @@ import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/food_widgets.dart';
 import 'package:mobile/widgets/peta.dart';
 
-/// Langkah 3 dari 3: ke mana diantar, bayar bagaimana, berapa totalnya.
+/// Konfirmasi pesanan: ke mana diantar, bayar bagaimana, berapa totalnya.
 ///
 /// Mengembalikan id pesanan lewat Navigator.pop saat berhasil; layar di bawahnya
 /// yang meneruskannya sampai ke dashboard.
@@ -31,7 +31,16 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   bool _mencariLokasi = true;
   String _metode = 'Tunai'; // "Tunai" | "PayAntar"
   final _catatan = TextEditingController();
+  // Patokan untuk driver, ditempel ke alamat antar. Titik GPS dan nama jalan
+  // sering tidak cukup untuk menemukan rumah di gang.
+  final _patokan = TextEditingController();
   bool _mengirim = false;
+  // Hitungan ongkir gagal: tanpa penanda ini barisnya tertulis "sedang
+  // dihitung" selamanya dan tombol Pesan mati tanpa jalan keluar.
+  bool _estimasiGagal = false;
+  // Null = belum terbaca. Hanya untuk memberi tahu lebih awal; server tetap
+  // yang menolak kalau saldo kurang.
+  double? _saldo;
 
   Warung get _warung => widget.keranjang.warung;
 
@@ -39,12 +48,29 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   void initState() {
     super.initState();
     _pakaiLokasiSaya();
+    _muatSaldo();
   }
 
   @override
   void dispose() {
     _catatan.dispose();
+    _patokan.dispose();
     super.dispose();
+  }
+
+  /// Baris terakhir yang dikurangi sampai habis mengosongkan keranjang; tidak
+  /// ada lagi yang bisa dipesan dari sini, jadi kembali ke menu.
+  void _ubahBaris(BarisKeranjang b, int selisih) {
+    setState(() => widget.keranjang.ubah(b, selisih));
+    if (widget.keranjang.kosong) Navigator.pop(context);
+  }
+
+  Future<void> _muatSaldo() async {
+    try {
+      final res = await ApiService().getProfile();
+      final saldo = (res['user']?['balance'] as num?)?.toDouble();
+      if (mounted && saldo != null) setState(() => _saldo = saldo);
+    } catch (_) {}
   }
 
   Future<void> _pakaiLokasiSaya() async {
@@ -126,6 +152,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   /// jarak versi server, karena itu yang nanti ditagih. Biaya jasa ditagih
   /// sekali per pesanan, bukan per porsi.
   Future<void> _ambilEstimasi(LatLng tujuan) async {
+    setState(() => _estimasiGagal = false);
     try {
       final hasil = await ApiService().estimasiTarif(
         layanan: 'BohFood',
@@ -139,7 +166,10 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
     } catch (e) {
       debugPrint('Estimasi ongkir gagal: $e');
       if (!mounted || _tujuan != tujuan) return;
-      setState(() => _estimasi = null);
+      setState(() {
+        _estimasi = null;
+        _estimasiGagal = true;
+      });
     }
   }
 
@@ -150,10 +180,13 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
       return;
     }
     setState(() => _mengirim = true);
+    final alamat = _alamatTujuan.isEmpty ? 'Titik yang dipilih di peta' : _alamatTujuan;
+    final patokan = _patokan.text.trim();
     try {
       final res = await ApiService().createOrder(
         pickup: _warung.nama,
-        dropoff: _alamatTujuan.isEmpty ? 'Titik yang dipilih di peta' : _alamatTujuan,
+        // Driver membaca alamat tujuan, jadi patokannya ikut di situ.
+        dropoff: patokan.isEmpty ? alamat : '$alamat (Patokan: $patokan)',
         service: 'BohFood',
         paymentMethod: _metode == 'PayAntar' ? 'wallet' : 'cash',
         pickupLat: _warung.posisi.latitude,
@@ -186,6 +219,9 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
     final biayaJasa = estimasi?.biayaJasa ?? 0;
     final total = k.subtotal + ongkir + biayaJasa;
     final tunai = _metode == 'Tunai';
+    // Saldo belum terbaca dianggap cukup; server yang menolak kalau ternyata
+    // kurang. Saldo yang tertahan pesanan lain tidak terlihat dari sini.
+    final saldoCukup = _saldo == null || _saldo! >= total;
 
     return Scaffold(
       appBar: AppBar(
@@ -195,11 +231,8 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
       ),
       body: ListView(
         physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
-          const LangkahPesan(aktif: 3),
-          const SizedBox(height: 20),
-
           _bagian(
             'Diantar ke',
             _kartu(
@@ -210,7 +243,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: _mencariLokasi
-                        ? const Text('Mencari lokasimu…', style: TextStyle(color: Colors.grey, fontSize: 13))
+                        ? Text('Mencari lokasimu…', style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 13))
                         : Text(
                             _tujuan == null ? 'Belum ada titik antar' : _alamatTujuan,
                             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _tujuan == null ? AppTheme.errorColor : null),
@@ -220,6 +253,17 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                   ),
                   TextButton(onPressed: _ubahAlamat, child: Text(_tujuan == null ? 'Pilih' : 'Ubah')),
                 ],
+              ),
+            ),
+            bawah: TextField(
+              controller: _patokan,
+              maxLength: 150,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                hintText: 'Patokan untuk driver, mis. pagar hijau sebelah masjid',
+                prefixIcon: Icon(Icons.signpost_outlined, size: 20),
+                isDense: true,
+                counterText: '',
               ),
             ),
           ),
@@ -232,21 +276,26 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                 children: [
                   for (final b in k.baris)
                     Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      padding: const EdgeInsets.symmetric(vertical: 6),
                       child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          SizedBox(width: 32, child: Text('${b.jumlah}×', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13))),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Text(b.menu.nama, style: const TextStyle(fontSize: 13)),
-                                if (b.opsi.isNotEmpty) Text(b.teksOpsi, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+                                Text(b.menu.nama, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                                if (b.opsi.isNotEmpty) Text(b.teksOpsi, style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context))),
+                                Text(rupiah(b.subtotal), style: const TextStyle(fontSize: 13)),
                               ],
                             ),
                           ),
-                          Text(rupiah(b.subtotal), style: const TextStyle(fontSize: 13)),
+                          // Jumlah diubah di sini, tanpa kembali ke menu dan
+                          // tanpa menebak varian mana yang dimaksud.
+                          PengaturJumlah(
+                            jumlah: b.jumlah,
+                            saatKurang: _mengirim ? null : () => _ubahBaris(b, -1),
+                            saatTambah: _mengirim || b.jumlah >= Keranjang.maksPorsi ? null : () => _ubahBaris(b, 1),
+                          ),
                         ],
                       ),
                     ),
@@ -254,8 +303,8 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
                       onPressed: _mengirim ? null : () => Navigator.pop(context),
-                      icon: const Icon(Icons.edit_outlined, size: 16),
-                      label: const Text('Ubah pesanan'),
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('Tambah menu lain'),
                       style: TextButton.styleFrom(padding: EdgeInsets.zero, visualDensity: VisualDensity.compact),
                     ),
                   ),
@@ -290,7 +339,12 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                 _KartuMetode(
                   ikon: Icons.account_balance_wallet_outlined,
                   judul: 'PayAntar',
-                  keterangan: 'Dipotong dari saldo setelah makanan diterima',
+                  keterangan: _saldo == null
+                      ? 'Dipotong dari saldo setelah makanan diterima'
+                      : saldoCukup
+                          ? 'Saldo ${rupiah(_saldo!)} · dipotong setelah makanan diterima'
+                          : 'Saldo ${rupiah(_saldo!)} tidak cukup. Pilih Tunai atau isi saldo dari beranda.',
+                  peringatan: !saldoCukup,
                   dipilih: !tunai,
                   isDark: isDark,
                   saatTekan: () => setState(() => _metode = 'PayAntar'),
@@ -313,8 +367,20 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                         ? null
                         : _tujuan == null
                             ? 'pilih titik antar dulu'
-                            : 'sedang dihitung',
+                            : _estimasiGagal
+                                ? 'gagal dihitung'
+                                : 'sedang dihitung',
                   ),
+                  if (_estimasiGagal && _tujuan != null)
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton.icon(
+                        onPressed: () => _ambilEstimasi(_tujuan!),
+                        icon: const Icon(Icons.refresh, size: 16),
+                        label: const Text('Hitung ulang ongkir'),
+                        style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                      ),
+                    ),
                   if (biayaJasa > 0) _barisHarga('Biaya jasa aplikasi', biayaJasa),
                   const Divider(height: 20),
                   _barisHarga('Total', total, tebal: true),
@@ -322,14 +388,14 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.info_outline, size: 15, color: Colors.grey),
+                      Icon(Icons.info_outline, size: 15, color: AppTheme.teksRedup(context)),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
                           tunai
                               ? 'Driver membayar dulu ke warung. Kamu bayar total ini ke driver saat makanan tiba.'
                               : 'Driver membayar dulu ke warung. Saldo PayAntar-mu dipotong setelah makanan diterima.',
-                          style: const TextStyle(fontSize: 11, color: Colors.grey),
+                          style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)),
                         ),
                       ),
                     ],
@@ -348,7 +414,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
             // Ongkirnya belum diketahui selama estimasi belum datang, dan
             // tombolnya menyebut total — jadi jangan biarkan ditekan sebelum
             // angka yang tertulis di situ benar.
-            onPressed: estimasi == null || _mengirim || _mencariLokasi ? null : _pesan,
+            onPressed: estimasi == null || _mengirim || _mencariLokasi || (!tunai && !saldoCukup) ? null : _pesan,
             child: _mengirim
                 ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
                 : Text('Pesan sekarang · ${rupiah(total)}'),
@@ -358,12 +424,13 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
     );
   }
 
-  Widget _bagian(String judul, Widget isi) => Column(
+  Widget _bagian(String judul, Widget isi, {Widget? bawah}) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(judul, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
           const SizedBox(height: 8),
           isi,
+          if (bawah != null) ...[const SizedBox(height: 8), bawah],
           const SizedBox(height: 20),
         ],
       );
@@ -383,10 +450,10 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
         child: Row(
           children: [
             Expanded(
-              child: Text(label, style: TextStyle(fontSize: tebal ? 15 : 13, fontWeight: tebal ? FontWeight.bold : FontWeight.normal, color: tebal ? null : Colors.grey)),
+              child: Text(label, style: TextStyle(fontSize: tebal ? 15 : 13, fontWeight: tebal ? FontWeight.bold : FontWeight.normal, color: tebal ? null : AppTheme.teksRedup(context))),
             ),
             if (keterangan != null)
-              Text(keterangan, style: const TextStyle(fontSize: 11, color: Colors.grey, fontStyle: FontStyle.italic))
+              Text(keterangan, style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context), fontStyle: FontStyle.italic))
             else
               Text(
                 rupiah(nilai),
@@ -402,9 +469,10 @@ class _KartuMetode extends StatelessWidget {
   final String judul;
   final String keterangan;
   final bool dipilih;
+  final bool peringatan; // keterangan ditulis merah: metode ini tidak bisa dipakai sekarang
   final bool isDark;
   final VoidCallback saatTekan;
-  const _KartuMetode({required this.ikon, required this.judul, required this.keterangan, required this.dipilih, required this.isDark, required this.saatTekan});
+  const _KartuMetode({required this.ikon, required this.judul, required this.keterangan, required this.dipilih, required this.isDark, required this.saatTekan, this.peringatan = false});
 
   @override
   Widget build(BuildContext context) {
@@ -427,7 +495,7 @@ class _KartuMetode extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(judul, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  Text(keterangan, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                  Text(keterangan, style: TextStyle(color: peringatan ? AppTheme.errorColor : AppTheme.teksRedup(context), fontSize: 11)),
                 ],
               ),
             ),

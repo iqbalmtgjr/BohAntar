@@ -73,4 +73,37 @@ void main() {
     expect(tehVarian.grup[1].minimal, 0);
     expect(tehVarian.grup[1].batas, 2);
   });
+
+  test('menu yang harganya di varian tidak tampil Rp 0', () {
+    final kopi = MenuMakanan.dariJson({
+      'id': 'kopi', 'name': 'Kopi', 'price': 0, 'is_available': true,
+      'option_groups': [
+        {
+          'id': '1', 'name': 'Suhu', 'type': 'single', 'required': true,
+          'options': [{'id': 'dingin', 'name': 'Dingin', 'price': 10000}, {'id': 'panas', 'name': 'Panas', 'price': 8000}],
+        },
+        {
+          'id': '2', 'name': 'Topping', 'type': 'multiple', 'required': false,
+          'options': [{'id': 'boba', 'name': 'Boba', 'price': 3000}],
+        },
+      ],
+    });
+    expect(kopi.hargaMulaiDari, 8000);
+    expect(kopi.teksHarga, 'mulai Rp 8.000');
+    expect(tehVarian.teksHarga, 'mulai Rp 5.000');
+    expect(MenuMakanan.dariJson({'id': 's', 'name': 'Soto', 'price': 18000}).teksHarga, 'Rp 18.000');
+  });
+
+  test('ubah jumlah satu baris: nol menghapus, tidak lewat batas server', () {
+    final k = Keranjang(warungKopi)
+      ..tambah(tehVarian, [opsi('manis')])
+      ..tambah(tehVarian, [opsi('lemon')], 49);
+    final lemon = k.barisMenu(tehVarian).last;
+    k.ubah(lemon, 5);
+    expect(k.barisMenu(tehVarian).last.jumlah, 49);
+    k.ubah(lemon, 1);
+    expect(k.barisMenu(tehVarian).last.jumlah, Keranjang.maksPorsi);
+    k.ubah(k.barisMenu(tehVarian).first, -1);
+    expect(k.baris.single.teksOpsi, 'Lemon');
+  });
 }

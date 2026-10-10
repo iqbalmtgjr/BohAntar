@@ -1,9 +1,34 @@
-import { useState, useEffect } from "react";
-import { Store, MapPin, Clock, Salad, Plus, Save, CheckCircle, Power, Tag } from "lucide-react";
-import { BASE, authFetch } from "../../api";
+import { useState, useEffect, useRef } from "react";
+import { Store, MapPin, Clock, Salad, Save, Power, ShoppingBag, Wallet, ImagePlus } from "lucide-react";
+import { BASE, authFetch, api, fileURL } from "../../api";
 import { toast } from "../../components/Feedback";
 import TagihQR from "../../components/TagihQR";
 import SaldoMitra from "../../components/SaldoMitra";
+import PetaTitik from "../../components/PetaTitik";
+
+// Foto dari unggahan disimpan sebagai "/uploads/..."; tautan luar apa adanya.
+const urlFoto = (u) => (u && u.startsWith("/uploads/") ? fileURL(u) : u);
+
+/* Dua nada pendek lewat Web Audio: tanpa berkas suara yang perlu dibundel.
+   Browser hanya mengizinkan suara setelah halaman pernah diklik; kalau belum,
+   diam saja — judul tab dan notifikasi di layar tetap muncul. */
+function bunyiPesananBaru() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    [0, 0.28].forEach(t => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.25, ctx.currentTime + t);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.22);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + t);
+      osc.stop(ctx.currentTime + t + 0.22);
+    });
+  } catch { /* tanpa suara */ }
+}
+
+const hariIni = (iso) => iso && new Date(iso).toDateString() === new Date().toDateString();
 
 // Status pesanan dari sudut pandang warung. Warung tidak mengubah status —
 // driver yang datang, membayar, dan mengantar — jadi daftarnya cuma jendela.
@@ -120,18 +145,57 @@ export default function FoodDashboard({ ownerPhone }) {
     fetchMerchantAndMenus();
   }, [ownerPhone]);
 
-  // Pesanan masuk, disegarkan tiap 15 detik selama halaman terbuka.
+  // Pesanan masuk, disegarkan tiap 15 detik selama halaman terbuka. Pesanan
+  // yang baru muncul berbunyi dan menandai judul tab, supaya warung tahu
+  // sebelum driver berdiri di depan etalase.
+  const sudahDilihat = useRef(null); // Set id pesanan; null = belum pernah dimuat
   useEffect(() => {
     if (!merchant) return;
     const muat = () =>
       authFetch(`${BASE}/food/orders`)
         .then(r => r.json())
-        .then(d => setOrders(Array.isArray(d.orders) ? d.orders : []))
+        .then(d => {
+          const daftar = Array.isArray(d.orders) ? d.orders : [];
+          const baru = sudahDilihat.current
+            ? daftar.filter(o => !sudahDilihat.current.has(o.id) && (o.status === "pending" || o.status === "accepted"))
+            : [];
+          sudahDilihat.current = new Set(daftar.map(o => o.id));
+          if (baru.length) {
+            bunyiPesananBaru();
+            toast.success(`Pesanan baru dari ${baru[0].rider_name || "pelanggan"}`);
+            if (!document.hasFocus()) document.title = `(${baru.length}) Pesanan baru · bohFood`;
+          }
+          setOrders(daftar);
+        })
         .catch(() => {});
     muat();
     const t = setInterval(muat, 15000);
     return () => clearInterval(t);
   }, [merchant]);
+
+  // Judul tab kembali normal begitu warung melihat halamannya.
+  useEffect(() => {
+    const judulAsli = document.title;
+    const pulihkan = () => { if (document.title.includes("Pesanan baru")) document.title = judulAsli; };
+    window.addEventListener("focus", pulihkan);
+    return () => { window.removeEventListener("focus", pulihkan); pulihkan(); };
+  }, []);
+
+  const [mengunggah, setMengunggah] = useState(false);
+  const unggahFoto = (e) => {
+    const berkas = e.target.files?.[0];
+    e.target.value = "";
+    if (!berkas) return;
+    setMengunggah(true);
+    api.uploadFile(berkas)
+      .then(res => {
+        if (!res.url) throw new Error(res.error || "Gagal mengunggah foto");
+        setImageUrl(res.url);
+        toast.success("Foto terunggah. Tekan Simpan supaya tampil di aplikasi.");
+      })
+      .catch(err => toast.error(err.message || "Gagal mengunggah foto"))
+      .finally(() => setMengunggah(false));
+  };
 
   const pakaiLokasiSaya = () => {
     if (!navigator.geolocation) {
@@ -173,11 +237,11 @@ export default function FoodDashboard({ ownerPhone }) {
       .then(data => {
         setMerchant(data);
         setSaving(false);
-        toast.success("Profil toko berhasil diperbarui");
+        toast.success("Profil warung tersimpan");
       })
       .catch(err => {
         setSaving(false);
-        toast.error(err.message || "Gagal menyimpan profil toko");
+        toast.error(err.message || "Gagal menyimpan profil warung");
       });
   };
 
@@ -197,12 +261,12 @@ export default function FoodDashboard({ ownerPhone }) {
       .then(r => r.json())
       .then(data => {
         setMerchant(data);
-        toast.success(updatedStatus ? "Toko sekarang BUKA" : "Toko sekarang TUTUP");
+        toast.success(updatedStatus ? "Warung sekarang BUKA" : "Warung sekarang TUTUP");
       })
       .catch(err => {
         // Status di server gagal berubah; kembalikan tombol ke keadaan sebenarnya.
         setIsOpen(!updatedStatus);
-        toast.error(err.message || "Gagal mengubah status toko");
+        toast.error(err.message || "Gagal mengubah status warung");
       });
   };
 
@@ -210,20 +274,27 @@ export default function FoodDashboard({ ownerPhone }) {
     return <div className="page"><div className="spinner" style={{ margin: "100px auto" }}></div></div>;
   }
 
-  // Metrik untuk strip statistik mobile
-  const availableCount = menus.filter(m => m.is_available).length;
-  const avgPrice = menus.length
-    ? Math.round(menus.reduce((sum, m) => sum + (m.price || 0), 0) / menus.length)
-    : 0;
-  const avgPriceLabel = avgPrice >= 1000
-    ? `Rp ${Math.round(avgPrice / 1000)}rb`
-    : `Rp ${avgPrice.toLocaleString("id-ID")}`;
+  // Angka harian yang membantu warung bekerja, dihitung dari daftar pesanan.
+  // ponytail: server mengirim 50 pesanan terakhir, jadi warung yang lebih dari
+  // 50 pesanan sehari melihat angka yang terpotong. Tambah endpoint ringkasan
+  // kalau itu terjadi.
+  const pesananHariIni = orders.filter(o => hariIni(o.created_at) && o.status !== "cancelled" && o.status !== "expired");
+  const uangMakanan = pesananHariIni
+    .filter(o => o.status === "picked_up" || o.status === "completed")
+    .reduce((jumlah, o) => jumlah + Number(o.food_total || 0), 0);
+  const menungguDiambil = orders.filter(o => o.status === "pending" || o.status === "accepted").length;
+  const ringkas = (n) => (n >= 1000000 ? `Rp ${(n / 1000000).toFixed(1).replace(".", ",")}jt` : n >= 1000 ? `Rp ${Math.round(n / 1000)}rb` : `Rp ${n}`);
+  const statistik = [
+    { icon: ShoppingBag, label: "Pesanan hari ini", value: pesananHariIni.length, tint: "rgba(217, 119, 6, 0.12)", color: "#D97706" },
+    { icon: Clock, label: "Menunggu diambil", value: menungguDiambil, tint: "rgba(37, 99, 235, 0.10)", color: "#2563EB" },
+    { icon: Wallet, label: "Dibayar driver", value: ringkas(uangMakanan), tint: "rgba(5, 150, 105, 0.12)", color: "#059669" }
+  ];
 
   return (
     <div className="page">
       <div className="page-header dash-header">
         <h1>Dashboard bohFood</h1>
-        <p>Kelola kedai kuliner dan pantau menu penjualan Anda</p>
+        <p>Kelola warung, pantau pesanan masuk, dan tagih pembeli di tempat</p>
       </div>
 
       {/* ===== MOBILE: kartu status toko + strip statistik ===== */}
@@ -263,12 +334,12 @@ export default function FoodDashboard({ ownerPhone }) {
                   fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase",
                   color: "rgba(255,255,255,0.88)"
                 }}>
-                  Status Toko
+                  Status Warung
                 </div>
                 <button
                   onClick={toggleShopStatus}
-                  aria-label={isOpen ? "Tutup toko" : "Buka toko"}
-                  title={isOpen ? "Tutup toko" : "Buka toko"}
+                  aria-label={isOpen ? "Tutup warung" : "Buka warung"}
+                  title={isOpen ? "Tutup warung" : "Buka warung"}
                   style={{
                     marginLeft: "auto", width: 32, height: 32, borderRadius: 10, cursor: "pointer",
                     display: "flex", alignItems: "center", justifyContent: "center",
@@ -282,7 +353,7 @@ export default function FoodDashboard({ ownerPhone }) {
               {/* sisakan ruang kanan untuk ilustrasi tudung saji */}
               <div style={{ marginTop: 16, maxWidth: "calc(100% - 84px)" }}>
                 <div style={{ fontSize: "clamp(22px, 7vw, 32px)", fontWeight: 800, letterSpacing: -0.6, lineHeight: 1.1, whiteSpace: "nowrap" }}>
-                  {isOpen ? "Toko Buka" : "Toko Tutup"}
+                  {isOpen ? "Warung Buka" : "Warung Tutup"}
                 </div>
                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.82)", marginTop: 4 }}>
                   {isOpen ? "Sedang menerima pesanan" : "Sementara tidak menerima pesanan"}
@@ -309,11 +380,7 @@ export default function FoodDashboard({ ownerPhone }) {
             background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 18,
             boxShadow: "0 12px 26px -16px rgba(15, 23, 42, 0.45)", overflow: "hidden"
           }}>
-            {[
-              { icon: Salad, label: "Menu", value: menus.length, tint: "rgba(217, 119, 6, 0.12)", color: "#D97706" },
-              { icon: CheckCircle, label: "Tersedia", value: availableCount, tint: "rgba(5, 150, 105, 0.12)", color: "#059669" },
-              { icon: Tag, label: "Rata Harga", value: avgPriceLabel, tint: "rgba(37, 99, 235, 0.10)", color: "#2563EB" }
-            ].map((s, i) => (
+            {statistik.map((s, i) => (
               <div key={s.label} style={{ padding: "15px 6px 13px", textAlign: "center", borderLeft: i ? "1px solid var(--border)" : "none" }}>
                 <div style={{
                   width: 34, height: 34, margin: "0 auto 8px", borderRadius: 11,
@@ -341,47 +408,58 @@ export default function FoodDashboard({ ownerPhone }) {
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
           <div className="card">
             <div className="card-title" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span>Profil Restoran</span>
+              <span>Profil Warung</span>
               {merchant && (
                 <button 
                   onClick={toggleShopStatus}
                   className={`btn btn-sm ${isOpen ? "btn-success" : "btn-danger"}`}
                   style={{ fontSize: 11 }}
                 >
-                  {isOpen ? "Toko BUKA" : "Toko TUTUP"}
+                  {isOpen ? "Warung BUKA" : "Warung TUTUP"}
                 </button>
               )}
             </div>
 
             <form onSubmit={handleSaveMerchant}>
               <div className="input-group">
-                <label>Nama Kedai / Restoran</label>
+                <label>Nama Warung</label>
                 <input className="input" placeholder="Contoh: Soto Mak Nyus" value={name} onChange={e => setName(e.target.value)} required />
               </div>
               <div className="input-group">
-                <label>Alamat Restoran</label>
+                <label>Alamat Warung</label>
                 <textarea className="input" placeholder="Jl. Gajah Mada No. 12, Pontianak" value={address} onChange={e => setAddress(e.target.value)} required style={{ resize: "none", height: 80 }} />
               </div>
               <div className="input-group">
                 <label>Lokasi warung — titik jemput driver &amp; dasar ongkir</label>
-                <div style={{ display: "flex", gap: 8 }}>
-                  <input className="input" placeholder="Lintang, mis. -0.0784" value={lat} onChange={e => setLat(e.target.value)} />
-                  <input className="input" placeholder="Bujur, mis. 111.4933" value={lng} onChange={e => setLng(e.target.value)} />
+                {/* Geser peta sampai pin tepat di pintu warung. Dulu lintang dan
+                    bujur diketik tangan, angka yang tidak dimiliki pemilik warung. */}
+                <PetaTitik lat={lat} lng={lng} onChange={(a, b) => { setLat(a); setLng(b); }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                  <button type="button" className="btn btn-sm" onClick={pakaiLokasiSaya}>
+                    <MapPin size={14} /> Gunakan lokasi saya
+                  </button>
+                  <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                    {Number(lat) && Number(lng) ? `${lat}, ${lng}` : "Belum ada titik"}
+                  </span>
                 </div>
-                <button type="button" className="btn btn-sm" onClick={pakaiLokasiSaya} style={{ marginTop: 8 }}>
-                  <MapPin size={14} /> Gunakan lokasi saya (buka halaman ini di warung)
-                </button>
                 <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-                  Warung tanpa lokasi tidak tampil di aplikasi pemesan.
+                  Geser peta sampai pin merah tepat di warung, lalu Simpan. Warung tanpa lokasi tidak tampil di aplikasi pemesan.
                 </p>
               </div>
               <div className="input-group">
-                <label>Foto Banner Resto (URL)</label>
-                <input className="input" placeholder="https://images.unsplash.com/..." value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
+                <label>Foto Warung</label>
+                {imageUrl && (
+                  <img src={urlFoto(imageUrl)} alt="" style={{ width: "100%", height: 120, objectFit: "cover", borderRadius: 10, marginBottom: 8 }} />
+                )}
+                <label className="btn btn-sm" style={{ cursor: mengunggah ? "wait" : "pointer", display: "inline-flex" }}>
+                  <ImagePlus size={14} /> {mengunggah ? "Mengunggah..." : imageUrl ? "Ganti foto" : "Unggah foto"}
+                  <input type="file" accept="image/*" onChange={unggahFoto} disabled={mengunggah} hidden />
+                </label>
+                <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>Tampak depan warung atau menu andalan. Maksimal 5 MB.</p>
               </div>
 
               <button type="submit" className="btn btn-primary" style={{ background: "#F59E0B", width: "100%", justifyContent: "center", padding: 12 }} disabled={saving}>
-                <Save size={16} /> {saving ? "Menyimpan..." : "Simpan Profil Resto"}
+                <Save size={16} /> {saving ? "Menyimpan..." : "Simpan Profil Warung"}
               </button>
             </form>
           </div>
@@ -405,6 +483,23 @@ export default function FoodDashboard({ ownerPhone }) {
 
               {/* Terpisah dari Pesanan Masuk karena dipakai untuk pembeli yang
                   datang sendiri, bukan pesanan antar. */}
+              {/* Ringkasan hari ini lebih dulu (desktop; di mobile jadi strip di
+                  bawah kartu status). Dulu "Total Menu" dan "Status Toko" —
+                  angka yang tidak membantu warung bekerja. */}
+              <div className="grid-3 portal-desktop-only">
+                {statistik.map(s => (
+                  <div key={s.label} className="stat-card">
+                    <div className="stat-icon" style={{ background: s.tint, color: s.color }}>
+                      <s.icon size={24} />
+                    </div>
+                    <div>
+                      <div className="stat-label">{s.label}</div>
+                      <div className="stat-value">{s.value}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               <SaldoMitra versi={versiSaldo} />
               <TagihQR saldoMilik="warung" onLunas={() => setVersiSaldo(v => v + 1)} />
 
@@ -445,34 +540,11 @@ export default function FoodDashboard({ ownerPhone }) {
                 )}
               </div>
 
-              {/* Stats overview (desktop; di mobile diganti kartu status + strip statistik) */}
-              <div className="grid-2 portal-desktop-only">
-                <div className="stat-card" style={{ border: "1px solid rgba(245,158,11,0.2)" }}>
-                  <div className="stat-icon" style={{ background: "rgba(245,158,11,0.1)", color: "#F59E0B" }}>
-                    <Salad size={24} />
-                  </div>
-                  <div>
-                    <div className="stat-label">Total Menu Jualan</div>
-                    <div className="stat-value">{menus.length} Item</div>
-                  </div>
-                </div>
-
-                <div className="stat-card" style={{ border: `1px solid ${isOpen ? "rgba(16,185,129,0.2)" : "rgba(239,68,68,0.2)"}` }}>
-                  <div className="stat-icon" style={{ background: isOpen ? "rgba(16,185,129,0.1)" : "rgba(239,68,68,0.1)", color: isOpen ? "#10B981" : "#EF4444" }}>
-                    <Store size={24} />
-                  </div>
-                  <div>
-                    <div className="stat-label">Status Toko</div>
-                    <div className="stat-value">{isOpen ? "Buka (Menerima Order)" : "Tutup Sementara"}</div>
-                  </div>
-                </div>
-              </div>
-
               {/* Cover Banner */}
               <div className="card" style={{ padding: 0, overflow: "hidden", position: "relative" }}>
                 <div style={{ height: 260, background: "#1E293B" }}>
-                  <img 
-                    src={imageUrl || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600"} 
+                  <img
+                    src={urlFoto(imageUrl) || "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600"}
                     alt={name} 
                     style={{ width: "100%", height: "100%", objectFit: "cover", opacity: 0.8 }}
                   />
@@ -489,9 +561,9 @@ export default function FoodDashboard({ ownerPhone }) {
           ) : (
             <div className="card" style={{ textAlign: "center", padding: "60px 40px" }}>
               <Store size={48} style={{ color: "var(--border)", margin: "0 auto 16px" }} />
-              <h2>Lengkapi Profil Restoran Pertama Anda</h2>
+              <h2>Lengkapi Profil Warung Anda</h2>
               <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4, maxWidth: 400, margin: "8px auto 20px" }}>
-                Anda belum menginput data toko jualan Anda. Silakan isi form di sebelah kiri untuk mengaktifkan dashboard bohFood Anda.
+                Isi nama, alamat, dan lokasi warung di formulir sebelah kiri supaya warung tampil di aplikasi bohAntar.
               </p>
             </div>
           )}

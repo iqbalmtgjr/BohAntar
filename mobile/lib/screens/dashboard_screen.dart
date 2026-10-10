@@ -1324,7 +1324,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   ),
                 ).then((_) => _fetchUserProfile());
               }),
-              _buildServiceButton(Icons.restaurant, 'BohFood', 'Pesan makanan', const Color(0xFFFF4D4D), () {
+              _buildServiceButton(Icons.restaurant, 'BohFood', 'Pesan makanan', const Color(0xFFF59E0B), () {
                 final nama = _userName.isNotEmpty ? _userName : widget.name;
                 Navigator.push<String>(
                   context,
@@ -1542,8 +1542,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               final order = ordersList[index];
             final pickup = order['pickup'] ?? '';
             final dropoff = order['dropoff'] ?? '';
-            // Makanan: yang dibayar pemesan adalah ongkir plus uang makanan.
-            final fare = ((order['fare'] as num?)?.toDouble() ?? 0.0) + ((order['food_total'] as num?)?.toDouble() ?? 0.0);
+            // Yang dibayar pemesan: ongkir, biaya jasa, dan (makanan) uang makanan.
+            final fare = ((order['fare'] as num?)?.toDouble() ?? 0.0) +
+                ((order['biaya_jasa'] as num?)?.toDouble() ?? 0.0) +
+                ((order['food_total'] as num?)?.toDouble() ?? 0.0);
             final status = order['status'] ?? 'pending';
             final service = order['service'] ?? 'Layanan';
             
@@ -3115,6 +3117,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     final items = (o['items'] as List?) ?? [];
     final talangan = (o['food_total'] as num?)?.toDouble() ?? 0;
     final ongkir = (o['fare'] as num?)?.toDouble() ?? 0;
+    // Pada pesanan tunai biaya jasa ikut diterima driver dari pelanggan, lalu
+    // disetor lewat saldo. Kalau tidak ikut ditagih, driver yang menanggungnya.
+    final biayaJasa = (o['biaya_jasa'] as num?)?.toDouble() ?? 0;
     final tunai = (o['payment_method'] ?? 'cash') != 'wallet';
     final catatan = tampilkanCatatan ? (o['package_notes'] ?? '').toString().trim() : '';
 
@@ -3162,7 +3167,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   ),
                   Text(
                     _rupiah(((it['price'] as num?)?.toDouble() ?? 0) * ((it['qty'] as num?)?.toDouble() ?? 0)),
-                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                    style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context)),
                   ),
                 ],
               ),
@@ -3178,9 +3183,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           const SizedBox(height: 4),
           Text(
             tunai
-                ? 'Tagih ke pelanggan ${_rupiah(talangan + ongkir)} (makanan + ongkir)'
+                ? 'Tagih ke pelanggan ${_rupiah(talangan + ongkir + biayaJasa)} (makanan + ongkir${biayaJasa > 0 ? ' + biaya jasa' : ''})'
                 : 'PayAntar: uang makanan + ongkir masuk saldo kamu setelah selesai',
-            style: const TextStyle(fontSize: 11, color: Colors.grey),
+            style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)),
           ),
           if (catatan.isNotEmpty)
             Padding(

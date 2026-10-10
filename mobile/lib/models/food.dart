@@ -13,6 +13,9 @@ class Warung {
   final bool buka;
   final LatLng posisi;
   final double jarakKm; // -1 kalau posisi pemesan tidak diketahui
+  final double ongkir; // ke posisi pemesan sekarang; 0 kalau posisinya tidak diketahui
+  final String infoBuka; // selama tutup, mis. "Buka lagi besok 07.00"
+  final String cocokMenu; // menu yang cocok dengan kata pencarian
 
   Warung.dariJson(Map<String, dynamic> j)
       : id = (j['id'] ?? '').toString(),
@@ -21,7 +24,10 @@ class Warung {
         gambar = (j['image_url'] ?? '').toString(),
         buka = j['is_open'] == true,
         posisi = LatLng((j['lat'] as num?)?.toDouble() ?? 0, (j['lng'] as num?)?.toDouble() ?? 0),
-        jarakKm = (j['jarak_km'] as num?)?.toDouble() ?? -1;
+        jarakKm = (j['jarak_km'] as num?)?.toDouble() ?? -1,
+        ongkir = (j['ongkir'] as num?)?.toDouble() ?? 0,
+        infoBuka = (j['info_buka'] ?? '').toString(),
+        cocokMenu = (j['cocok_menu'] ?? '').toString();
 }
 
 class MenuMakanan {
@@ -44,6 +50,26 @@ class MenuMakanan {
         ];
 
   bool get punyaVarian => grup.isNotEmpty;
+
+  /// Harga terendah yang mungkin dibayar: harga dasar + varian wajib termurah.
+  /// Menu Kasvo sering menaruh harganya di varian (Kopi Rp0, Panas Rp8.000),
+  /// dan tanpa ini daftar menu menulis "Rp 0". Sama dengan hargaMulaiDari di
+  /// kasir Kasvo.
+  double get hargaMulaiDari {
+    var total = harga;
+    for (final g in grup) {
+      if (g.minimal == 0) continue;
+      final murah = [for (final o in g.opsi) o.harga]..sort();
+      total += murah.take(g.minimal).fold(0.0, (a, b) => a + b);
+    }
+    return total;
+  }
+
+  /// Ada varian berbayar, jadi harga akhirnya bisa lebih tinggi dari
+  /// hargaMulaiDari — ditulis "mulai Rp…".
+  bool get hargaBisaNaik => grup.any((g) => g.opsi.any((o) => o.harga > 0));
+
+  String get teksHarga => hargaBisaNaik ? 'mulai ${rupiah(hargaMulaiDari)}' : rupiah(hargaMulaiDari);
 }
 
 /// Satu kelompok varian ("Suhu", "Topping"). Aturannya sama dengan server
@@ -114,9 +140,29 @@ class Keranjang {
   /// Total porsi menu ini, semua varian dijumlah.
   int jumlah(MenuMakanan m) => _isi.values.where((b) => b.menu.id == m.id).fold(0, (a, b) => a + b.jumlah);
 
+  /// Server menolak lebih dari 50 porsi per baris (maksPorsiPerMenu).
+  static const maksPorsi = 50;
+
   void tambah(MenuMakanan m, [List<OpsiMenu> opsi = const [], int n = 1]) {
     final k = _kunci(m, opsi);
-    _isi[k] = BarisKeranjang(m, _isi[k]?.opsi ?? opsi, (_isi[k]?.jumlah ?? 0) + n);
+    final jumlah = (_isi[k]?.jumlah ?? 0) + n;
+    _isi[k] = BarisKeranjang(m, _isi[k]?.opsi ?? opsi, jumlah > maksPorsi ? maksPorsi : jumlah);
+  }
+
+  /// Baris-baris satu menu — menu bervarian bisa punya beberapa.
+  List<BarisKeranjang> barisMenu(MenuMakanan m) => _isi.values.where((b) => b.menu.id == m.id).toList();
+
+  /// Ubah jumlah satu baris tertentu; sampai nol berarti barisnya dihapus.
+  void ubah(BarisKeranjang b, int selisih) {
+    final k = _kunci(b.menu, b.opsi);
+    final lama = _isi[k];
+    if (lama == null) return;
+    final n = lama.jumlah + selisih;
+    if (n <= 0) {
+      _isi.remove(k);
+    } else if (n <= maksPorsi) {
+      _isi[k] = BarisKeranjang(lama.menu, lama.opsi, n);
+    }
   }
 
   /// Kurangi satu porsi. Untuk menu bervarian yang berkurang adalah varian

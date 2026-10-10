@@ -89,13 +89,31 @@ func ambilMenuKasvo(uuid string) (bool, []FoodMenu, error) {
 	return isi.Buka, isi.Menus, nil
 }
 
+// statusToko adalah keadaan satu toko Kasvo menurut jadwal operasionalnya.
+// Info terisi selama tutup, mis. "Buka lagi besok 07.00".
+type statusToko struct {
+	Buka bool   `json:"buka"`
+	Info string `json:"info"`
+}
+
 // bukaKasvo menanyakan jam buka beberapa toko sekaligus. Kalau Kasvo tidak bisa
 // dihubungi semuanya dianggap tutup — menunya pun tidak akan bisa dibaca.
-func bukaKasvo(uuids []string) map[string]bool {
-	hasil := map[string]bool{}
+func bukaKasvo(uuids []string) map[string]statusToko {
+	hasil := map[string]statusToko{}
 	if err := panggilKasvo("/api/bohfood/buka?uuid="+url.QueryEscape(strings.Join(uuids, ",")), &hasil); err != nil {
 		log.Printf("jam buka toko Kasvo gagal dibaca: %v", err)
-		return map[string]bool{}
+		return map[string]statusToko{}
+	}
+	return hasil
+}
+
+// cariMenuKasvo menanyakan toko Kasvo mana yang menjual menu bernama mirip q:
+// uuid → nama menu pertama yang cocok. Gagal = tidak ada yang cocok.
+func cariMenuKasvo(q string, uuids []string) map[string]string {
+	hasil := map[string]string{}
+	if err := panggilKasvo("/api/bohfood/cari?q="+url.QueryEscape(q)+"&uuid="+url.QueryEscape(strings.Join(uuids, ",")), &hasil); err != nil {
+		log.Printf("pencarian menu Kasvo gagal: %v", err)
+		return map[string]string{}
 	}
 	return hasil
 }

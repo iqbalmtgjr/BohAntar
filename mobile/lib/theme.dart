@@ -17,6 +17,12 @@ class AppTheme {
   static const Color textSecondary = Color(0xFF64748B); // Slate 500
   static const Color errorColor = Color(0xFFEF4444); // Red 500
 
+  /// Teks keterangan yang tetap terbaca di kedua tema: Slate 500 di atas putih
+  /// 4,8:1, Slate 400 di atas kartu gelap 5,7:1. Colors.grey (#9E9E9E) di atas
+  /// putih cuma 2,7:1, di bawah batas WCAG 4,5:1 untuk teks kecil.
+  static Color teksRedup(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark ? const Color(0xFF94A3B8) : textSecondary;
+
   // Light Theme Configuration
   static ThemeData get lightTheme {
     return ThemeData(

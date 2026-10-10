@@ -277,38 +277,78 @@ func foodMerchantsHandler(w http.ResponseWriter, r *http.Request) {
 		Lat     float64 `json:"lat"`
 		Lng     float64 `json:"lng"`
 		JarakKM float64 `json:"jarak_km"` // -1 kalau pemesan tidak mengirim posisinya
+		// Ongkir kalau diantar ke posisi pemesan sekarang. Rumus dan jaraknya
+		// sama dengan /api/tarif/estimasi, jadi angkanya sama dengan yang nanti
+		// ditagih. 0 kalau posisinya tidak diketahui.
+		Ongkir    float64 `json:"ongkir"`
+		InfoBuka  string  `json:"info_buka"`  // selama tutup, mis. "Buka lagi besok 07.00"
+		CocokMenu string  `json:"cocok_menu"` // menu yang cocok dengan pencarian ?q=
+		kasvo     string
 	}
 	lat, _ := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
 	lng, _ := strconv.ParseFloat(r.URL.Query().Get("lng"), 64)
 	adaPosisi := koordinatValid(lat, lng)
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	tarif := ambilTarif("BohFood")
 
 	daftar := make([]warung, 0)
-	kasvo := map[int]string{} // indeks di daftar → uuid toko Kasvo
+	var uuids []string
 	for rows.Next() {
 		var x warung
-		var uuid string
-		if err := rows.Scan(&x.ID, &x.Nama, &x.Alamat, &x.Gambar, &x.Buka, &x.Lat, &x.Lng, &uuid); err != nil {
+		if err := rows.Scan(&x.ID, &x.Nama, &x.Alamat, &x.Gambar, &x.Buka, &x.Lat, &x.Lng, &x.kasvo); err != nil {
 			continue
 		}
 		x.JarakKM = -1
 		if adaPosisi {
 			x.JarakKM = jarakKM(lat, lng, x.Lat, x.Lng)
+			x.Ongkir = hitungOngkos(tarif, x.JarakKM*1000)
 		}
-		if uuid != "" {
-			kasvo[len(daftar)] = uuid
+		if x.kasvo != "" {
+			uuids = append(uuids, x.kasvo)
 		}
 		daftar = append(daftar, x)
 	}
 	// Jam buka toko Kasvo diatur di Kasvo; satu panggilan untuk semuanya.
-	if len(kasvo) > 0 {
-		uuids := make([]string, 0, len(kasvo))
-		for _, u := range kasvo {
-			uuids = append(uuids, u)
+	if len(uuids) > 0 {
+		status := bukaKasvo(uuids)
+		for i := range daftar {
+			if s, ok := status[daftar[i].kasvo]; daftar[i].kasvo != "" {
+				daftar[i].Buka = daftar[i].Buka && ok && s.Buka
+				if ok && !s.Buka {
+					daftar[i].InfoBuka = s.Info
+				}
+			}
 		}
-		buka := bukaKasvo(uuids)
-		for i, u := range kasvo {
-			daftar[i].Buka = daftar[i].Buka && buka[u]
+	}
+	// Pencarian mencocokkan nama warung, alamat, dan nama menu: "soto" harus
+	// menemukan warung yang menjual soto walau namanya "Warung Bu Ani".
+	if q != "" {
+		menuLokal := map[string]string{}
+		if rs, err := db.Query("SELECT merchant_id, MIN(name) FROM food_menus WHERE name LIKE ? GROUP BY merchant_id", "%"+q+"%"); err == nil {
+			for rs.Next() {
+				var id, nama string
+				if rs.Scan(&id, &nama) == nil {
+					menuLokal[id] = nama
+				}
+			}
+			rs.Close()
 		}
+		menuKasvo := map[string]string{}
+		if len(uuids) > 0 {
+			menuKasvo = cariMenuKasvo(q, uuids)
+		}
+		tersaring := daftar[:0]
+		for _, x := range daftar {
+			if x.kasvo != "" {
+				x.CocokMenu = menuKasvo[x.kasvo]
+			} else {
+				x.CocokMenu = menuLokal[x.ID]
+			}
+			if strings.Contains(strings.ToLower(x.Nama), q) || strings.Contains(strings.ToLower(x.Alamat), q) || x.CocokMenu != "" {
+				tersaring = append(tersaring, x)
+			}
+		}
+		daftar = tersaring
 	}
 	// Yang buka dulu, lalu yang terdekat.
 	sort.SliceStable(daftar, func(i, j int) bool {

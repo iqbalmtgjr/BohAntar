@@ -36,9 +36,21 @@ func kasvoMenuUji(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.Path, "/api/bohfood/toko/") && strings.HasSuffix(r.URL.Path, "/menu") && !strings.Contains(r.URL.Path, "tak-ada"):
 		w.Write([]byte(menuKasvoUji))
 	case r.URL.Path == "/api/bohfood/buka":
-		hasil := map[string]bool{}
+		hasil := map[string]statusToko{}
 		for _, u := range strings.Split(r.URL.Query().Get("uuid"), ",") {
-			hasil[u] = u != "toko-tutup"
+			if strings.Contains(u, "tutup") {
+				hasil[u] = statusToko{Buka: false, Info: "Buka lagi besok 07.00"}
+			} else {
+				hasil[u] = statusToko{Buka: true}
+			}
+		}
+		json.NewEncoder(w).Encode(hasil)
+	case r.URL.Path == "/api/bohfood/cari":
+		hasil := map[string]string{}
+		if strings.Contains("kopi susu", r.URL.Query().Get("q")) {
+			for _, u := range strings.Split(r.URL.Query().Get("uuid"), ",") {
+				hasil[u] = "Kopi Susu"
+			}
 		}
 		json.NewEncoder(w).Encode(hasil)
 	default:
@@ -70,12 +82,15 @@ func TestMenuKasvoDibacaLangsung(t *testing.T) {
 		t.Error("balasan 404 dari Kasvo dianggap menu sah")
 	}
 
-	if b := bukaKasvo([]string{"toko-1", "toko-tutup"}); !b["toko-1"] || b["toko-tutup"] {
+	if b := bukaKasvo([]string{"toko-1", "toko-tutup"}); !b["toko-1"].Buka || b["toko-tutup"].Buka || b["toko-tutup"].Info == "" {
 		t.Errorf("jam buka terbaca salah: %v", b)
+	}
+	if c := cariMenuKasvo("kopi", []string{"toko-1"}); c["toko-1"] != "Kopi Susu" {
+		t.Errorf("pencarian menu terbaca salah: %v", c)
 	}
 
 	kasvoToken = "token-lain"
-	if b := bukaKasvo([]string{"toko-1"}); b["toko-1"] {
+	if b := bukaKasvo([]string{"toko-1"}); b["toko-1"].Buka {
 		t.Error("Kasvo menolak token tapi toko tetap dianggap buka")
 	}
 }
@@ -192,6 +207,34 @@ func TestGabungKasvoSampaiTersambung(t *testing.T) {
 	db.QueryRow("SELECT restaurant_name FROM food_merchants WHERE id = ?", w.ID).Scan(&nama)
 	if nama != "Kopi Uji Baru" {
 		t.Errorf("nama warung tidak ikut Kasvo: %q", nama)
+	}
+
+	// Daftar warung: ongkir dari posisi pemesan, dan pencarian menemukan warung
+	// lewat nama menunya.
+	cari := func(query string) []map[string]interface{} {
+		r := httptest.NewRequest(http.MethodGet, "/api/food/merchants?lat=-0.08&lng=111.50&"+query, nil)
+		rec := httptest.NewRecorder()
+		foodMerchantsHandler(rec, r)
+		var hasil struct{ Merchants []map[string]interface{} }
+		json.Unmarshal(rec.Body.Bytes(), &hasil)
+		return hasil.Merchants
+	}
+	temukan := func(daftar []map[string]interface{}) map[string]interface{} {
+		for _, m := range daftar {
+			if m["id"] == w.ID {
+				return m
+			}
+		}
+		return nil
+	}
+	if m := temukan(cari("")); m == nil || m["ongkir"].(float64) <= 0 || m["is_open"] != true {
+		t.Fatalf("warung Kasvo di daftar: %v", m)
+	}
+	if m := temukan(cari("q=susu")); m == nil || m["cocok_menu"] != "Kopi Susu" {
+		t.Fatalf("pencarian lewat nama menu tidak menemukan warung: %v", m)
+	}
+	if m := temukan(cari("q=martabak")); m != nil {
+		t.Fatalf("pencarian yang tidak cocok tetap memuat warung: %v", m)
 	}
 
 	// Penumpang biasa membaca menu warung — dulu 403.

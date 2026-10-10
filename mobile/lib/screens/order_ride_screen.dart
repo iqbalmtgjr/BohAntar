@@ -4,6 +4,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:mobile/models/food.dart' show rupiah;
 import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/services/api_service.dart';
 import 'package:mobile/services/maps_service.dart';
@@ -68,6 +69,14 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // BohFood: uang makanan yang ditagih di atas ongkir, dan nama warungnya.
   double _foodTotal = 0;
   String _merchantName = "";
+  // Isi pesanan dan cara bayarnya, supaya penumpang tahu berapa yang harus
+  // disiapkan selama menunggu — dulu baru terlihat di layar sukses.
+  List<dynamic> _itemsMakanan = const [];
+  bool _bayarTunai = true;
+  // Motor, plat, dan bintang driver dari server. Kosong = disembunyikan.
+  String _driverKendaraan = "";
+  double _driverRating = 0;
+  int _driverUlasan = 0;
 
   bool get _kirimBarang => _selectedService == "BohAntar" || _selectedService == "BohSend" || _selectedService == "BohFood";
   bool get _makanan => _selectedService == "BohFood";
@@ -161,6 +170,17 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     super.dispose();
   }
 
+  /// Dipanggil di dalam setState. Server hanya mengirim `driver` selama ada
+  /// driver yang sedang bertugas.
+  void _bacaInfoDriver(dynamic d) {
+    if (d is! Map) return;
+    final kendaraan = (d['kendaraan'] ?? '').toString();
+    final plat = (d['plat'] ?? '').toString();
+    _driverKendaraan = [kendaraan, plat].where((s) => s.isNotEmpty).join(' • ');
+    _driverRating = (d['rating'] as num?)?.toDouble() ?? 0;
+    _driverUlasan = (d['jumlah_ulasan'] as num?)?.toInt() ?? 0;
+  }
+
   /// Membuka kembali pesanan yang sedang berjalan, bukan formulir kosong.
   ///
   /// Penumpang yang menutup layar ini kehilangan peta, status, dan tombol chat
@@ -186,6 +206,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         _driverPhone = o['driver_phone'] ?? '';
         _foodTotal = (o['food_total'] as num?)?.toDouble() ?? 0;
         _merchantName = (o['merchant_name'] ?? '').toString();
+        _itemsMakanan = (o['items'] as List?) ?? const [];
+        _bayarTunai = o['payment_method'] != 'wallet';
+        _bacaInfoDriver(res['driver']);
         _pickupController.text = o['pickup'] ?? '';
         _destinationController.text = o['dropoff'] ?? '';
         if (jemputLat != null && jemputLng != null) {
@@ -770,6 +793,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               setState(() => _driverLatLng = LatLng(lat, lng));
             }
           }
+
+          if (response['driver'] != null) setState(() => _bacaInfoDriver(response['driver']));
 
           if (status == 'accepted' && _orderStatus != 'accepted') {
             setState(() {
@@ -1628,11 +1653,16 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
-          const Text(
-            "Kami sedang mencari driver terdekat untuk kamu\nEstimasi waktu: 2 - 5 menit",
-            style: TextStyle(color: Colors.grey, fontSize: 12),
+          // Tanpa "Estimasi waktu: 2 - 5 menit" — tidak ada yang menghitungnya.
+          Text(
+            "Kami sedang mencari driver terdekat untuk kamu",
+            style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12),
             textAlign: TextAlign.center,
           ),
+          if (_makanan) ...[
+            const SizedBox(height: 16),
+            _ringkasanMakanan(),
+          ],
           const Divider(height: 32),
           // Dulu tombol ini hanya mengembalikan layar ke formulir dan
           // menghentikan polling — pesanannya tetap hidup di server, tetap
@@ -1690,27 +1720,35 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                       _driverName,
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                     ),
-                    const Text(
-                      "Honda Beat • KB 1234 XX",
-                      style: TextStyle(color: Colors.grey, fontSize: 12),
-                    ),
+                    // Dulu "Honda Beat • KB 1234 XX" dan "4.9 (120)" tertulis
+                    // mati untuk semua driver — penumpang bisa menunggu motor
+                    // yang salah.
+                    if (_driverKendaraan.isNotEmpty)
+                      Text(
+                        _driverKendaraan,
+                        style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12, fontWeight: FontWeight.w600),
+                      ),
                   ],
                 ),
               ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  children: const [
-                    Icon(Icons.star, color: Colors.amber, size: 14),
-                    SizedBox(width: 4),
-                    Text("4.9 (120)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.amber)),
-                  ],
-                ),
-              )
+              if (_driverUlasan > 0)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.amber.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.star, color: Colors.amber.shade700, size: 14),
+                      const SizedBox(width: 4),
+                      Text(
+                        "${_driverRating.toStringAsFixed(1).replaceAll('.', ',')} ($_driverUlasan)",
+                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.amber.shade800),
+                      ),
+                    ],
+                  ),
+                )
             ],
           ),
           const SizedBox(height: 16),
@@ -1792,7 +1830,11 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             ],
           ),
           const SizedBox(height: 16),
-          
+          if (_makanan) ...[
+            _ringkasanMakanan(),
+            const SizedBox(height: 16),
+          ],
+
           // Timeline status tracker
           const Text("Status Pesanan", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
           const SizedBox(height: 12),
@@ -1845,14 +1887,66 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         Expanded(
           child: Text(
             text,
+            // null = warna teks tema. Dulu Colors.black, yang hilang di atas
+            // kartu mode gelap.
             style: TextStyle(
               fontSize: 12,
               fontWeight: isDone ? FontWeight.bold : FontWeight.normal,
-              color: isDone ? Colors.black : Colors.grey,
+              color: isDone ? null : AppTheme.teksRedup(context),
             ),
           ),
         ),
       ],
+    );
+  }
+
+  /// Isi pesanan makanan dan uang yang harus disiapkan, terlihat sepanjang
+  /// menunggu. Driver menalangi makanan ke warung, jadi totalnya termasuk
+  /// makanan, ongkir, dan biaya jasa.
+  Widget _ringkasanMakanan() {
+    final total = _fare + _biayaJasa + _foodTotal;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.orange.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final it in _itemsMakanan)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text.rich(
+                TextSpan(children: [
+                  TextSpan(text: '${it['qty'] ?? 0}× ', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  TextSpan(text: (it['name'] ?? '').toString()),
+                  if ((it['options'] as List?)?.isNotEmpty ?? false)
+                    TextSpan(
+                      text: ' · ${[for (final o in it['options'] as List) o['name']].join(', ')}',
+                      style: TextStyle(color: AppTheme.teksRedup(context)),
+                    ),
+                ]),
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          if (_itemsMakanan.isNotEmpty) const Divider(height: 14),
+          Row(
+            children: [
+              Icon(_bayarTunai ? Icons.payments_outlined : Icons.account_balance_wallet_outlined, size: 16, color: Colors.orange.shade800),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _bayarTunai ? 'Siapkan tunai untuk driver' : 'Dipotong dari saldo PayAntar',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text(rupiah(total), style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14, color: Colors.orange.shade900)),
+            ],
+          ),
+        ],
+      ),
     );
   }
 

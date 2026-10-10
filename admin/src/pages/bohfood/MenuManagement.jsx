@@ -1,6 +1,9 @@
 import { useState, useEffect } from "react";
 import { Plus, Trash2, Salad, Save, Shield } from "lucide-react";
-import { BASE, authFetch } from "../../api";
+import { BASE, authFetch, api, fileURL } from "../../api";
+
+// Foto dari unggahan disimpan sebagai "/uploads/..."; tautan luar apa adanya.
+const urlFoto = (u) => (u && u.startsWith("/uploads/") ? fileURL(u) : u);
 import { toast, confirmDialog, Alert } from "../../components/Feedback";
 
 export default function MenuManagement({ ownerPhone }) {
@@ -15,6 +18,7 @@ export default function MenuManagement({ ownerPhone }) {
   const [price, setPrice] = useState(15000);
   const [category, setCategory] = useState("Makanan");
   const [imageUrl, setImageUrl] = useState("");
+  const [mengunggah, setMengunggah] = useState(false);
   const [isAvailable, setIsAvailable] = useState(true);
   const [error, setError] = useState("");
 
@@ -59,7 +63,7 @@ export default function MenuManagement({ ownerPhone }) {
     }
 
     if (!merchant) {
-      setError("Profil restoran belum lengkap. Silakan lengkapi di halaman Dashboard terlebih dahulu!");
+      setError("Profil warung belum lengkap. Lengkapi dulu di halaman Dashboard.");
       return;
     }
 
@@ -98,7 +102,7 @@ export default function MenuManagement({ ownerPhone }) {
   const handleDelete = async (id) => {
     const ok = await confirmDialog({
       title: "Hapus menu ini?",
-      message: "Menu akan hilang dari daftar jualan restoran Anda dan tidak bisa dikembalikan.",
+      message: "Menu akan hilang dari daftar jualan warung Anda dan tidak bisa dikembalikan.",
       confirmText: "Hapus menu",
     });
     if (!ok) return;
@@ -175,8 +179,26 @@ export default function MenuManagement({ ownerPhone }) {
             </div>
 
             <div className="input-group">
-              <label>Link Foto Makanan (URL)</label>
-              <input className="input" placeholder="https://images.unsplash.com/..." value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
+              <label>Foto Makanan</label>
+              {imageUrl && (
+                <img src={urlFoto(imageUrl)} alt="" style={{ width: 120, height: 90, objectFit: "cover", borderRadius: 10, marginBottom: 8, display: "block" }} />
+              )}
+              <label className="btn btn-sm" style={{ cursor: mengunggah ? "wait" : "pointer", display: "inline-flex" }}>
+                {mengunggah ? "Mengunggah..." : imageUrl ? "Ganti foto" : "Unggah foto"}
+                <input
+                  type="file" accept="image/*" hidden disabled={mengunggah}
+                  onChange={e => {
+                    const berkas = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!berkas) return;
+                    setMengunggah(true);
+                    api.uploadFile(berkas)
+                      .then(res => { if (!res.url) throw new Error(res.error || "Gagal mengunggah foto"); setImageUrl(res.url); })
+                      .catch(err => toast.error(err.message || "Gagal mengunggah foto"))
+                      .finally(() => setMengunggah(false));
+                  }}
+                />
+              </label>
             </div>
 
             <button type="submit" className="btn btn-primary" style={{ background: "#F59E0B", width: "100%", justifyContent: "center", padding: 12 }}>
@@ -191,8 +213,8 @@ export default function MenuManagement({ ownerPhone }) {
       ) : !merchant ? (
         <div className="card" style={{ textAlign: "center", padding: 50, color: "var(--text-muted)" }}>
           <Salad size={48} style={{ margin: "0 auto 16px", color: "var(--border)" }} />
-          <h3>Profil Restoran Belum Lengkap</h3>
-          <p style={{ fontSize: 13, marginTop: 4 }}>Silakan lengkapi profil restoran Anda terlebih dahulu di menu Dashboard agar bisa mengelola menu jualan.</p>
+          <h3>Profil Warung Belum Lengkap</h3>
+          <p style={{ fontSize: 13, marginTop: 4 }}>Lengkapi profil warung di halaman Dashboard dulu supaya bisa mengelola menu.</p>
         </div>
       ) : menus.length === 0 ? (
         <div className="card" style={{ textAlign: "center", padding: 50, color: "var(--text-muted)" }}>
@@ -208,7 +230,7 @@ export default function MenuManagement({ ownerPhone }) {
             <div key={menu.id} className="card" style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
               <div style={{ height: 180, width: "100%", overflow: "hidden", background: "#334155", position: "relative" }}>
                 <img 
-                  src={menu.image_url} 
+                  src={urlFoto(menu.image_url)} 
                   alt={menu.name}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
                   onError={(e) => {
