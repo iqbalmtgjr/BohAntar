@@ -1,6 +1,7 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../firebase_config.dart';
 import 'api_service.dart';
 
@@ -29,10 +30,16 @@ class NotifikasiService {
   NotifikasiService._internal();
 
   bool _siap = false;
+  final _lokal = FlutterLocalNotificationsPlugin();
 
-  /// Dipasang di MaterialApp supaya pesan chat bisa muncul dari mana saja tanpa
-  /// menitipkan BuildContext ke seluruh aplikasi.
-  static final pesanKey = GlobalKey<ScaffoldMessengerState>();
+  /// Kanal yang disebut backend di setiap notifikasi (`fcm.go`). Selama kanal
+  /// ini belum dibuat, Android menaruh notifikasinya di kanal cadangan FCM yang
+  /// tidak muncul melayang di atas layar.
+  static const _kanal = AndroidNotificationChannel(
+    'bohantar_orderan',
+    'Pesanan & chat',
+    importance: Importance.high,
+  );
 
   /// Dipanggil sekali saat aplikasi mulai. Aman dipanggil berulang.
   Future<void> mulai() async {
@@ -48,6 +55,17 @@ class NotifikasiService {
       _siap = true;
     } catch (e) {
       debugPrint('Firebase gagal disiapkan, notifikasi dilewati: $e');
+      return;
+    }
+    try {
+      await _lokal.initialize(
+        settings: const InitializationSettings(android: AndroidInitializationSettings('@mipmap/ic_launcher')),
+      );
+      await _lokal
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          ?.createNotificationChannel(_kanal);
+    } catch (e) {
+      debugPrint('Notifikasi lokal gagal disiapkan: $e');
     }
   }
 
@@ -59,24 +77,34 @@ class NotifikasiService {
   /// menggambar layarnya sendiri lewat polling tiap 2–3 detik, jadi menampilkan
   /// keduanya cuma menumpuk pemberitahuan yang sama dua kali.
   ///
-  /// ponytail: SnackBar, bukan notifikasi sistem — menampilkan notifikasi
-  /// sungguhan saat aplikasi terbuka butuh paket flutter_local_notifications
-  /// sendiri. Tambahkan kalau ternyata SnackBar-nya terlalu mudah terlewat.
+  /// Notifikasi sistem bersuara, bukan SnackBar: driver yang sedang menyetir
+  /// dengan aplikasi terbuka tidak sedang menatap layar, dan SnackBar bisu lima
+  /// detik itulah yang dulu membuat chat terasa "tidak ada notifikasinya".
   void _pesanSaatAplikasiTerbuka(RemoteMessage pesan) {
     if (pesan.data['tipe'] != 'chat') return;
     final isi = pesan.notification?.body ?? '';
     final pengirim = pesan.notification?.title ?? 'Pesan baru';
     if (isi.isEmpty) return;
 
-    // ponytail: tidak melompat ke layar chatnya. ChatScreen menuntut enam data
-    // peserta yang harus diambil dulu dari pesanannya; pemakainya toh sedang
-    // memegang layar yang punya tombol chat.
-    pesanKey.currentState
-      ?..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text('$pengirim: $isi'),
-        duration: const Duration(seconds: 5),
-      ));
+    // ponytail: tidak melompat ke layar chatnya saat ditekan. ChatScreen
+    // menuntut enam data peserta yang harus diambil dulu dari pesanannya;
+    // pemakainya toh sedang memegang layar yang punya tombol chat.
+    _lokal
+        .show(
+          // Satu notifikasi per pesanan: pesan berikutnya menimpa, tidak menumpuk.
+          id: (pesan.data['order_id'] ?? '').hashCode,
+          title: pengirim,
+          body: isi,
+          notificationDetails: NotificationDetails(
+            android: AndroidNotificationDetails(
+              _kanal.id,
+              _kanal.name,
+              importance: Importance.high,
+              priority: Priority.high,
+            ),
+          ),
+        )
+        .catchError((e) => debugPrint('Notifikasi chat gagal ditampilkan: $e'));
   }
 
   /// Dipanggil setelah login berhasil: token perangkat hanya berguna kalau

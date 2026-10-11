@@ -25,15 +25,22 @@ class ChatScreen extends StatefulWidget {
   State<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   final ChatService _chat = ChatService();
   final TextEditingController _input = TextEditingController();
   final ScrollController _scroll = ScrollController();
   List<ChatMessage> _messages = [];
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) _chat.jeda();
+    if (state == AppLifecycleState.resumed) _chat.lanjut();
+  }
+
+  @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _chat.addListener(_onMessages);
     _chat.connect(
       orderID: widget.orderID,
@@ -64,7 +71,12 @@ class _ChatScreenState extends State<ChatScreen> {
   void _send() {
     final text = _input.text.trim();
     if (text.isEmpty) return;
-    _chat.sendMessage(text);
+    if (!_chat.sendMessage(text)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Belum tersambung, coba kirim lagi sebentar')),
+      );
+      return;
+    }
     _input.clear();
   }
 
@@ -83,6 +95,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _chat.removeListener(_onMessages);
     _chat.disconnect();
     _input.dispose();
@@ -166,6 +179,13 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       body: Column(
         children: [
+          if (!_chat.isConnected)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              color: Colors.orange.withOpacity(0.15),
+              child: const Text('Menyambungkan…', textAlign: TextAlign.center, style: TextStyle(fontSize: 12)),
+            ),
           Expanded(
             child: _messages.isEmpty
                 ? Center(
