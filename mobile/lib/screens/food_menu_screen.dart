@@ -446,6 +446,7 @@ class _BarKeranjang extends StatelessWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(rupiah(k.subtotal), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15)),
