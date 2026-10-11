@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
-import { Plus, Trash2, Salad, Save, Shield } from "lucide-react";
+import { Plus, Trash2, Salad, Save, Shield, Search } from "lucide-react";
 import { BASE, authFetch, api, fileURL } from "../../api";
 
 // Foto dari unggahan disimpan sebagai "/uploads/..."; tautan luar apa adanya.
 const urlFoto = (u) => (u && u.startsWith("/uploads/") ? fileURL(u) : u);
+import { hargaMulaiDari, hargaBisaNaik } from "./harga";
 import { toast, confirmDialog, Alert } from "../../components/Feedback";
 
 export default function MenuManagement({ ownerPhone }) {
@@ -21,6 +22,7 @@ export default function MenuManagement({ ownerPhone }) {
   const [mengunggah, setMengunggah] = useState(false);
   const [isAvailable, setIsAvailable] = useState(true);
   const [error, setError] = useState("");
+  const [cari, setCari] = useState("");
 
   const fetchMerchantAndMenus = () => {
     setLoading(true);
@@ -117,6 +119,9 @@ export default function MenuManagement({ ownerPhone }) {
 
   // Toko Kasvo: menu dibaca langsung dari kasirnya, jadi di sini hanya dilihat.
   const dariKasvo = !!merchant?.kasvo_toko_uuid;
+
+  const kata = cari.trim().toLowerCase();
+  const tampil = kata ? menus.filter(m => `${m.name} ${m.category}`.toLowerCase().includes(kata)) : menus;
 
   return (
     <div className="page">
@@ -225,54 +230,70 @@ export default function MenuManagement({ ownerPhone }) {
           </p>
         </div>
       ) : (
-        <div className="grid-3">
-          {menus.map(menu => (
-            <div key={menu.id} className="card" style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-              <div style={{ height: 180, width: "100%", overflow: "hidden", background: "#334155", position: "relative" }}>
-                <img 
-                  src={urlFoto(menu.image_url)} 
-                  alt={menu.name}
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  onError={(e) => {
-                    e.target.src = "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=200";
-                  }}
+        // Daftar berbaris, bukan kartu: toko Kasvo bisa punya puluhan menu, dan
+        // pemilik mencari nama/harga, bukan memandangi foto besar.
+        <div className="table-wrap">
+          <div className="table-header" style={{ gap: 12, flexWrap: "wrap" }}>
+            <h3>{tampil.length === menus.length ? `${menus.length} menu` : `${tampil.length} dari ${menus.length} menu`}</h3>
+            <div className="search-bar">
+              <Search size={15} style={{ color: "var(--text-muted)" }} />
+              <input placeholder="Cari menu atau kategori..." value={cari} onChange={e => setCari(e.target.value)} />
+            </div>
+          </div>
+          {tampil.length === 0 && (
+            <p style={{ padding: "32px 20px", textAlign: "center", fontSize: 13, color: "var(--text-muted)" }}>Tidak ada menu yang cocok dengan "{cari}"</p>
+          )}
+          {tampil.map((menu, i) => {
+            const grup = menu.option_groups || [];
+            const satuBaris = { margin: 0, fontSize: 12, color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+            return (
+              <div key={menu.id} style={{ display: "flex", alignItems: "flex-start", gap: 12, padding: "12px 20px", borderBottom: i < tampil.length - 1 ? "1px solid var(--border)" : "none", opacity: menu.is_available ? 1 : 0.6 }}>
+                <img
+                  src={urlFoto(menu.image_url)}
+                  alt=""
+                  loading="lazy"
+                  style={{ width: 52, height: 52, flexShrink: 0, objectFit: "cover", borderRadius: 10, background: "var(--bg-input)" }}
+                  onError={(e) => { e.target.style.visibility = "hidden"; }}
                 />
-                <span className={`badge ${menu.is_available ? "badge-success" : "badge-danger"}`} style={{ position: "absolute", top: 12, right: 12, background: menu.is_available ? "rgba(16,185,129,0.9)" : "rgba(239,68,68,0.9)", color: "white" }}>
-                  {menu.is_available ? "TERSEDIA" : "HABIS"}
-                </span>
-              </div>
-              <div style={{ padding: 20, flex: 1, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-                <div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
-                    <h3 style={{ fontSize: 18, fontWeight: 800 }}>{menu.name}</h3>
-                    <span className="badge badge-info" style={{ background: "rgba(245,158,11,0.15)", color: "#F59E0B" }}>{menu.category}</span>
-                  </div>
-                  <p style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 6, marginBottom: 16 }}>
-                    {menu.description || (menu.option_groups?.length ? "" : "Tidak ada deskripsi")}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <b style={{ display: "block", fontSize: 14, lineHeight: 1.35 }}>{menu.name}</b>
+                  <p style={satuBaris} title={menu.description}>
+                    <span style={{ color: "var(--text-muted)", fontWeight: 600 }}>{menu.category}</span>
+                    {menu.description && ` · ${menu.description}`}
                   </p>
-                  {(menu.option_groups || []).map(g => (
-                    <p key={g.id} style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: -10, marginBottom: 16 }}>
-                      <b>{g.name}{g.required ? " (wajib)" : ""}:</b>{" "}
-                      {g.options.map(o => o.price > 0 ? `${o.name} +Rp${o.price.toLocaleString("id-ID")}` : o.name).join(", ")}
-                    </p>
-                  ))}
-                </div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid var(--border)", paddingTop: 16 }}>
-                  <div>
-                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Harga Menu</span>
-                    <div style={{ fontSize: 18, fontWeight: 900, color: "#F59E0B" }}>
-                      Rp {menu.price.toLocaleString("id-ID")}
-                    </div>
-                  </div>
-                  {!dariKasvo && (
-                    <button onClick={() => handleDelete(menu.id)} className="btn btn-danger btn-sm" style={{ padding: 8 }}>
-                      <Trash2 size={16} />
-                    </button>
+                  {grup.length > 0 && (
+                    // Menu Kasvo bisa punya 5 grup varian berisi puluhan opsi:
+                    // ringkas nama grupnya, rinciannya dibuka kalau perlu.
+                    <details style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+                      <summary style={{ ...satuBaris, cursor: "pointer", color: "var(--primary)" }}>
+                        {grup.length} varian: {grup.map(g => g.name).join(", ")}
+                      </summary>
+                      {grup.map(g => (
+                        <p key={g.id} style={{ margin: "4px 0 0" }}>
+                          <b>{g.name}{g.required ? " (wajib)" : ""}:</b>{" "}
+                          {g.options.map(o => o.price > 0 ? `${o.name} +Rp${o.price.toLocaleString("id-ID")}` : o.name).join(", ")}
+                        </p>
+                      ))}
+                    </details>
                   )}
                 </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, whiteSpace: "nowrap" }}>
+                    {hargaBisaNaik(menu) && <span style={{ fontSize: 11, fontWeight: 500, color: "var(--text-muted)" }}>mulai </span>}
+                    Rp{hargaMulaiDari(menu).toLocaleString("id-ID")}
+                  </div>
+                  <span className={`badge ${menu.is_available ? "badge-success" : "badge-danger"}`} style={{ padding: "1px 8px", marginTop: 4 }}>
+                    {menu.is_available ? "Tersedia" : "Habis"}
+                  </span>
+                </div>
+                {!dariKasvo && (
+                  <button onClick={() => handleDelete(menu.id)} className="btn btn-danger btn-sm" style={{ padding: 8, flexShrink: 0 }} aria-label={`Hapus ${menu.name}`} title="Hapus menu">
+                    <Trash2 size={16} />
+                  </button>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

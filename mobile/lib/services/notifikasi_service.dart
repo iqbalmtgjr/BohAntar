@@ -3,6 +3,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../firebase_config.dart';
+import '../screens/chat_screen.dart';
 import 'api_service.dart';
 
 /// Notifikasi orderan masuk dan perubahan status pesanan.
@@ -41,6 +42,10 @@ class NotifikasiService {
     importance: Importance.high,
   );
 
+  /// Dipasang di MaterialApp supaya notifikasi chat yang diketuk bisa membuka
+  /// layar chat dari mana pun, tanpa menitipkan BuildContext.
+  static final navigatorKey = GlobalKey<NavigatorState>();
+
   /// Dipanggil sekali saat aplikasi mulai. Aman dipanggil berulang.
   Future<void> mulai() async {
     if (_siap) return;
@@ -52,6 +57,8 @@ class NotifikasiService {
       await Firebase.initializeApp(options: kFirebaseOptions);
       FirebaseMessaging.onBackgroundMessage(_pesanLatarBelakang);
       FirebaseMessaging.onMessage.listen(_pesanSaatAplikasiTerbuka);
+      // Notifikasi sistem diketuk saat aplikasi di latar belakang.
+      FirebaseMessaging.onMessageOpenedApp.listen(_bukaDariPesan);
       _siap = true;
     } catch (e) {
       debugPrint('Firebase gagal disiapkan, notifikasi dilewati: $e');
@@ -60,6 +67,8 @@ class NotifikasiService {
     try {
       await _lokal.initialize(
         settings: const InitializationSettings(android: AndroidInitializationSettings('@mipmap/ic_launcher')),
+        // Notifikasi yang kita gambar sendiri (aplikasi sedang terbuka) diketuk.
+        onDidReceiveNotificationResponse: (r) => bukaChat(r.payload),
       );
       await _lokal
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
@@ -86,15 +95,13 @@ class NotifikasiService {
     final pengirim = pesan.notification?.title ?? 'Pesan baru';
     if (isi.isEmpty) return;
 
-    // ponytail: tidak melompat ke layar chatnya saat ditekan. ChatScreen
-    // menuntut enam data peserta yang harus diambil dulu dari pesanannya;
-    // pemakainya toh sedang memegang layar yang punya tombol chat.
     _lokal
         .show(
           // Satu notifikasi per pesanan: pesan berikutnya menimpa, tidak menumpuk.
           id: (pesan.data['order_id'] ?? '').hashCode,
           title: pengirim,
           body: isi,
+          payload: pesan.data['order_id'],
           notificationDetails: NotificationDetails(
             android: AndroidNotificationDetails(
               _kanal.id,
@@ -105,6 +112,53 @@ class NotifikasiService {
           ),
         )
         .catchError((e) => debugPrint('Notifikasi chat gagal ditampilkan: $e'));
+  }
+
+  void _bukaDariPesan(RemoteMessage pesan) {
+    if (pesan.data['tipe'] == 'chat') bukaChat(pesan.data['order_id']);
+  }
+
+  /// Aplikasi baru dinyalakan karena notifikasi chat diketuk. Dipanggil
+  /// setelah sesi pulih (AuthGate), karena layar chat butuh token.
+  Future<void> bukaChatDariPeluncuran() async {
+    if (!_siap) return;
+    try {
+      final fcm = await FirebaseMessaging.instance.getInitialMessage();
+      if (fcm != null) return _bukaDariPesan(fcm);
+      final lokal = await _lokal.getNotificationAppLaunchDetails();
+      if (lokal?.didNotificationLaunchApp ?? false) {
+        await bukaChat(lokal!.notificationResponse?.payload);
+      }
+    } catch (e) {
+      debugPrint('Notifikasi peluncuran gagal dibaca: $e');
+    }
+  }
+
+  /// Membuka layar chat satu pesanan. Notifikasi cuma membawa id pesanan;
+  /// siapa saya dan siapa lawan bicaranya dibaca dari profil dan pesanannya.
+  Future<void> bukaChat(String? orderId) async {
+    final nav = navigatorKey.currentState;
+    if (orderId == null || orderId.isEmpty || nav == null || ApiService().token == null) return;
+    try {
+      final saya = (await ApiService().getProfile())['user'] as Map?;
+      final o = (await ApiService().getOrderStatus(orderId))['order'] as Map?;
+      if (saya == null || o == null) return;
+      final nomorSaya = (saya['phone_number'] ?? '').toString();
+      final sayaDriver = o['driver_phone'] == nomorSaya;
+      final namaDriver = (o['driver_name'] ?? '').toString();
+      nav.push(MaterialPageRoute(
+        builder: (_) => ChatScreen(
+          orderID: orderId,
+          myPhone: nomorSaya,
+          myName: (saya['name'] ?? '').toString(),
+          myRole: sayaDriver ? 'driver' : 'rider',
+          otherName: sayaDriver ? (o['rider_name'] ?? 'Penumpang').toString() : (namaDriver.isEmpty ? 'Driver' : namaDriver),
+          otherPhone: ((sayaDriver ? o['rider_phone'] : o['driver_phone']) ?? '').toString(),
+        ),
+      ));
+    } catch (e) {
+      debugPrint('Layar chat dari notifikasi gagal dibuka: $e');
+    }
   }
 
   /// Dipanggil setelah login berhasil: token perangkat hanya berguna kalau

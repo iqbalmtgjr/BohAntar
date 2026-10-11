@@ -1561,7 +1561,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             return Card(
               margin: const EdgeInsets.only(bottom: 12),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              clipBehavior: Clip.antiAlias,
               child: ListTile(
+                onTap: () => _bukaAktivitas(Map<String, dynamic>.from(order as Map)),
                 contentPadding: const EdgeInsets.all(16),
                 leading: CircleAvatar(
                   backgroundColor: AppTheme.primaryBlue.withOpacity(0.1),
@@ -1605,6 +1607,87 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             },
           );
         },
+      ),
+    );
+  }
+
+  /// Pesanan yang masih berjalan membuka layar pelacakan (peta, status, tombol
+  /// chat) — tujuan yang sama dengan kartu pesanan aktif di beranda. Yang sudah
+  /// selesai atau batal cukup lembar rincian: tidak ada lagi yang bisa dilacak.
+  void _bukaAktivitas(Map<String, dynamic> o) {
+    final status = o['status'];
+    if (status == 'pending' || status == 'accepted' || status == 'picked_up') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => OrderRideScreen(
+            initialService: o['service'] ?? 'BohRide',
+            riderName: _userName.isNotEmpty ? _userName : widget.name,
+            riderPhone: widget.phone,
+            initialOrderId: o['id'],
+          ),
+        ),
+      ).then((_) => _fetchRiderActiveOrder());
+      return;
+    }
+
+    final waktu = DateTime.tryParse((o['created_at'] ?? '').toString())?.toLocal();
+    String dua(int n) => n.toString().padLeft(2, '0');
+    final items = (o['items'] as List?) ?? const [];
+    final ongkir = (o['fare'] as num?)?.toDouble() ?? 0;
+    final biayaJasa = (o['biaya_jasa'] as num?)?.toDouble() ?? 0;
+    final makanan = (o['food_total'] as num?)?.toDouble() ?? 0;
+    Widget baris(String label, String nilai, {bool tebal = false}) => Padding(
+          padding: const EdgeInsets.symmetric(vertical: 3),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: 90, child: Text(label, style: TextStyle(fontSize: 13, color: AppTheme.teksRedup(context)))),
+              Expanded(child: Text(nilai, style: TextStyle(fontSize: 13, fontWeight: tebal ? FontWeight.bold : FontWeight.normal))),
+            ],
+          ),
+        );
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('${o['service'] ?? 'Pesanan'} · ${(status ?? '').toString().toUpperCase()}',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            if (waktu != null)
+              Text('${dua(waktu.day)}/${dua(waktu.month)}/${waktu.year} ${dua(waktu.hour)}.${dua(waktu.minute)}',
+                  style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
+            const SizedBox(height: 14),
+            baris('Jemput', (o['pickup'] ?? '-').toString()),
+            baris('Tujuan', (o['dropoff'] ?? '-').toString()),
+            if ((o['driver_name'] ?? '').toString().isNotEmpty) baris('Driver', o['driver_name'].toString()),
+            // Pesanan kurir untuk pelanggan toko Kasvo: akun pemesannya toko, tapi
+            // yang membayar ongkir adalah penerima.
+            if (((o['kasvo_pengantaran_id'] as num?)?.toInt() ?? 0) > 0)
+              baris('Pembayaran', 'Ongkir dibayar tunai oleh penerima (${o['receiver_name'] ?? '-'})')
+            else
+              baris('Pembayaran', o['payment_method'] == 'wallet' ? 'Saldo PayAntar' : 'Tunai'),
+            if (items.isNotEmpty) ...[
+              const Divider(height: 24),
+              for (final it in items)
+                baris('${it['qty'] ?? 0}×', [
+                  (it['name'] ?? '').toString(),
+                  for (final op in (it['options'] as List?) ?? const []) '${op['name']}',
+                ].join(' · ')),
+            ],
+            const Divider(height: 24),
+            if (makanan > 0) baris('Makanan', _rupiah(makanan)),
+            baris('Ongkir', _rupiah(ongkir)),
+            if (biayaJasa > 0) baris('Biaya jasa', _rupiah(biayaJasa)),
+            baris('Total', _rupiah(ongkir + biayaJasa + makanan), tebal: true),
+          ],
+        ),
       ),
     );
   }
@@ -1794,6 +1877,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               });
             }, isDark),
           ],
+          _buildAkunMenuItem(Icons.lock_reset, "Ganti password", _dialogGantiPassword, isDark),
           _buildAkunMenuItem(Icons.settings, "Pengaturan", () {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text("Pengaturan akun sedang dipersiapkan.")),
@@ -1829,6 +1913,99 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.red),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Terutama untuk driver: password awalnya dibuat admin dan cuma
+  /// ditampilkan sekali, jadi harus bisa diganti sendiri dari aplikasi.
+  void _dialogGantiPassword() {
+    // ponytail: controller tidak di-dispose. Dispose saat dialog ditutup
+    // menabrak animasi keluarnya ("used after disposed"); tiga controller tanpa
+    // listener cukup dibereskan garbage collector.
+    final lama = TextEditingController();
+    final baru = TextEditingController();
+    final ulang = TextEditingController();
+    var galat = '';
+    var mengirim = false;
+    InputDecoration hias(String label) => InputDecoration(labelText: label, isDense: true);
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialog) {
+          Future<void> simpan() async {
+            final b = baru.text;
+            final pesan = lama.text.isEmpty
+                ? 'Isi password lama'
+                : b.length < 8
+                    ? 'Password baru minimal 8 karakter'
+                    : b != ulang.text
+                        ? 'Ulangi password baru dengan sama persis'
+                        : b == lama.text
+                            ? 'Password baru sama dengan yang lama'
+                            : '';
+            if (pesan.isNotEmpty) {
+              setDialog(() => galat = pesan);
+              return;
+            }
+            setDialog(() {
+              galat = '';
+              mengirim = true;
+            });
+            try {
+              await ApiService().gantiPassword(lama.text, b);
+              if (!dialogContext.mounted) return;
+              Navigator.pop(dialogContext);
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Password berhasil diganti. Pakai password baru saat masuk berikutnya.')),
+              );
+            } catch (e) {
+              setDialog(() {
+                galat = e.toString().replaceAll('Exception: ', '');
+                mengirim = false;
+              });
+            }
+          }
+
+          return AlertDialog(
+            title: const Text('Ganti password'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(controller: lama, obscureText: true, decoration: hias('Password lama')),
+                  const SizedBox(height: 8),
+                  TextField(controller: baru, obscureText: true, decoration: hias('Password baru (min. 8 karakter)')),
+                  const SizedBox(height: 8),
+                  TextField(controller: ulang, obscureText: true, decoration: hias('Ulangi password baru'), onSubmitted: (_) => simpan()),
+                  if (galat.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Text(galat, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                  ],
+                  const SizedBox(height: 12),
+                  // Akun yang lahir lewat Google tidak punya password lama untuk
+                  // diisi; jalannya lewat Lupa password yang memverifikasi Google.
+                  Text(
+                    'Daftar lewat Google dan belum pernah punya password? Keluar, lalu pakai "Lupa password?" di layar masuk.',
+                    style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: mengirim ? null : () => Navigator.pop(dialogContext), child: const Text('Batal')),
+              ElevatedButton(
+                onPressed: mengirim ? null : simpan,
+                child: mengirim
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('Simpan'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -3128,6 +3305,12 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     final tunai = (o['payment_method'] ?? 'cash') != 'wallet';
     final catatan = tampilkanCatatan ? (o['package_notes'] ?? '').toString().trim() : '';
     final noKasir = (o['kasvo_pesanan_id'] as num?)?.toInt() ?? 0;
+    // Kurir untuk pelanggan toko Kasvo: makanannya sudah lunas ke toko, driver
+    // cuma mengambil dan menagih ongkir ke penerima. Tanpa pembeda ini panel
+    // menyuruhnya "Beli di warung" dan "Bayar ke warung Rp0".
+    final kurirToko = ((o['kasvo_pengantaran_id'] as num?)?.toInt() ?? 0) > 0;
+    // Penerima ikut disembunyikan sebelum diterima, sama seperti BohAntar.
+    final hpPenerima = tampilkanCatatan ? (o['receiver_phone'] ?? '').toString().trim() : '';
 
     return Container(
       margin: const EdgeInsets.only(top: 16),
@@ -3144,7 +3327,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               const Icon(Icons.restaurant, size: 16, color: Colors.orange),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('Beli di ${o['merchant_name'] ?? 'warung'}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                child: Text('${kurirToko ? 'Ambil di' : 'Beli di'} ${o['merchant_name'] ?? 'warung'}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               ),
             ],
           ),
@@ -3157,7 +3340,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(color: Colors.green.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
               child: Text(
-                'Sudah masuk kasir warung · No. $noKasir\nSebutkan nomor ini ke kasir lalu bayar — tidak perlu pesan ulang.',
+                kurirToko
+                    ? 'Pesanan toko No. $noKasir · sudah dibayar pelanggan\nSebutkan nomor ini ke kasir untuk mengambilnya.'
+                    : 'Sudah masuk kasir warung · No. $noKasir\nSebutkan nomor ini ke kasir lalu bayar — tidak perlu pesan ulang.',
                 style: TextStyle(fontSize: 12, color: Colors.green.shade800, fontWeight: FontWeight.w600),
               ),
             ),
@@ -3184,28 +3369,71 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       ],
                     ),
                   ),
-                  Text(
-                    _rupiah(((it['price'] as num?)?.toDouble() ?? 0) * ((it['qty'] as num?)?.toDouble() ?? 0)),
-                    style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context)),
-                  ),
+                  if (!kurirToko)
+                    Text(
+                      _rupiah(((it['price'] as num?)?.toDouble() ?? 0) * ((it['qty'] as num?)?.toDouble() ?? 0)),
+                      style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context)),
+                    ),
                 ],
               ),
             ),
           const Divider(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Bayar ke warung', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-              Text(_rupiah(talangan), style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Colors.orange.shade800)),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            tunai
-                ? 'Tagih ke pelanggan ${_rupiah(talangan + ongkir + biayaJasa)} (makanan + ongkir${biayaJasa > 0 ? ' + biaya jasa' : ''})'
-                : 'PayAntar: uang makanan + ongkir masuk saldo kamu setelah selesai',
-            style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)),
-          ),
+          if (kurirToko) ...[
+            Text('Makanan sudah dibayar pelanggan ke toko — kamu tidak membayar apa pun di kasir.',
+                style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context))),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Tagih ke penerima (tunai)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                Text(_rupiah(ongkir + biayaJasa), style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Colors.orange.shade800)),
+              ],
+            ),
+            Text('Ongkir${biayaJasa > 0 ? ' + biaya jasa' : ''}', style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context))),
+            if (tampilkanCatatan)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.person_pin_circle_outlined, size: 16, color: AppTheme.primaryBlue),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text('Penerima: ${(o['receiver_name'] ?? '').toString().trim()} · $hpPenerima',
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                    ),
+                    if (hpPenerima.isNotEmpty) ...[
+                      IconButton(
+                        tooltip: 'WhatsApp penerima',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.chat, size: 18, color: Color(0xFF128C7E)),
+                        onPressed: () => _bukaWhatsApp(hpPenerima),
+                      ),
+                      IconButton(
+                        tooltip: 'Telepon penerima',
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.phone, size: 18, color: Colors.green),
+                        onPressed: () => launchUrl(Uri.parse('tel:$hpPenerima')),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+          ] else ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Bayar ke warung', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                Text(_rupiah(talangan), style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Colors.orange.shade800)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              tunai
+                  ? 'Tagih ke pelanggan ${_rupiah(talangan + ongkir + biayaJasa)} (makanan + ongkir${biayaJasa > 0 ? ' + biaya jasa' : ''})'
+                  : 'PayAntar: uang makanan + ongkir masuk saldo kamu setelah selesai',
+              style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)),
+            ),
+          ],
           if (catatan.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -3214,6 +3442,15 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         ],
       ),
     );
+  }
+
+  /// wa.me menuntut nomor internasional tanpa "+", jadi 08… diubah ke 628….
+  Future<void> _bukaWhatsApp(String nomor) async {
+    var n = nomor.replaceAll(RegExp(r'\D'), '');
+    if (n.startsWith('0')) n = '62${n.substring(1)}';
+    if (!await launchUrl(Uri.parse('https://wa.me/$n'), mode: LaunchMode.externalApplication)) {
+      _beriTahu('WhatsApp tidak bisa dibuka');
+    }
   }
 
   /// Memotret lalu mengunggah bukti serah-terima. Null kalau driver membatalkan

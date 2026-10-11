@@ -131,8 +131,13 @@ type Order struct {
 	Items        []OrderItem `json:"items"`
 	FoodTotal    float64     `json:"food_total"`
 	// Nomor pesanan ini di kasir toko Kasvo; 0 kalau belum/tidak masuk kasir.
-	// Hanya dibaca — yang menulis cuma sinkronKasvo, bukan dbSaveOrder.
+	// Pesanan aplikasi: ditulis sinkronKasvo setelah driver menerima. Pesanan
+	// kurir dari Kasvo: sudah terisi sejak dibuat (dbSaveOrder, INSERT saja).
 	KasvoPesananID int64 `json:"kasvo_pesanan_id"`
+	// Pesanan kurir yang diminta toko Kasvo untuk pelanggannya sendiri: id
+	// baris pengantaran di Kasvo, 0 untuk pesanan biasa. Makanannya sudah lunas
+	// ke toko; kurir cuma menagih ongkir ke penerima. Lihat kasvo_kurir.go.
+	KasvoPengantaranID int64 `json:"kasvo_pengantaran_id"`
 }
 
 type DriverApplication struct {
@@ -502,6 +507,9 @@ func main() {
 	// Dipanggil server Kasvo, bukan aplikasi — dijaga token integrasi, bukan JWT.
 	mux.HandleFunc("/api/integrasi/kasvo/gabung", kasvoGabungHandler)
 	mux.HandleFunc("/api/integrasi/kasvo/status", kasvoStatusHandler)
+	mux.HandleFunc("/api/integrasi/kasvo/ongkir", kasvoOngkirHandler)
+	mux.HandleFunc("/api/integrasi/kasvo/kurir", kasvoKurirHandler)
+	mux.HandleFunc("/api/integrasi/kasvo/kurir/", kasvoKurirBatalHandler)
 	// Modul rental juga menuntut langganan aktif; halaman langganan sendiri tetap terbuka.
 	rental := func(h http.HandlerFunc) http.HandlerFunc { return requireAuth(requireActiveSubscription(h)) }
 	mux.HandleFunc("/api/rental/cars", rental(rentalCarsHandler))
@@ -733,7 +741,10 @@ func initDB() {
 			items_json TEXT,
 			food_total DECIMAL(12,2) NOT NULL DEFAULT 0,
 			kasvo_pesanan_id BIGINT NULL,
+			kasvo_pengantaran_id BIGINT NULL,
+			kasvo_status_terkirim VARCHAR(80) NULL,
 			INDEX idx_orders_merchant (merchant_id, created_at),
+			INDEX idx_orders_kasvo_pengantaran (kasvo_pengantaran_id),
 			-- RESTRICT, bukan CASCADE: pesanan adalah catatan keuangan dan tidak
 			-- boleh ikut lenyap saat sebuah akun dihapus. Yang menghapus akun wajib
 			-- menganonimkan pesanannya lebih dulu (rider_phone/driver_phone jadi
@@ -1083,6 +1094,10 @@ func initDB() {
 	migrasiSkema("ALTER TABLE partner_applications ADD COLUMN image_url TEXT")
 	// Nomor pesanan BohFood di kasir Kasvo. Lihat migrasi/012 dan sinkronKasvo.
 	migrasiSkema("ALTER TABLE orders ADD COLUMN kasvo_pesanan_id BIGINT NULL")
+	// Kurir untuk pelanggan toko Kasvo (fase 4). Lihat migrasi/013 dan kasvo_kurir.go.
+	migrasiSkema("ALTER TABLE orders ADD COLUMN kasvo_pengantaran_id BIGINT NULL")
+	migrasiSkema("ALTER TABLE orders ADD COLUMN kasvo_status_terkirim VARCHAR(80) NULL")
+	migrasiSkema("ALTER TABLE orders ADD INDEX idx_orders_kasvo_pengantaran (kasvo_pengantaran_id)")
 	// Posisi driver terakhir. Satu baris per driver, ditimpa terus — riwayat
 	// perjalanan tidak disimpan karena tidak ada yang membacanya, dan menyimpan
 	// jejak lokasi orang tanpa alasan justru menambah yang harus dijaga.
@@ -1454,7 +1469,7 @@ func dbGetOrder(id string) (Order, bool) {
 		COALESCE(receiver_name, ''), COALESCE(receiver_phone, ''),
 		COALESCE(pickup_photo_url, ''), COALESCE(delivery_photo_url, ''), COALESCE(received_by, ''),
 		COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0),
-		COALESCE(kasvo_pesanan_id, 0)
+		COALESCE(kasvo_pesanan_id, 0), COALESCE(kasvo_pengantaran_id, 0)
 		FROM orders WHERE id = ?
 	`, id)
 	var pkgType, pkgWeight, pkgNotes sql.NullString
@@ -1467,7 +1482,7 @@ func dbGetOrder(id string) (Order, bool) {
 		&pkgType, &pkgQty, &pkgWeight, &pkgNotes, &ins, &spec,
 		&o.ReceiverName, &o.ReceiverPhone, &o.PickupPhotoURL, &o.DeliveryPhotoURL, &o.ReceivedBy,
 		&o.MerchantID, &o.MerchantName, &itemsJSON, &o.FoodTotal,
-		&o.KasvoPesananID,
+		&o.KasvoPesananID, &o.KasvoPengantaranID,
 	)
 	if err != nil {
 		return o, false
@@ -1493,8 +1508,8 @@ func dbSaveOrder(o Order) error {
 		fare, komisi, biaya_jasa, payment_method, service, status, driver_phone, driver_name, created_at, updated_at,
 		package_type, package_quantity, package_weight, package_notes, insurance, special_handling,
 		receiver_name, receiver_phone, pickup_photo_url, delivery_photo_url, received_by,
-		merchant_id, merchant_name, items_json, food_total)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		merchant_id, merchant_name, items_json, food_total, kasvo_pesanan_id, kasvo_pengantaran_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			status = VALUES(status),
 			driver_phone = VALUES(driver_phone),
@@ -1505,8 +1520,21 @@ func dbSaveOrder(o Order) error {
 		o.Fare, o.Komisi, o.BiayaJasa, o.PaymentMethod, o.Service, o.Status, kosongJadiNULL(o.DriverPhone), o.DriverName, waktuKeDB(o.CreatedAt), waktuKeDB(o.UpdatedAt),
 		o.PackageType, o.PackageQuantity, o.PackageWeight, o.PackageNotes, o.Insurance, o.SpecialHandling,
 		o.ReceiverName, o.ReceiverPhone, o.PickupPhotoURL, o.DeliveryPhotoURL, o.ReceivedBy,
-		kosongJadiNULL(o.MerchantID), kosongJadiNULL(o.MerchantName), kosongJadiNULL(itemsJSON), o.FoodTotal)
+		kosongJadiNULL(o.MerchantID), kosongJadiNULL(o.MerchantName), kosongJadiNULL(itemsJSON), o.FoodTotal,
+		// Hanya saat INSERT (tidak ada di ON DUPLICATE di atas). NULL, bukan 0:
+		// bagi sinkronKasvo NULL berarti "belum dikirim", 0 "ditolak kasir".
+		// Penanda kurir harus lahir bersama barisnya — lewat UPDATE terpisah,
+		// driver yang menerima di sela itu membuat fase 3 mengirim pesanan
+		// ini ke kasir sebagai pesanan aplikasi kedua.
+		nolJadiNULL(o.KasvoPesananID), nolJadiNULL(o.KasvoPengantaranID))
 	return err
+}
+
+func nolJadiNULL(n int64) interface{} {
+	if n == 0 {
+		return nil
+	}
+	return n
 }
 
 // dbClaimOrder menandai pesanan diterima HANYA kalau saat itu masih pending,
@@ -1617,7 +1645,7 @@ func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, e
 		return nil, 0, err
 	}
 
-	q := "SELECT id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(biaya_jasa, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ''), driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling, COALESCE(receiver_name, ''), COALESCE(receiver_phone, ''), COALESCE(pickup_photo_url, ''), COALESCE(delivery_photo_url, ''), COALESCE(received_by, ''), COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0), COALESCE(kasvo_pesanan_id, 0) FROM orders WHERE 1=1"
+	q := "SELECT id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(biaya_jasa, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ''), driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling, COALESCE(receiver_name, ''), COALESCE(receiver_phone, ''), COALESCE(pickup_photo_url, ''), COALESCE(delivery_photo_url, ''), COALESCE(received_by, ''), COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0), COALESCE(kasvo_pesanan_id, 0), COALESCE(kasvo_pengantaran_id, 0) FROM orders WHERE 1=1"
 	var args []interface{}
 	if driver != "" {
 		q += " AND driver_phone = ?"
@@ -1664,7 +1692,7 @@ func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, e
 			&pkgType, &pkgQty, &pkgWeight, &pkgNotes, &ins, &spec,
 			&o.ReceiverName, &o.ReceiverPhone, &o.PickupPhotoURL, &o.DeliveryPhotoURL, &o.ReceivedBy,
 			&o.MerchantID, &o.MerchantName, &itemsJSON, &o.FoodTotal,
-			&o.KasvoPesananID,
+			&o.KasvoPesananID, &o.KasvoPengantaranID,
 		)
 		if err == nil {
 			o.Items = uraiItems(itemsJSON)
@@ -2419,10 +2447,13 @@ func profileHandler(w http.ResponseWriter, r *http.Request) {
 const awalanTopUp = "bohantar-topup-"
 
 const (
-	// Bawah: fee QRIS ditanggung bohAntar, jadi top up yang terlalu kecil
-	// menghabiskan untungnya sendiri. Atas: menahan salah ketik nol.
+	// Atas: menahan salah ketik nol.
 	topUpMinimal  = 10000
 	topUpMaksimal = 2000000
+
+	// Biaya QRIS Xendit 0,7% + PPN 11%, sama dengan XENDIT_BIAYA_QRIS di Kasvo.
+	// ponytail: konstanta, bukan env — ubah di sini kalau Xendit ganti tarif.
+	biayaQRISPersen = 0.777
 
 	// Orang sungguhan membuat satu atau dua invoice lalu membayar. Lima dalam
 	// sepuluh menit sudah longgar untuk yang salah ketik nominal berkali-kali.
@@ -2442,6 +2473,13 @@ func nominalTopUpSah(diminta float64) (nominal float64, alasan string) {
 		return 0, fmt.Sprintf("Top up maksimal Rp%.0f sekali bayar", float64(topUpMaksimal))
 	}
 	return nominal, ""
+}
+
+// totalBayarQRIS menaikkan tagihan supaya setelah Xendit memotong biaya QRIS
+// yang masuk tetap utuh = nominal. Biaya ditanggung pembayar; saldo yang
+// dikreditkan tetap nominal. Rumus sama dengan PaketLangganan::totalXendit Kasvo.
+func totalBayarQRIS(nominal float64) float64 {
+	return math.Ceil(nominal / (1 - biayaQRISPersen/100))
 }
 
 // topUpTanpaKunci menjawab apakah permintaan top up harus ditolak karena
@@ -2560,9 +2598,11 @@ func topUpHandler(w http.ResponseWriter, r *http.Request) {
 // bagian tersulitnya dulu justru menemukan kenapa webhook diam. Satukan kalau
 // suatu saat ada perubahan yang memang harus kena dua-duanya.
 func buatInvoiceQRIS(xenditKey, externalID, email string, nominal float64) (invoiceID, paymentURL string, err error) {
+	total := totalBayarQRIS(nominal)
 	payload := map[string]interface{}{
 		"external_id":     externalID,
-		"amount":          nominal,
+		"amount":          total,
+		"fees":            []map[string]interface{}{{"type": "Biaya layanan QRIS", "value": total - nominal}},
 		"description":     "Top up saldo PayAntar",
 		"currency":        "IDR",
 		"payment_methods": []string{"QRIS"},
@@ -3112,6 +3152,9 @@ func releaseOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	o.DriverName = ""
 	o.UpdatedAt = now
 	notifikasiDriverSiaga(o)
+	if pesananMakanan(o) {
+		go sinkronKasvo() // kurir toko Kasvo: pelanggan melihat "mencari kurir" lagi
+	}
 
 	log.Printf("Pesanan %s dilepas driver %s, dikembalikan ke papan orderan", o.ID, callerPhone(r))
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Pesanan dikembalikan ke papan orderan"})
@@ -3244,7 +3287,10 @@ func pickupOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	o.UpdatedAt = time.Now().Format(time.RFC3339)
 	dbSaveOrder(o)
 	judul, isi := "Perjalanan dimulai", "Driver sudah menjemput. Selamat jalan!"
-	if pesananMakanan(o) {
+	if o.KasvoPengantaranID > 0 {
+		go sinkronKasvo() // pelanggan toko Kasvo melihat "dalam perjalanan"
+		judul, isi = "Pesanan dibawa kurir", "Kurir sudah mengambil pesanan untuk "+o.ReceiverName+" dan sedang mengantarnya."
+	} else if pesananMakanan(o) {
 		judul, isi = "Makanan diambil", "Driver sudah mengambil pesanan Anda dari "+o.MerchantName+" dan sedang mengantarnya."
 	} else if kirimBarang(o) {
 		judul, isi = "Barang diambil", "Driver sudah mengambil barang Anda dan sedang mengantarnya."
@@ -3339,7 +3385,15 @@ func completeOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		pesanBayar = fmt.Sprintf("Bayar tunai Rp%.0f ke driver.", o.Fare+o.BiayaJasa+o.FoodTotal)
 	}
 	judul := "Perjalanan selesai"
-	if pesananMakanan(o) {
+	if o.KasvoPengantaranID > 0 {
+		// Akun pemesannya toko; yang membayar ongkir penerima, bukan toko.
+		judul = "Pesanan pelanggan sampai"
+		penerima := o.ReceivedBy
+		if penerima == "" {
+			penerima = o.ReceiverName
+		}
+		pesanBayar = "Diterima " + penerima + ". Ongkir dibayar tunai oleh penerima ke kurir."
+	} else if pesananMakanan(o) {
 		judul = "Makanan diserahkan"
 	} else if kirimBarang(o) {
 		judul = "Barang diserahkan"
@@ -3351,6 +3405,9 @@ func completeOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		"tipe":     "selesai",
 		"order_id": o.ID,
 	})
+	if pesananMakanan(o) {
+		go sinkronKasvo() // kurir toko Kasvo: pelanggan melihat "sampai"
+	}
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Pesanan berhasil diselesaikan", "order": o})
 }
 
@@ -5682,8 +5739,9 @@ func dbKreditTopUp(invoiceID string, dibayar float64) (phone string, jumlah floa
 		Scan(&phone, &tagihan); err != nil {
 		return "", 0, errTopUpTakDitemukan
 	}
-	// Yang dikreditkan selalu nilai tagihan, bukan yang dibayar: QRIS dinamis
-	// mengunci nominal di dalam QR, jadi selisih apa pun berarti ada yang aneh.
+	// Yang dikreditkan selalu nilai tagihan, bukan yang dibayar: yang dibayar
+	// sudah termasuk biaya QRIS (totalBayarQRIS), dan QRIS dinamis mengunci
+	// nominal di dalam QR, jadi kurang dari tagihan berarti ada yang aneh.
 	if dibayar > 0 && dibayar < tagihan {
 		return phone, 0, errTopUpKurangBayar
 	}

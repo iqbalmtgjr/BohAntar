@@ -38,6 +38,11 @@ class ChatMessage {
 }
 
 class ChatService {
+  /// Hanya untuk tes: alamat WebSocket lengkap, menggantikan alamat produksi
+  /// dan token. Lihat test/chat_service_test.dart.
+  final String? alamatUji;
+  ChatService({this.alamatUji});
+
   WebSocketChannel? _channel;
   StreamSubscription? _langganan;
   Timer? _ulang;
@@ -71,14 +76,16 @@ class ChatService {
       // untuk tampilan lokal. WebSocket tidak bisa mengirim header, jadi token
       // dilewatkan sebagai query parameter.
       final token = ApiService().token;
-      if (token == null || token.isEmpty) {
+      if (alamatUji == null && (token == null || token.isEmpty)) {
         debugPrint('Chat: token tidak tersedia, koneksi dibatalkan');
         _isConnected = false;
         return;
       }
-      final auth = 'token=${Uri.encodeComponent(token)}';
+      final auth = 'token=${Uri.encodeComponent(token ?? '')}';
       String wsUrl;
-      if (ApiService.isProduction) {
+      if (alamatUji != null) {
+        wsUrl = alamatUji!;
+      } else if (ApiService.isProduction) {
         final uri = Uri.parse(ApiService.prodUrl);
         final wsScheme = uri.scheme == 'https' ? 'wss' : 'ws';
         final wsHostPort = uri.port != 0 && uri.port != 80 && uri.port != 443 ? '${uri.host}:${uri.port}' : uri.host;

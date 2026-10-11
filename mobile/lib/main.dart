@@ -21,6 +21,8 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'bohAntar',
       debugShowCheckedModeBanner: false,
+      // Dipakai NotifikasiService untuk membuka layar chat dari notifikasi.
+      navigatorKey: NotifikasiService.navigatorKey,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.system,
@@ -58,6 +60,9 @@ class _AuthGateState extends State<AuthGate> {
           // Sesi lama dipulihkan: token perangkat ikut didaftarkan ulang, kalau
           // tidak notifikasi berhenti sampai pengguna login manual lagi.
           NotifikasiService().daftarkanPerangkat();
+          // Aplikasi dinyalakan dari notifikasi chat: buka chatnya setelah
+          // beranda tergambar, supaya tombol kembali mendarat di beranda.
+          WidgetsBinding.instance.addPostFrameCallback((_) => NotifikasiService().bukaChatDariPeluncuran());
           final user = profileResponse['user'] as Map<String, dynamic>;
           setState(() {
             _targetScreen = DashboardScreen(

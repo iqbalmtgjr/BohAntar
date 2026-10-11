@@ -22,12 +22,19 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
   bool _memuat = true;
   String? _galat;
   String _kategori = 'Semua';
+  final _cari = TextEditingController();
   late final Keranjang _keranjang = Keranjang(widget.warung);
 
   @override
   void initState() {
     super.initState();
     _muat();
+  }
+
+  @override
+  void dispose() {
+    _cari.dispose();
+    super.dispose();
   }
 
   Future<void> _muat() async {
@@ -53,7 +60,13 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
 
   List<String> get _kategoriTersedia => ['Semua', ...{for (final m in _menu) if (m.kategori.isNotEmpty) m.kategori}];
 
-  List<MenuMakanan> get _tersaring => _kategori == 'Semua' ? _menu : _menu.where((m) => m.kategori == _kategori).toList();
+  /// Pencarian mengabaikan kategori yang sedang dipilih: yang mengetik "teh"
+  /// mencari di seluruh warung, bukan cuma di tab Makanan yang kebetulan aktif.
+  List<MenuMakanan> get _tersaring {
+    final q = _cari.text.trim().toLowerCase();
+    if (q.isNotEmpty) return _menu.where((m) => m.nama.toLowerCase().contains(q)).toList();
+    return _kategori == 'Semua' ? _menu : _menu.where((m) => m.kategori == _kategori).toList();
+  }
 
   /// Menu tanpa varian langsung masuk keranjang; yang bervarian memilih dulu
   /// lewat lembar bawah, seperti GoFood.
@@ -205,7 +218,31 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
                       ),
                     ),
                   ],
-                  if (_kategoriTersedia.length > 2) ...[
+                  if (_menu.isNotEmpty) ...[
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: _cari,
+                      onChanged: (_) => setState(() {}),
+                      textInputAction: TextInputAction.search,
+                      decoration: InputDecoration(
+                        hintText: 'Cari menu di ${w.nama}',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon: _cari.text.isEmpty
+                            ? null
+                            : IconButton(
+                                icon: const Icon(Icons.close),
+                                tooltip: 'Hapus pencarian',
+                                onPressed: () => setState(_cari.clear),
+                              ),
+                        isDense: true,
+                        filled: true,
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                      ),
+                    ),
+                  ],
+                  // Saat mencari, chip kategori disembunyikan: hasilnya dari
+                  // seluruh warung, jadi chip yang terpilih hanya menyesatkan.
+                  if (_kategoriTersedia.length > 2 && _cari.text.trim().isEmpty) ...[
                     const SizedBox(height: 14),
                     SizedBox(
                       height: 36,
@@ -241,6 +278,11 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
             const SliverFillRemaining(
               hasScrollBody: false,
               child: PesanKosong(ikon: Icons.menu_book_outlined, judul: 'Belum ada menu', teks: 'Warung ini belum mengisi daftar menunya.'),
+            )
+          else if (_tersaring.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: PesanKosong(ikon: Icons.search_off, judul: 'Menu tidak ditemukan', teks: 'Tidak ada menu "${_cari.text.trim()}" di warung ini.'),
             )
           else
             SliverPadding(

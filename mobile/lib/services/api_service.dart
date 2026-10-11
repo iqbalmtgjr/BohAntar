@@ -220,6 +220,23 @@ class ApiService {
     return _handleResponse(response);
   }
 
+  /// Ganti password dari dalam aplikasi. Password lama wajib — server menolak
+  /// tanpanya, supaya sesi yang dibajak tidak bisa mengunci pemilik akun.
+  Future<Map<String, dynamic>> gantiPassword(String lama, String baru) async {
+    if (_token == null) {
+      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+    }
+    final response = await http.put(
+      Uri.parse('$baseUrl/api/users/profile'),
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $_token',
+      },
+      body: jsonEncode({'current_password': lama, 'new_password': baru}),
+    );
+    return _handleResponse(response);
+  }
+
   // Helper response parser. Server bisa membalas HTML (nginx 502, portal WiFi),
   // jadi jsonDecode tidak boleh dipanggil tanpa pengaman.
   Map<String, dynamic> _handleResponse(http.Response response) {

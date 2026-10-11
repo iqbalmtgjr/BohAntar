@@ -10,6 +10,23 @@ import (
 	"time"
 )
 
+// Biaya QRIS dibebankan ke pembayar: setelah Xendit memotong 0,777% yang masuk
+// harus tetap >= nominal, dan tidak lebih mahal dari perlu.
+func TestTotalBayarQRIS(t *testing.T) {
+	if got := totalBayarQRIS(50000); got != 50392 {
+		t.Fatalf("top up 50.000 ditagih %.0f, harusnya 50392", got)
+	}
+	for n := float64(topUpMinimal); n <= topUpMaksimal; n += 777 {
+		total := totalBayarQRIS(n)
+		if bersih := total * (1 - biayaQRISPersen/100); bersih < n-1e-6 {
+			t.Fatalf("nominal %.0f: tagih %.0f, bersih %.2f kurang dari nominal", n, total, bersih)
+		}
+		if (total-1)*(1-biayaQRISPersen/100) >= n {
+			t.Fatalf("nominal %.0f: tagih %.0f, lebih 1 rupiah dari perlu", n, total)
+		}
+	}
+}
+
 func TestNominalTopUpSah(t *testing.T) {
 	kasus := []struct {
 		nama    string

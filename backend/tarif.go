@@ -492,19 +492,68 @@ func adminKomisiHandler(w http.ResponseWriter, r *http.Request) {
 		totalOrder += b.OrderCount
 	}
 
+	tagihan, totalTagihan, komisiTagihan, err := laporanTagihanQR(from, to)
+	if err != nil {
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal membaca laporan tagihan QR"})
+		return
+	}
+
 	writeJSONResponse(w, 200, map[string]interface{}{
 		"status":           "success",
 		"from":             from,
 		"to":               to,
 		"total_komisi":     totalKomisi,
 		"total_biaya_jasa": totalBiayaJasa,
-		// Yang benar-benar jadi pendapatan bohAntar: komisi ditambah biaya jasa.
-		"total_pendapatan": totalKomisi + totalBiayaJasa,
+		// Yang benar-benar jadi pendapatan bohAntar: komisi, biaya jasa, dan
+		// potongan tagihan QR mitra.
+		"total_pendapatan": totalKomisi + totalBiayaJasa + komisiTagihan,
 		// Dari order tunai, jadi uangnya masih di tangan driver sampai ia setor.
-		"komisi_tunai":  totalTunai,
-		"komisi_wallet": (totalKomisi + totalBiayaJasa) - totalTunai,
-		"total_ongkos":  totalOngkos,
-		"total_order":   totalOrder,
-		"drivers":       daftar,
+		"komisi_tunai": totalTunai,
+		// Potongan tagihan QR selalu di sini: tagihannya dibayar pakai saldo.
+		"komisi_wallet":        (totalKomisi + totalBiayaJasa + komisiTagihan) - totalTunai,
+		"total_ongkos":         totalOngkos,
+		"total_order":          totalOrder,
+		"drivers":              daftar,
+		"total_komisi_tagihan": komisiTagihan,
+		"total_tagihan":        totalTagihan,
+		"tagihan_qr":           tagihan,
 	})
+}
+
+type barisTagihanQR struct {
+	PenerimaPhone string  `json:"penerima_phone"`
+	PenerimaNama  string  `json:"penerima_nama"`
+	Jumlah        int     `json:"jumlah"`
+	Total         float64 `json:"total"`  // dibayar pemesan
+	Komisi        float64 `json:"komisi"` // potongan bohAntar; mitra menerima total - komisi
+}
+
+// laporanTagihanQR menjumlah tagihan QR warung/rental yang DIBAYAR di rentang
+// ini, per mitra penerima. Dihitung menurut paid_at, bukan created_at: tagihan
+// yang kedaluwarsa tanpa dibayar tidak menghasilkan apa-apa. Potongannya
+// dibaca dari tagihan_qr.komisi yang terkunci saat tagihan dibuat, jadi
+// mengubah persen TagihanQR tidak menulis ulang bulan lalu.
+func laporanTagihanQR(from, to string) ([]barisTagihanQR, float64, float64, error) {
+	rows, err := db.Query(`
+		SELECT penerima_phone, penerima_nama, COUNT(*), COALESCE(SUM(amount), 0), COALESCE(SUM(komisi), 0)
+		FROM tagihan_qr
+		WHERE paid_at >= ? AND paid_at < DATE_ADD(?, INTERVAL 1 DAY)
+		GROUP BY penerima_phone, penerima_nama
+		ORDER BY SUM(komisi) DESC, SUM(amount) DESC`, from, to)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+	defer rows.Close()
+	daftar := make([]barisTagihanQR, 0)
+	var total, komisi float64
+	for rows.Next() {
+		var b barisTagihanQR
+		if err := rows.Scan(&b.PenerimaPhone, &b.PenerimaNama, &b.Jumlah, &b.Total, &b.Komisi); err != nil {
+			continue
+		}
+		daftar = append(daftar, b)
+		total += b.Total
+		komisi += b.Komisi
+	}
+	return daftar, total, komisi, rows.Err()
 }

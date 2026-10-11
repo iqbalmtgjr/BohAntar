@@ -80,16 +80,18 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     _input.clear();
   }
 
+  /// Lewat WhatsApp, bukan panggilan biasa: dari sana lawan bicara bisa
+  /// ditelepon atau dikirimi pesan, foto, dan lokasi. wa.me menuntut nomor
+  /// internasional tanpa "+", jadi 08… diubah ke 628….
   Future<void> _call() async {
-    final uri = Uri.parse('tel:${widget.otherPhone}');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Tidak dapat melakukan panggilan')),
-        );
-      }
+    var nomor = widget.otherPhone.replaceAll(RegExp(r'\D'), '');
+    if (nomor.startsWith('0')) nomor = '62${nomor.substring(1)}';
+    final bisa = nomor.isNotEmpty &&
+        await launchUrl(Uri.parse('https://wa.me/$nomor'), mode: LaunchMode.externalApplication);
+    if (!bisa && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(nomor.isEmpty ? 'Nomor lawan bicara belum ada' : 'WhatsApp tidak bisa dibuka')),
+      );
     }
   }
 
@@ -163,16 +165,17 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
             icon: Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: AppTheme.primaryBlue.withOpacity(0.1),
+                color: const Color(0xFF25D366).withOpacity(0.15),
                 shape: BoxShape.circle,
               ),
+              // Hijau WhatsApp: tombolnya membuka WA, bukan panggilan biasa.
               child: const Icon(
                 Icons.phone,
-                color: AppTheme.primaryBlue,
+                color: Color(0xFF128C7E),
                 size: 20,
               ),
             ),
-            tooltip: 'Telepon',
+            tooltip: 'Telepon atau chat lewat WhatsApp',
           ),
           const SizedBox(width: 8),
         ],

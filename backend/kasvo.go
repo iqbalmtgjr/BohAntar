@@ -135,7 +135,8 @@ func sinkronKasvo() {
 		       COALESCE(o.package_notes, ''), COALESCE(o.food_total, 0)
 		FROM orders o JOIN food_merchants m ON m.id = o.merchant_id
 		WHERE o.service = 'BohFood' AND o.status = 'accepted'
-		  AND o.kasvo_pesanan_id IS NULL AND m.kasvo_toko_uuid IS NOT NULL`)
+		  AND o.kasvo_pesanan_id IS NULL AND m.kasvo_toko_uuid IS NOT NULL
+		  AND o.kasvo_pengantaran_id IS NULL`)
 	if err != nil {
 		log.Printf("sinkron Kasvo: daftar kiriman gagal dibaca: %v", err)
 		return
@@ -194,8 +195,11 @@ func sinkronKasvo() {
 		}
 	}
 
+	// Pesanan kurir dari Kasvo (kasvo_pengantaran_id) sengaja dikecualikan:
+	// kurir yang kedaluwarsa tidak membatalkan makanan yang sudah dibayar
+	// pelanggan — toko mencarikan kurir lain atau mengantar sendiri.
 	var batal []string
-	rows, err = db.Query("SELECT id FROM orders WHERE kasvo_pesanan_id > 0 AND status IN ('cancelled', 'expired')")
+	rows, err = db.Query("SELECT id FROM orders WHERE kasvo_pesanan_id > 0 AND kasvo_pengantaran_id IS NULL AND status IN ('cancelled', 'expired')")
 	if err != nil {
 		log.Printf("sinkron Kasvo: daftar pembatalan gagal dibaca: %v", err)
 		return
@@ -221,6 +225,8 @@ func sinkronKasvo() {
 		}
 		_, _ = db.Exec("UPDATE orders SET kasvo_pesanan_id = NULL WHERE id = ?", id)
 	}
+
+	kabarkanKurirKasvo()
 }
 
 // ambilMenuKasvo membaca menu satu toko Kasvo, sudah dalam bentuk FoodMenu

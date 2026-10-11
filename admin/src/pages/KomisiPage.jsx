@@ -75,10 +75,12 @@ export default function KomisiPage() {
 
   const d = data || {};
   const drivers = d.drivers || [];
+  const tagihan = d.tagihan_qr || [];
   const kartu = [
     { label: "Pendapatan Kami", value: rp(d.total_pendapatan), icon: Wallet, color: "var(--success)", bg: "var(--success-glow)" },
     { label: "Dari Komisi", value: rp(d.total_komisi), icon: Percent, color: "var(--success)", bg: "var(--success-glow)" },
     { label: "Dari Biaya Jasa", value: rp(d.total_biaya_jasa), icon: Receipt, color: "var(--success)", bg: "var(--success-glow)" },
+    { label: "Dari Tagihan QR Mitra", value: rp(d.total_komisi_tagihan), icon: QrCode, color: "var(--success)", bg: "var(--success-glow)" },
     { label: "Sudah di Kami (dompet)", value: rp(d.komisi_wallet), icon: Smartphone, color: "var(--primary)", bg: "var(--primary-glow)" },
     { label: "Dari Order Tunai", value: rp(d.komisi_tunai), icon: Banknote, color: "var(--warning)", bg: "var(--warning-glow)" },
     { label: "Ongkos Kotor", value: rp(d.total_ongkos), icon: Receipt, color: "var(--info)", bg: "var(--info-glow)" },
@@ -90,7 +92,7 @@ export default function KomisiPage() {
       <div className="page">
         <div className="page-header">
           <h1>Bagi Hasil Driver</h1>
-          <p>Komisi yang kami peroleh dari pesanan selesai, dirinci per driver</p>
+          <p>Komisi yang kami peroleh dari pesanan selesai (per driver) dan dari tagihan QR mitra yang dibayar</p>
         </div>
 
         <div className="filter-bar">
@@ -177,6 +179,33 @@ export default function KomisiPage() {
                 </tbody>
               </table>
             </div>
+
+            {/* Tagihan QR: pemesan membayar warung/rental pakai saldo, potongan
+                kami terkunci di tiap tagihan saat dibuat. Dihitung saat dibayar. */}
+            {tagihan.length > 0 && (
+              <div className="card" style={{ marginTop: 24 }}>
+                <div className="table-header"><h3>Tagihan QR mitra · {tagihan.reduce((n, t) => n + t.jumlah, 0)} dibayar · {rp(d.total_tagihan)}</h3></div>
+                <table style={{ width: "100%" }}>
+                  <thead><tr><th>Mitra</th><th>Tagihan</th><th>Dibayar Pemesan</th><th>Bagian Mitra</th><th>Potongan Kami</th></tr></thead>
+                  <tbody>
+                    {tagihan.map(t => (
+                      <tr key={t.penerima_phone + t.penerima_nama}>
+                        <td data-label="Mitra">
+                          <div className="user-cell">
+                            <div className="user-avatar" style={{ background: "rgba(16,185,129,0.1)", color: "#10B981" }}>{t.penerima_nama?.[0] || "?"}</div>
+                            <div><div className="user-name">{t.penerima_nama || "—"}</div><div className="user-sub">{t.penerima_phone}</div></div>
+                          </div>
+                        </td>
+                        <td data-label="Tagihan" style={{ fontWeight: 700 }}>{t.jumlah}</td>
+                        <td data-label="Dibayar Pemesan">{rp(t.total)}</td>
+                        <td data-label="Bagian Mitra" style={{ color: "var(--text-secondary)" }}>{rp(t.total - t.komisi)}</td>
+                        <td data-label="Potongan Kami" style={{ color: "var(--success)", fontWeight: 700 }}>{rp(t.komisi)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         )}
 
