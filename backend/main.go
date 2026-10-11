@@ -130,6 +130,9 @@ type Order struct {
 	MerchantName string      `json:"merchant_name"`
 	Items        []OrderItem `json:"items"`
 	FoodTotal    float64     `json:"food_total"`
+	// Nomor pesanan ini di kasir toko Kasvo; 0 kalau belum/tidak masuk kasir.
+	// Hanya dibaca — yang menulis cuma sinkronKasvo, bukan dbSaveOrder.
+	KasvoPesananID int64 `json:"kasvo_pesanan_id"`
 }
 
 type DriverApplication struct {
@@ -404,6 +407,11 @@ func main() {
 	initDB()
 	go pruneOTPs()
 	go kedaluwarsakanPesanan()
+	go func() {
+		for range time.Tick(time.Minute) {
+			sinkronKasvo()
+		}
+	}()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", homeHandler)
@@ -724,6 +732,7 @@ func initDB() {
 			merchant_name VARCHAR(100),
 			items_json TEXT,
 			food_total DECIMAL(12,2) NOT NULL DEFAULT 0,
+			kasvo_pesanan_id BIGINT NULL,
 			INDEX idx_orders_merchant (merchant_id, created_at),
 			-- RESTRICT, bukan CASCADE: pesanan adalah catatan keuangan dan tidak
 			-- boleh ikut lenyap saat sebuah akun dihapus. Yang menghapus akun wajib
@@ -1072,6 +1081,8 @@ func initDB() {
 	migrasiSkema("ALTER TABLE partner_applications ADD COLUMN lat DOUBLE NOT NULL DEFAULT 0")
 	migrasiSkema("ALTER TABLE partner_applications ADD COLUMN lng DOUBLE NOT NULL DEFAULT 0")
 	migrasiSkema("ALTER TABLE partner_applications ADD COLUMN image_url TEXT")
+	// Nomor pesanan BohFood di kasir Kasvo. Lihat migrasi/012 dan sinkronKasvo.
+	migrasiSkema("ALTER TABLE orders ADD COLUMN kasvo_pesanan_id BIGINT NULL")
 	// Posisi driver terakhir. Satu baris per driver, ditimpa terus — riwayat
 	// perjalanan tidak disimpan karena tidak ada yang membacanya, dan menyimpan
 	// jejak lokasi orang tanpa alasan justru menambah yang harus dijaga.
@@ -1442,7 +1453,8 @@ func dbGetOrder(id string) (Order, bool) {
 		package_type, package_quantity, package_weight, package_notes, insurance, special_handling,
 		COALESCE(receiver_name, ''), COALESCE(receiver_phone, ''),
 		COALESCE(pickup_photo_url, ''), COALESCE(delivery_photo_url, ''), COALESCE(received_by, ''),
-		COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0)
+		COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0),
+		COALESCE(kasvo_pesanan_id, 0)
 		FROM orders WHERE id = ?
 	`, id)
 	var pkgType, pkgWeight, pkgNotes sql.NullString
@@ -1455,6 +1467,7 @@ func dbGetOrder(id string) (Order, bool) {
 		&pkgType, &pkgQty, &pkgWeight, &pkgNotes, &ins, &spec,
 		&o.ReceiverName, &o.ReceiverPhone, &o.PickupPhotoURL, &o.DeliveryPhotoURL, &o.ReceivedBy,
 		&o.MerchantID, &o.MerchantName, &itemsJSON, &o.FoodTotal,
+		&o.KasvoPesananID,
 	)
 	if err != nil {
 		return o, false
@@ -1604,7 +1617,7 @@ func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, e
 		return nil, 0, err
 	}
 
-	q := "SELECT id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(biaya_jasa, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ''), driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling, COALESCE(receiver_name, ''), COALESCE(receiver_phone, ''), COALESCE(pickup_photo_url, ''), COALESCE(delivery_photo_url, ''), COALESCE(received_by, ''), COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0) FROM orders WHERE 1=1"
+	q := "SELECT id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(biaya_jasa, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ''), driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling, COALESCE(receiver_name, ''), COALESCE(receiver_phone, ''), COALESCE(pickup_photo_url, ''), COALESCE(delivery_photo_url, ''), COALESCE(received_by, ''), COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0), COALESCE(kasvo_pesanan_id, 0) FROM orders WHERE 1=1"
 	var args []interface{}
 	if driver != "" {
 		q += " AND driver_phone = ?"
@@ -1651,6 +1664,7 @@ func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, e
 			&pkgType, &pkgQty, &pkgWeight, &pkgNotes, &ins, &spec,
 			&o.ReceiverName, &o.ReceiverPhone, &o.PickupPhotoURL, &o.DeliveryPhotoURL, &o.ReceivedBy,
 			&o.MerchantID, &o.MerchantName, &itemsJSON, &o.FoodTotal,
+			&o.KasvoPesananID,
 		)
 		if err == nil {
 			o.Items = uraiItems(itemsJSON)
@@ -2902,6 +2916,8 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	tujuanDriver := "titik jemput Anda"
 	if pesananMakanan(o) {
 		tujuanDriver = o.MerchantName
+		// Dapur toko Kasvo mulai memasak selagi driver di jalan.
+		go sinkronKasvo()
 	}
 	notifikasiKe(o.RiderPhone, "Driver ditemukan", driver.Name+" sedang menuju "+tujuanDriver+".", map[string]string{
 		"tipe":     "pesanan_diterima",
@@ -3147,6 +3163,9 @@ func cancelOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 			"tipe":     "dibatalkan",
 			"order_id": o.ID,
 		})
+	}
+	if pesananMakanan(o) {
+		go sinkronKasvo() // tarik dari kasir Kasvo, stoknya kembali
 	}
 	o.Status = "cancelled"
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Pesanan dibatalkan", "order": o})

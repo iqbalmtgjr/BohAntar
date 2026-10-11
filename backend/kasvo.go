@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
@@ -12,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -48,28 +50,177 @@ func tokenKasvoSah(r *http.Request) bool {
 		subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Integrasi-Token")), []byte(kasvoToken)) == 1
 }
 
+// kirimKasvo melakukan satu panggilan ke Kasvo. Kodenya 0 kalau Kasvo tidak
+// terjangkau sama sekali; selain 2xx, galatnya memuat potongan balasan Kasvo.
+// isi (kalau ada) dikirim sebagai JSON, balasan 2xx di-decode ke tujuan.
+func kirimKasvo(metode, jalur string, isi, tujuan interface{}) (int, error) {
+	if kasvoURL == "" || kasvoToken == "" {
+		return 0, errors.New("KASVO_URL atau KASVO_INTEGRASI_TOKEN belum diisi")
+	}
+	var badan io.Reader
+	if isi != nil {
+		b, err := json.Marshal(isi)
+		if err != nil {
+			return 0, err
+		}
+		badan = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(metode, kasvoURL+jalur, badan)
+	if err != nil {
+		return 0, err
+	}
+	req.Header.Set("X-Integrasi-Token", kasvoToken)
+	req.Header.Set("Accept", "application/json")
+	if isi != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := kasvoClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		potongan, _ := io.ReadAll(io.LimitReader(resp.Body, 300))
+		return resp.StatusCode, fmt.Errorf("Kasvo membalas %d untuk %s: %s", resp.StatusCode, jalur, potongan)
+	}
+	if tujuan == nil {
+		return resp.StatusCode, nil
+	}
+	return resp.StatusCode, json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(tujuan)
+}
+
 // panggilKasvo melakukan GET ke Kasvo dan membaca balasan JSON-nya.
 // ponytail: tanpa cache — kedua aplikasi satu VPS, jadi panggilannya murah.
 // Tambahkan cache singkat kalau daftar warung mulai terasa lambat.
 func panggilKasvo(jalur string, tujuan interface{}) error {
+	_, err := kirimKasvo(http.MethodGet, jalur, nil, tujuan)
+	return err
+}
+
+// sinkronKasvoMu menyerialkan sinkronKasvo: detak per menit dan pemicu dari
+// handler bisa berjalan bersamaan, dan dua-duanya membaca daftar yang sama.
+var sinkronKasvoMu sync.Mutex
+
+// sinkronKasvo menyamakan pesanan BohFood toko Kasvo dengan kasirnya
+// (kolom orders.kasvo_pesanan_id):
+//
+//   - diterima driver, belum ada di kasir (NULL) → dikirim. Dapur mulai
+//     memasak, stok terpotong, dan pesanannya masuk laporan toko. Sengaja
+//     baru saat driver menerima: sebelum itu belum tentu ada yang mengantar,
+//     dan makanan yang sudah dimasak tidak bisa dibatalkan.
+//   - batal atau kedaluwarsa padahal sudah ada di kasir (>0) → dibatalkan di
+//     sana dan stoknya kembali, lalu kolomnya dikosongkan.
+//
+// Kasvo menolak (4xx, mis. stok habis) → kolomnya 0 dan tidak dicoba lagi;
+// driver memesan langsung di kasir seperti sebelum integrasi ada. Kasvo tidak
+// terjangkau → kolomnya tetap, dan menit berikutnya dicoba lagi.
+//
+// Pesanan yang dilepas driver (accepted → pending) sengaja tidak disentuh:
+// dapurnya tetap memasak untuk driver berikutnya, dan Kasvo mengenali kiriman
+// ulang dari bohfood_order_id yang sama.
+func sinkronKasvo() {
 	if kasvoURL == "" || kasvoToken == "" {
-		return errors.New("KASVO_URL atau KASVO_INTEGRASI_TOKEN belum diisi")
+		return
 	}
-	req, err := http.NewRequest(http.MethodGet, kasvoURL+jalur, nil)
+	sinkronKasvoMu.Lock()
+	defer sinkronKasvoMu.Unlock()
+
+	type kiriman struct {
+		id, uuid, itemsJSON, pemesan, driver, catatan string
+		foodTotal                                     float64
+	}
+	var kirim []kiriman
+	rows, err := db.Query(`
+		SELECT o.id, m.kasvo_toko_uuid, COALESCE(o.items_json, ''), o.rider_name, o.driver_name,
+		       COALESCE(o.package_notes, ''), COALESCE(o.food_total, 0)
+		FROM orders o JOIN food_merchants m ON m.id = o.merchant_id
+		WHERE o.service = 'BohFood' AND o.status = 'accepted'
+		  AND o.kasvo_pesanan_id IS NULL AND m.kasvo_toko_uuid IS NOT NULL`)
 	if err != nil {
-		return err
+		log.Printf("sinkron Kasvo: daftar kiriman gagal dibaca: %v", err)
+		return
 	}
-	req.Header.Set("X-Integrasi-Token", kasvoToken)
-	req.Header.Set("Accept", "application/json")
-	resp, err := kasvoClient.Do(req)
+	for rows.Next() {
+		var k kiriman
+		if rows.Scan(&k.id, &k.uuid, &k.itemsJSON, &k.pemesan, &k.driver, &k.catatan, &k.foodTotal) == nil {
+			kirim = append(kirim, k)
+		}
+	}
+	rows.Close()
+
+	for _, k := range kirim {
+		type itemKasvo struct {
+			MenuID  string   `json:"menu_id"`
+			Qty     int      `json:"qty"`
+			Options []string `json:"options"`
+		}
+		var items []itemKasvo
+		for _, it := range uraiItems(k.itemsJSON) {
+			opsi := []string{}
+			for _, o := range it.Options {
+				if o.ID != "" {
+					opsi = append(opsi, o.ID)
+				}
+			}
+			items = append(items, itemKasvo{MenuID: it.MenuID, Qty: it.Qty, Options: opsi})
+		}
+		catatan := "bohFood — diambil driver " + k.driver + ", untuk " + k.pemesan
+		if c := strings.TrimSpace(k.catatan); c != "" {
+			catatan += ". Catatan: " + c
+		}
+		var hasil struct {
+			ID    int64   `json:"id"`
+			Total float64 `json:"total"`
+		}
+		kode, err := kirimKasvo(http.MethodPost, "/api/bohfood/pesanan", map[string]interface{}{
+			"bohfood_order_id": k.id,
+			"toko_uuid":        k.uuid,
+			"items":            items,
+			"catatan":          catatan,
+		}, &hasil)
+		switch {
+		case kode == 0 || kode >= 500:
+			log.Printf("sinkron Kasvo: pesanan %s belum terkirim, dicoba lagi nanti: %v", k.id, err)
+		case err == nil && hasil.ID > 0:
+			_, _ = db.Exec("UPDATE orders SET kasvo_pesanan_id = ? WHERE id = ?", hasil.ID, k.id)
+			// Pajak eksklusif toko ditagih kasir di atas harga menu, sementara
+			// pemesan ditagih harga menu saja — selisihnya ditalangi driver.
+			if hasil.Total != k.foodTotal {
+				log.Printf("PERINGATAN: pesanan %s di kasir Kasvo Rp%.0f, ditagih ke pemesan Rp%.0f", k.id, hasil.Total, k.foodTotal)
+			}
+		default:
+			log.Printf("sinkron Kasvo: pesanan %s ditolak kasir, driver memesan manual: %v", k.id, err)
+			_, _ = db.Exec("UPDATE orders SET kasvo_pesanan_id = 0 WHERE id = ?", k.id)
+		}
+	}
+
+	var batal []string
+	rows, err = db.Query("SELECT id FROM orders WHERE kasvo_pesanan_id > 0 AND status IN ('cancelled', 'expired')")
 	if err != nil {
-		return err
+		log.Printf("sinkron Kasvo: daftar pembatalan gagal dibaca: %v", err)
+		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("Kasvo membalas %d untuk %s", resp.StatusCode, jalur)
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			batal = append(batal, id)
+		}
 	}
-	return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(tujuan)
+	rows.Close()
+
+	for _, id := range batal {
+		kode, err := kirimKasvo(http.MethodPost, "/api/bohfood/pesanan/"+url.PathEscape(id)+"/batal", nil, nil)
+		if kode == 0 || kode >= 500 {
+			log.Printf("sinkron Kasvo: pembatalan %s belum sampai, dicoba lagi nanti: %v", id, err)
+			continue
+		}
+		// 409 = kasir sudah menyelesaikannya (driver sudah membayar); tidak ada
+		// lagi yang bisa ditarik, jadi berhenti mencoba.
+		if err != nil {
+			log.Printf("sinkron Kasvo: pembatalan %s tidak dijalankan kasir: %v", id, err)
+		}
+		_, _ = db.Exec("UPDATE orders SET kasvo_pesanan_id = NULL WHERE id = ?", id)
+	}
 }
 
 // ambilMenuKasvo membaca menu satu toko Kasvo, sudah dalam bentuk FoodMenu

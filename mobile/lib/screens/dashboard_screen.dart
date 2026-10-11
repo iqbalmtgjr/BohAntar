@@ -557,6 +557,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       final response = await ApiService().getOrderStatus(_acceptedOrder!['id']);
       if (response['status'] == 'success') {
         final order = response['order'];
+        // Nomor kasir Kasvo lahir beberapa detik setelah driver menerima.
+        final kasir = order['kasvo_pesanan_id'];
+        if (kasir != null && kasir != _acceptedOrder!['kasvo_pesanan_id'] && mounted) {
+          setState(() => _acceptedOrder!['kasvo_pesanan_id'] = kasir);
+        }
         if (order['status'] == 'completed') {
           setState(() {
             _acceptedOrder = null;
@@ -3122,6 +3127,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     final biayaJasa = (o['biaya_jasa'] as num?)?.toDouble() ?? 0;
     final tunai = (o['payment_method'] ?? 'cash') != 'wallet';
     final catatan = tampilkanCatatan ? (o['package_notes'] ?? '').toString().trim() : '';
+    final noKasir = (o['kasvo_pesanan_id'] as num?)?.toInt() ?? 0;
 
     return Container(
       margin: const EdgeInsets.only(top: 16),
@@ -3142,6 +3148,19 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               ),
             ],
           ),
+          // Pesanan toko Kasvo sudah dikirim ke kasirnya. Tanpa pesan ini driver
+          // memesan ulang di loket dan dapur memasak dua kali.
+          if (noKasir > 0)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(color: Colors.green.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
+              child: Text(
+                'Sudah masuk kasir warung · No. $noKasir\nSebutkan nomor ini ke kasir lalu bayar — tidak perlu pesan ulang.',
+                style: TextStyle(fontSize: 12, color: Colors.green.shade800, fontWeight: FontWeight.w600),
+              ),
+            ),
           const SizedBox(height: 8),
           for (final it in items)
             Padding(

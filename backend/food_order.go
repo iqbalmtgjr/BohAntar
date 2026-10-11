@@ -34,8 +34,10 @@ type OrderItem struct {
 }
 
 // OpsiTerpilih adalah varian yang ikut tersalin ke pesanan — cukup nama dan
-// harganya, supaya driver tahu persis apa yang harus dibeli di kasir.
+// harganya, supaya driver tahu persis apa yang harus dibeli di kasir. ID-nya
+// id varian di Kasvo, dipakai saat pesanan dikirim ke kasirnya (sinkronKasvo).
 type OpsiTerpilih struct {
+	ID    string  `json:"id,omitempty"`
 	Group string  `json:"group"`
 	Name  string  `json:"name"`
 	Price float64 `json:"price"`
@@ -139,7 +141,7 @@ func pilihOpsi(m FoodMenu, ids []string) ([]OpsiTerpilih, float64, string) {
 		for _, o := range g.Options {
 			if dipilih[o.ID] {
 				n++
-				hasil = append(hasil, OpsiTerpilih{Group: g.Name, Name: o.Name, Price: o.Price})
+				hasil = append(hasil, OpsiTerpilih{ID: o.ID, Group: g.Name, Name: o.Name, Price: o.Price})
 				tambahan += o.Price
 			}
 		}
