@@ -285,7 +285,7 @@ export default function UsersPage() {
                 </div>
                 <div className="input-group">
                   <label>Rating</label>
-                  <input className="input" type="number" step="0.1" min="1" max="5" value={editForm.rating} onChange={e => setEditForm({ ...editForm, rating: e.target.value })} required />
+                  <input className="input" type="number" step="0.01" min="0" max="5" value={editForm.rating} onChange={e => setEditForm({ ...editForm, rating: e.target.value })} required />
                 </div>
               </div>
 
