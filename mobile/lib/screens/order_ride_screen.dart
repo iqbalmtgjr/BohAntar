@@ -80,6 +80,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
 
   bool get _kirimBarang => _selectedService == "BohAntar" || _selectedService == "BohSend" || _selectedService == "BohFood";
   bool get _makanan => _selectedService == "BohFood";
+  IconData get _ikonKendaraan => _selectedService == "BohCar" ? Icons.directions_car : Icons.two_wheeler;
   
   // Interactive rating state
   int _ratingStars = 5;
@@ -121,6 +122,11 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
 
   // Routing points
   List<LatLng> _routePoints = [];
+  // Rute driver selama pesanan berjalan, lihat _perbaruiRuteDriver().
+  Rute? _ruteDriver;
+  LatLng? _titikRuteDriver;
+  String? _ruteDriverUntuk;
+  bool _ambilRuteDriver = false;
 
   // Order States
   String? _orderId;
@@ -612,18 +618,14 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     return [
       // Titik yang sedang digeser diwakili pin tetap di tengah layar, jadi
       // penandanya disembunyikan supaya tidak ada dua pin di tempat sama.
-      if (!(_geserPeta && _geserJemput))
+      if (!(_geserPeta && _geserJemput) && _orderStatus != "picked_up")
         penandaPeta(titik: _currentLatLng, warna: Colors.green, judul: 'Titik jemput'),
       if (tujuan != null && !(_geserPeta && !_geserJemput))
         penandaPeta(titik: tujuan, warna: Colors.red, judul: 'Tujuan'),
       // Penanda driver tetap tampil sampai penumpang diantar, bukan hilang
       // begitu status berpindah dari "accepted" ke "picked_up".
       if (driver != null && (_orderStatus == "accepted" || _orderStatus == "picked_up"))
-        penandaPeta(
-          titik: driver,
-          warna: AppTheme.primaryBlue,
-          judul: _driverName.isEmpty ? 'Driver' : _driverName,
-        ),
+        penandaMotor(titik: driver, judul: _driverName.isEmpty ? 'Driver' : _driverName, ikon: _ikonKendaraan),
     ];
   }
 
@@ -810,6 +812,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             setState(() {
               _orderStatus = 'completed';
               _driverLatLng = null;
+              _ruteDriver = null;
               _receivedBy = (order['received_by'] ?? '').toString();
               _deliveryPhotoUrl = (order['delivery_photo_url'] ?? '').toString();
               _foodTotal = (order['food_total'] as num?)?.toDouble() ?? _foodTotal;
@@ -830,11 +833,49 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             );
             Navigator.pop(context, true);
           }
+          _perbaruiRuteDriver();
         }
       } catch (e) {
         debugPrint("Error polling status: $e");
       }
     });
+  }
+
+  // Rute dari posisi driver ke titik jemput, lalu ke tujuan sesudah dijemput —
+  // sama dengan yang dilihat driver. Diambil ulang hanya saat statusnya berganti
+  // atau driver sudah bergerak sejauh ambang driver (dashboard_screen.dart,
+  // _jarakGambarUlangRuteMeter); di antaranya estimasinya disusutkan sendiri
+  // oleh teksEstimasi(). Gagal pun dicatat, supaya polling 2 detik tidak
+  // berubah jadi tembakan ke layanan rute tiap 2 detik.
+  Future<void> _perbaruiRuteDriver() async {
+    final driver = _driverLatLng;
+    final tujuan = _orderStatus == 'picked_up'
+        ? _destinationLatLng
+        : _orderStatus == 'accepted'
+            ? _currentLatLng
+            : null;
+    if (driver == null || tujuan == null) {
+      if (_ruteDriver != null) setState(() => _ruteDriver = null);
+      return;
+    }
+    final terakhir = _titikRuteDriver;
+    if (_ambilRuteDriver ||
+        (_ruteDriverUntuk == _orderStatus &&
+            terakhir != null &&
+            const Distance().distance(terakhir, driver) < 2000)) {
+      return;
+    }
+    _ambilRuteDriver = true;
+    _titikRuteDriver = driver;
+    _ruteDriverUntuk = _orderStatus;
+    try {
+      final hasil = await MapsService().rute(driver, tujuan);
+      if (mounted) setState(() => _ruteDriver = hasil);
+    } catch (e) {
+      debugPrint('Rute driver gagal: $e');
+    } finally {
+      _ambilRuteDriver = false;
+    }
   }
 
   @override
@@ -947,10 +988,10 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               ),
               children: [
                 ubinOSM,
-                if (_routePoints.isNotEmpty)
+                if ((_ruteDriver?.titik ?? _routePoints).isNotEmpty)
                   PolylineLayer(polylines: [
                     Polyline(
-                      points: _routePoints,
+                      points: _ruteDriver?.titik ?? _routePoints,
                       color: AppTheme.primaryBlue,
                       strokeWidth: 5,
                     ),
@@ -1807,24 +1848,34 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           // ETA Status
           Row(
             children: [
-              const Icon(Icons.directions_run, color: AppTheme.primaryBlue, size: 18),
+              Icon(_ikonKendaraan, color: AppTheme.primaryBlue, size: 18),
               const SizedBox(width: 8),
-              // Tanpa "ETA 4 menit" lagi: backend tidak menghitung ETA, angka
-              // itu karangan.
               Expanded(
-                child: Text(
-                  _orderStatus == "picked_up"
-                      ? (_makanan
-                          ? "Makanan sedang diantar ke kamu"
-                          : _kirimBarang
-                              ? "Barang sedang diantar ke tujuan"
-                              : "Perjalanan sedang berlangsung")
-                      : (_makanan
-                          ? "Driver menuju ${_merchantName.isEmpty ? 'warung' : _merchantName}"
-                          : _kirimBarang
-                              ? "Driver menuju titik pengambilan barang"
-                              : "Driver menuju lokasi kamu"),
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _orderStatus == "picked_up"
+                          ? (_makanan
+                              ? "Makanan sedang diantar ke kamu"
+                              : _kirimBarang
+                                  ? "Barang sedang diantar ke tujuan"
+                                  : "Perjalanan sedang berlangsung")
+                          : (_makanan
+                              ? "Driver menuju ${_merchantName.isEmpty ? 'warung' : _merchantName}"
+                              : _kirimBarang
+                                  ? "Driver menuju titik pengambilan barang"
+                                  : "Driver menuju lokasi kamu"),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                    // Dari rute jalan sungguhan, bukan angka tetap; kosong
+                    // selama posisi driver atau rutenya belum terbaca.
+                    if (teksEstimasi(_ruteDriver, _driverLatLng) case final eta?)
+                      Text(
+                        _orderStatus == "picked_up" ? "Tiba di tujuan $eta" : "Tiba $eta",
+                        style: const TextStyle(color: AppTheme.primaryBlue, fontWeight: FontWeight.w600, fontSize: 12),
+                      ),
+                  ],
                 ),
               )
             ],

@@ -7,6 +7,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/screens/food_merchants_screen.dart';
@@ -43,6 +44,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   double _walletBalance = 0.0;
   String _userName = "";
   String _userBadge = "Silver";
+  String _kendaraan = 'motor'; // driver: 'motor' / 'mobil', dari profil
   Map<String, String> _userAddresses = {};
   Map<String, dynamic>? _riderActiveOrder;
 
@@ -55,6 +57,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   // tiga detik. Cukup bertahan selama sesi — pesanan yang benar-benar dilewatkan
   // semua driver akan kedaluwarsa sendiri di server.
   final Set<String> _pesananDitolak = {};
+  bool _menerima = false; // permintaan Terima sedang di jalan
 
   // Driver map states
   final MapController _driverMapController = MapController();
@@ -64,12 +67,40 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   // Titik awal peta sebelum GPS terbaca. Begitu _mulaiPantauPosisi() jalan,
   // isinya selalu posisi sungguhan.
   LatLng _driverLatLng = const LatLng(-0.0784, 111.4933); // Default: kota Sintang
+  // Sebelum GPS terbaca, _driverLatLng cuma titik awal peta. Penanda motor
+  // tidak digambar di sana: lebih baik tidak ada daripada menunjuk tempat lain.
+  bool _posisiTerbaca = false;
   StreamSubscription<Position>? _posisiSub;
+
+  void _pakaiPosisi(LatLng titik) {
+    final pertama = !_posisiTerbaca;
+    setState(() {
+      _driverLatLng = titik;
+      _posisiTerbaca = true;
+    });
+    // Kamera menyusul driver sekali saja, saat posisinya pertama terbaca.
+    // Sesudah itu driver bebas menggeser peta; pesanan memindahkannya sendiri.
+    if (pertama && _acceptedOrder == null && !_hasIncomingOrder) _pindahPeta(titik, 15);
+  }
+
+  /// Peta driver dibuka di posisinya sendiri, online atau tidak. Posisi
+  /// terakhir yang diingat HP muncul seketika; GPS segar menyusul.
+  Future<void> _posisiAwalDriver() async {
+    try {
+      final izin = await Geolocator.checkPermission();
+      if (izin == LocationPermission.denied || izin == LocationPermission.deniedForever) return;
+      final terakhir = await Geolocator.getLastKnownPosition();
+      if (terakhir != null && mounted) _pakaiPosisi(LatLng(terakhir.latitude, terakhir.longitude));
+      final kini = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, timeLimit: Duration(seconds: 20)),
+      );
+      if (mounted) _pakaiPosisi(LatLng(kini.latitude, kini.longitude));
+    } catch (e) {
+      debugPrint('Posisi awal driver gagal: $e');
+    }
+  }
   // Titik saat rute terakhir digambar, untuk menahan panggilan layanan rute.
   LatLng? _titikRuteTerakhir;
-  // Dialog izin lokasi latar belakang cukup sekali per sesi; menanyakannya tiap
-  // kali driver menekan online akan terasa seperti gangguan.
-  bool _izinLatarSudahDitanya = false;
 
   void _pindahPeta(LatLng titik, double zoom) {
     if (_petaSiap) _driverMapController.move(titik, zoom);
@@ -84,8 +115,23 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   static const double _jarakGambarUlangRuteMeter = 2000;
   LatLng? _orderPickupLatLng;
   LatLng? _orderDropoffLatLng;
-  List<LatLng> _driverRoutePoints = [];         // Driver -> Pickup (biru)
-  List<LatLng> _dropoffRoutePoints = [];        // Pickup -> Dropoff (hijau)
+  List<LatLng> _driverRoutePoints = [];         // Driver -> jemput, sesudah dijemput jemput -> tujuan (biru)
+  List<LatLng> _dropoffRoutePoints = [];        // Pickup -> Dropoff (hijau), hanya sebelum dijemput
+  Rute? _ruteAktif; // sumber estimasi waktu di panel pesanan
+
+  bool get _sudahDijemput => _acceptedOrder?['status'] == 'picked_up';
+  LatLng? get _tujuanAktif => _sudahDijemput ? _orderDropoffLatLng : _orderPickupLatLng;
+
+  // Semua jalan keluar pesanan (selesai, lepas) membersihkan peta lewat sini,
+  // supaya pin dan garis pesanan lama tidak tertinggal.
+  void _tutupPesananDriver() {
+    _acceptedOrder = null;
+    _driverRoutePoints = [];
+    _dropoffRoutePoints = [];
+    _ruteAktif = null;
+    _orderPickupLatLng = null;
+    _orderDropoffLatLng = null;
+  }
 
   // Animation Controllers
   late AnimationController _radarController;
@@ -136,7 +182,19 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     // Setelah kedua controller siap: pemulihan memakai keduanya.
     if (widget.role != 'rider') {
       _pulihkanPesananBerjalan();
+      _posisiAwalDriver();
+      _lanjutkanOnline();
     }
+  }
+
+  static const _kunciOnline = 'driver_online';
+
+  /// Driver yang terakhir meninggalkan aplikasi dalam keadaan online langsung
+  /// online lagi saat membukanya. Tanpa ini, driver yang membuka aplikasi dari
+  /// notifikasi orderan harus menekan saklar dulu, dan orderannya keburu lewat.
+  Future<void> _lanjutkanOnline() async {
+    final prefs = await SharedPreferences.getInstance();
+    if ((prefs.getBool(_kunciOnline) ?? false) && mounted && !_isOnline) _toggleOnline(true);
   }
 
   @override
@@ -194,6 +252,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           _walletBalance = (user['balance'] as num?)?.toDouble() ?? 0.0;
           _userName = user['name'] ?? '';
           _userBadge = user['badge'] ?? 'Silver';
+          _kendaraan = response['kendaraan'] ?? 'motor';
           if (user['addresses'] != null) {
             _userAddresses = Map<String, String>.from(user['addresses']);
           }
@@ -396,6 +455,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   }
 
   void _toggleOnline(bool online) {
+    SharedPreferences.getInstance().then((p) => p.setBool(_kunciOnline, online));
     setState(() {
       _isOnline = online;
       if (_isOnline) {
@@ -403,7 +463,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         _startDriverPolling();
       } else {
         _radarController.stop();
-        _stopDriverPolling();
+        // Polling tetap hidup selama ada pesanan berjalan, supaya batalnya terdengar.
+        if (_acceptedOrder == null) _stopDriverPolling();
         _hasIncomingOrder = false;
         _currentIncomingOrder = null;
         // _acceptedOrder sengaja TIDAK dihapus. Offline berarti berhenti
@@ -428,18 +489,61 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
   void _startDriverPolling() {
     _driverPollTimer?.cancel();
-    _driverPollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
-      if (!_isOnline) return;
+    _driverPollTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      if (_isOnline) _denyutPosisi();
+      // Pesanan berjalan dipantau walau driver offline: pembatalannya tetap
+      // harus sampai.
       if (_acceptedOrder != null) {
         _checkAcceptedOrderStatus();
-        return;
+      } else {
+        _cariOrderan();
       }
-      if (_hasIncomingOrder) return;
+    });
+  }
+
+  // Aplikasi sedang terlihat. Notification shade yang ditarik (inactive) masih
+  // dihitung terlihat.
+  bool get _diDepan {
+    final s = WidgetsBinding.instance.lifecycleState;
+    return s == null || s == AppLifecycleState.resumed || s == AppLifecycleState.inactive;
+  }
+
+  // Posisi dikirim tiap 30 m bergerak, jadi driver yang menunggu diam di
+  // pangkalan tidak mengirim apa-apa. Server berhenti menganggapnya siaga
+  // sepuluh menit kemudian, dan notifikasi orderan berhenti datang. Denyut ini
+  // mengirim ulang posisi terakhir dari GPS (bukan posisi ingatan HP).
+  DateTime? _posisiTerkirim;
+  void _denyutPosisi() {
+    final terakhir = _posisiTerkirim;
+    if (terakhir == null || DateTime.now().difference(terakhir) < const Duration(minutes: 3)) return;
+    _posisiTerkirim = DateTime.now();
+    ApiService().sendDriverLocation(_driverLatLng.latitude, _driverLatLng.longitude);
+  }
+
+  Future<void> _cariOrderan() async {
+      if (!_isOnline) return;
+      // Kartu tawaran tidak dimunculkan selagi aplikasi di latar belakang: hitung
+      // mundurnya habis tanpa pernah dilihat, dan orderannya hilang tepat saat
+      // driver membuka aplikasi dari notifikasinya. Begitu dibuka, polling
+      // berikutnya menampilkannya dengan hitung mundur penuh.
+      if (!_hasIncomingOrder && !_diDepan) return;
 
       try {
         final response = await ApiService().getActiveOrders();
         if (response['status'] == 'success') {
-          final List ordersList = (response['orders'] as List? ?? [])
+          final List semua = response['orders'] as List? ?? [];
+          // Kartu tawaran yang pesanannya sudah batal atau diambil driver lain
+          // ditutup, bukan dibiarkan menghitung mundur sampai habis.
+          if (_hasIncomingOrder) {
+            final id = _currentIncomingOrder?['id'];
+            // Pesanan yang sedang kita terima juga lenyap dari daftar ini.
+            if (!_menerima && !semua.any((o) => o['id'] == id) && mounted) {
+              _rejectOrder();
+              _beriTahu('Pesanan sudah tidak tersedia.');
+            }
+            return;
+          }
+          final List ordersList = semua
               .where((o) => !_pesananDitolak.contains(o['id']))
               .toList();
           if (ordersList.isNotEmpty) {
@@ -462,7 +566,6 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       } catch (e) {
         debugPrint("Error polling active orders: $e");
       }
-    });
   }
 
   void _stopDriverPolling() {
@@ -542,7 +645,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     _countdownTimer?.cancel();
     _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_countdownSeconds == 0) {
-        _rejectOrder();
+        _rejectOrder(dilihat: _diDepan);
       } else {
         setState(() {
           _countdownSeconds--;
@@ -564,9 +667,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         }
         if (order['status'] == 'completed') {
           setState(() {
-            _acceptedOrder = null;
+            _tutupPesananDriver();
             _hasIncomingOrder = false;
-            _driverRoutePoints = [];
           });
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -574,6 +676,13 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               backgroundColor: Colors.teal,
             ),
           );
+          _fetchUserProfile();
+        } else if (order['status'] == 'cancelled') {
+          // Server sudah mengirim push, tapi push bisa telat atau tidak
+          // diizinkan. Tanpa ini kartu pesanannya tetap terpampang dan driver
+          // menunggu di titik jemput untuk orang yang tidak akan datang.
+          setState(_tutupPesananDriver);
+          _beriTahu('Pesanan dibatalkan. Tidak perlu dilanjutkan.');
           _fetchUserProfile();
         }
       }
@@ -599,18 +708,21 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   }
 
   Future<void> _fetchDriverRoute(LatLng start, LatLng end) async {
+    Rute? hasil;
     try {
-      final hasil = await MapsService().rute(start, end);
-      if (!mounted) return;
-      if (hasil != null && hasil.titik.isNotEmpty) {
-        setState(() => _driverRoutePoints = hasil.titik);
-        return;
-      }
+      hasil = await MapsService().rute(start, end);
     } catch (e) {
       debugPrint("Driver routing error: $e");
     }
-    if (!mounted) return;
-    setState(() => _driverRoutePoints = [start, end]);
+    // Jawaban telat untuk tujuan lama — rute ke titik jemput yang baru tiba
+    // sesudah penumpang naik — jangan menimpa rute ke tujuan. Kalau menimpa,
+    // garisnya jadi "driver ke tempat ia berdiri" dan tampak hilang.
+    if (!mounted || end != _tujuanAktif) return;
+    final ada = hasil != null && hasil.titik.isNotEmpty;
+    setState(() {
+      _driverRoutePoints = ada ? hasil!.titik : [start, end];
+      _ruteAktif = ada ? hasil : null;
+    });
   }
 
   void _setupDriverOrderRouting() {
@@ -640,11 +752,18 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       // _mulaiPantauPosisi(). Versi lama menaruh driver 0,004° dari titik jemput
       // (sekitar 450 m) lalu menganimasikannya mendekat, jadi peta menunjukkan
       // perjalanan yang tidak pernah terjadi.
+      //
+      // Sesudah dijemput, garisnya perjalanan penumpang: titik jemput ke tujuan,
+      // bukan posisi GPS driver. Ponsel driver yang belum sampai di titik jemput
+      // (atau GPS yang meleset) membuat garis "driver ke tujuan" pendek sekali
+      // dan tertutup ikon. Begitu driver bergerak 2 km dari titik jemput,
+      // _mulaiPantauPosisi menggambar ulang dari posisinya.
+      final asal = _sudahDijemput ? pickupLatLng : _driverLatLng;
       setState(() {
         _orderPickupLatLng = pickupLatLng;
         _orderDropoffLatLng = dropoffLatLng;
-        // Pesanan baru: rutenya digambar sekali tanpa menunggu 500 m pertama.
-        _titikRuteTerakhir = null;
+        // Pesanan baru: rutenya digambar sekali tanpa menunggu 2 km pertama.
+        _titikRuteTerakhir = _sudahDijemput ? pickupLatLng : null;
       });
 
       // Center map to show overview of the whole journey
@@ -659,12 +778,15 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         }
       });
 
-      // Fetch segment 1: driver -> pickup (blue route)
-      _fetchDriverRoute(_driverLatLng, pickupLatLng);
+      // Biru: driver -> jemput, atau jemput -> tujuan begitu sudah dijemput.
+      final tujuan = _tujuanAktif;
+      if (tujuan != null) _fetchDriverRoute(asal, tujuan);
 
-      // Fetch segment 2: pickup -> dropoff (green route)
-      if (dropoffLatLng != null) {
+      // Hijau: gambaran jemput -> tujuan, hanya selagi belum dijemput.
+      if (dropoffLatLng != null && !_sudahDijemput) {
         _fetchDropoffRoute(pickupLatLng, dropoffLatLng);
+      } else {
+        setState(() => _dropoffRoutePoints = []);
       }
     } else {
       // Fallback: parse from text if coordinates are missing (legacy orders)
@@ -706,11 +828,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   // benar berpindah, jadi ojek yang sedang menunggu di pangkalan tidak menguras
   // baterai maupun kuota. distanceFilter 30 m kira-kira satu blok.
   //
-  // ponytail: hanya jalan selama aplikasi terbuka. Android menghentikan stream
-  // ini begitu aplikasi ke latar belakang, jadi penumpang berhenti melihat
-  // pergerakan kalau driver mengunci layarnya. Perbaikannya butuh izin
-  // ACCESS_BACKGROUND_LOCATION plus alasan tertulis ke Google Play — kerjakan
-  // bersama notifikasi push, karena keduanya menuntut layanan latar depan.
+  // Tetap jalan saat layar terkunci tanpa izin lokasi latar belakang: stream ini
+  // dinyalakan selagi aplikasi terbuka dan memakai foreground service bertipe
+  // location (lihat AndroidManifest.xml), yang oleh Android dibiarkan terus
+  // menerima GPS dengan izin "saat aplikasi digunakan" saja.
   Future<void> _mulaiPantauPosisi() async {
     if (!await _pastikanIzinLokasi()) return;
 
@@ -734,11 +855,12 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     ).listen((posisi) {
       if (!mounted) return;
       final titik = LatLng(posisi.latitude, posisi.longitude);
-      setState(() => _driverLatLng = titik);
+      _pakaiPosisi(titik);
 
       // Penumpang membaca posisi ini lewat status pesanan. Murah: hanya menulis
       // satu baris di database sendiri.
       ApiService().sendDriverLocation(titik.latitude, titik.longitude);
+      _posisiTerkirim = DateTime.now();
 
       // Rute digambar ulang jauh lebih jarang daripada posisi diperbarui.
       //
@@ -747,10 +869,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       // jadi sekitar 160 panggilan. Dengan ambang 2 km, jumlahnya turun ke dua
       // atau tiga — dan garis di peta tetap terlihat mengikuti driver karena
       // penandanya sendiri bergerak tiap 30 m.
-      final jemput = _orderPickupLatLng;
-      if (_acceptedOrder != null && jemput != null && _perluGambarUlangRute(titik)) {
+      final tujuan = _tujuanAktif;
+      if (_acceptedOrder != null && tujuan != null && _perluGambarUlangRute(titik)) {
         _titikRuteTerakhir = titik;
-        _fetchDriverRoute(titik, jemput);
+        _fetchDriverRoute(titik, tujuan);
       }
     }, onError: (e) {
       debugPrint('Pantau posisi driver gagal: $e');
@@ -789,40 +911,6 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       _beriTahu('Izin lokasi ditolak. bohAntar tidak bisa mengirim posisi Anda ke penumpang.');
       return false;
     }
-
-    // whileInUse berhenti begitu layar terkunci — dan driver mengunci layarnya
-    // setiap kali menyetir. Izin "sepanjang waktu" diminta sekali, tapi tidak
-    // dipaksakan: sejak Android 11 pilihan itu hanya muncul di halaman
-    // pengaturan, bukan di dialog izin, jadi menolak pun pelacakan tetap jalan
-    // selama aplikasi terbuka.
-    if (izin == LocationPermission.whileInUse && !_izinLatarSudahDitanya && mounted) {
-      _izinLatarSudahDitanya = true;
-      final lanjut = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Text('Izinkan lokasi sepanjang waktu'),
-          content: const Text(
-            'Saat ini posisi Anda hanya terkirim selama aplikasi terbuka di layar. '
-            'Begitu layar terkunci, penumpang berhenti melihat Anda bergerak.\n\n'
-            'Pilih "Izinkan sepanjang waktu" di pengaturan supaya posisi tetap '
-            'terkirim sambil menyetir.',
-            style: TextStyle(fontSize: 13, height: 1.5),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Nanti saja'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Buka pengaturan'),
-            ),
-          ],
-        ),
-      );
-      if (lanjut == true) await Geolocator.openAppSettings();
-    }
     return true;
   }
 
@@ -836,7 +924,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   Future<void> _acceptOrder() async {
     _countdownTimer?.cancel();
     if (_currentIncomingOrder == null) return;
-    
+    _menerima = true;
+
     try {
       final response = await ApiService().acceptOrder(_currentIncomingOrder!['id']);
       if (response['status'] == 'success') {
@@ -861,19 +950,27 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           backgroundColor: AppTheme.errorColor,
         ),
       );
+    } finally {
+      _menerima = false;
     }
   }
 
-  void _rejectOrder() {
+  /// [dilihat] false: hitung mundurnya habis selagi aplikasi di latar
+  /// belakang. Orderan itu tidak dicatat dilewati, jadi ditawarkan lagi saat
+  /// aplikasi dibuka.
+  void _rejectOrder({bool dilihat = true}) {
     _countdownTimer?.cancel();
     setState(() {
       // Tanpa daftar ini, polling tiga detik berikutnya mengembalikan pesanan
       // yang sama dan kartunya muncul lagi dengan hitung mundur baru. Driver
-      // tidak punya cara melewatkan orderan selain offline.
+      // tidak punya cara melewatkan orderan selain offline. Tombol muat ulang
+      // mengosongkannya.
       final id = _currentIncomingOrder?['id'];
-      if (id != null) _pesananDitolak.add(id as String);
+      if (id != null && dilihat) _pesananDitolak.add(id as String);
       _hasIncomingOrder = false;
       _currentIncomingOrder = null;
+      // Pin dan garis pratinjau orderan yang dilepas ikut dibersihkan.
+      _tutupPesananDriver();
     });
   }
 
@@ -946,6 +1043,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     // Token perangkat dilepas duluan, kalau tidak notifikasi orderan tetap
     // menyusul ke HP ini atas nama akun yang sudah keluar.
     NotifikasiService().lupakanPerangkat();
+    // Akun berikutnya di HP ini mulai offline, dan server berhenti menganggap
+    // akun ini siaga. Dikirim sebelum token dibuang.
+    SharedPreferences.getInstance().then((p) => p.remove(_kunciOnline));
+    if (widget.role != 'rider') ApiService().setDriverOffline();
     ApiService().clearToken();
     Navigator.pushAndRemoveUntil(
       context,
@@ -1120,8 +1221,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   }
 
   Widget _buildRiderHomeBody(ThemeData theme, bool isDark) {
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
+    return RefreshIndicator(
+      onRefresh: () => Future.wait([_fetchUserProfile(), _fetchRiderActiveOrder()]),
+      child: SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1305,24 +1408,26 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             childAspectRatio: 0.82,
             padding: EdgeInsets.zero, // jangan ambil padding sistem dari MediaQuery
             children: [
-              _buildServiceButton(Icons.delivery_dining, 'BohAntar', 'Antar barang & makanan', AppTheme.primaryBlue, () {
+              // BohAntar sudah dilebur ke BohSend (nama aplikasinya sendiri
+              // bohAntar); pengenal 'BohAntar' tetap dikenali untuk pesanan lama.
+              _buildServiceButton(Icons.motorcycle, 'BohRide', 'Ojek motor', AppTheme.primaryBlue, () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => OrderRideScreen(
-                      initialService: 'BohAntar',
+                      initialService: 'BohRide',
                       riderName: _userName.isNotEmpty ? _userName : widget.name,
                       riderPhone: widget.phone,
                     ),
                   ),
                 ).then((_) => _fetchUserProfile());
               }),
-              _buildServiceButton(Icons.motorcycle, 'BohRide', 'Jasa transportasi', const Color(0xFF4D90FF), () {
+              _buildServiceButton(Icons.directions_car, 'BohCar', 'Antar jemput mobil', const Color(0xFF10B981), () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => OrderRideScreen(
-                      initialService: 'BohRide',
+                      initialService: 'BohCar',
                       riderName: _userName.isNotEmpty ? _userName : widget.name,
                       riderPhone: widget.phone,
                     ),
@@ -1348,7 +1453,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   ).then((_) => _fetchUserProfile());
                 });
               }),
-              _buildServiceButton(Icons.mail, 'BohSend', 'Kirim paket & dokumen', const Color(0xFF00B4D8), () {
+              _buildServiceButton(Icons.local_shipping, 'BohSend', 'Paket, dokumen & barang', const Color(0xFF00B4D8), () {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -1383,6 +1488,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           // Active Order banner (Floating status)
           _buildActiveOrderFloatingCard(isDark),
         ],
+      ),
       ),
     );
   }
@@ -1693,8 +1799,12 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   }
 
   Widget _buildBantuanBody(ThemeData theme, bool isDark) {
-    return ListView(
-      physics: const BouncingScrollPhysics(),
+    // ponytail: isinya statis, tarikannya cuma membaca ulang profil supaya
+    // gerakannya sama di semua tab.
+    return RefreshIndicator(
+      onRefresh: _fetchUserProfile,
+      child: ListView(
+      physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
       padding: const EdgeInsets.all(20),
       children: [
         Text(
@@ -1710,6 +1820,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         _buildFAQTile("Barang belum sampai tetapi status pesanan selesai?", isDark),
         _buildFAQTile("Ingin mendaftar sebagai pengemudi?", isDark),
       ],
+      ),
     );
   }
 
@@ -1737,8 +1848,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   }
 
   Widget _buildAkunBody(ThemeData theme, bool isDark) {
-    return SingleChildScrollView(
-      physics: const BouncingScrollPhysics(),
+    return RefreshIndicator(
+      onRefresh: _fetchUserProfile,
+      child: SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
       child: Column(
         children: [
@@ -1913,6 +2026,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             trailing: const Icon(Icons.arrow_forward_ios, size: 14, color: Colors.red),
           ),
         ],
+      ),
       ),
     );
   }
@@ -2389,7 +2503,28 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
+  /// Tarik-ke-bawah dan tombol muat ulang di beranda driver: saldo, status
+  /// pesanan berjalan (atau yang hilang dari layar), dan orderan yang tadi
+  /// terlewat atau dilewati — ditawarkan lagi kalau belum diambil orang.
+  Future<void> _segarkanDriver() async {
+    _pesananDitolak.clear();
+    final profil = _fetchUserProfile();
+    if (_acceptedOrder != null) {
+      await _checkAcceptedOrderStatus();
+    } else {
+      await _pulihkanPesananBerjalan();
+      if (_acceptedOrder == null) await _cariOrderan();
+    }
+    await profil;
+    if (mounted && _isOnline && _acceptedOrder == null && !_hasIncomingOrder) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Belum ada orderan di sekitar Anda.')),
+      );
+    }
+  }
+
   Widget _buildDriverPeta(ThemeData theme, bool isDark) {
+    final latarTombol = isDark ? const Color(0xFF1E293B) : Colors.white;
     return Stack(
         children: [
           // Peta driver. Label "Jemput"/"Tujuan" muncul saat penandanya ditekan
@@ -2400,7 +2535,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               options: MapOptions(
                 initialCenter: _orderPickupLatLng ?? _driverLatLng,
                 initialZoom: 14,
-                onMapReady: () => _petaSiap = true,
+                onMapReady: () {
+                  _petaSiap = true;
+                  // GPS bisa lebih cepat dari peta; gerakan kameranya tadi terlewat.
+                  if (_posisiTerbaca && _acceptedOrder == null && !_hasIncomingOrder) _pindahPeta(_driverLatLng, 15);
+                },
               ),
               children: [
                 ubinOSM,
@@ -2423,13 +2562,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     ),
                   ]),
                 MarkerLayer(markers: [
-                  if (_isOnline)
-                    penandaPeta(
-                      titik: _driverLatLng,
-                      warna: AppTheme.primaryBlue,
-                      judul: 'Posisi Anda',
-                    ),
-                  if (_orderPickupLatLng != null)
+                  if (_orderPickupLatLng != null && !_sudahDijemput)
                     penandaPeta(
                       titik: _orderPickupLatLng!,
                       warna: Colors.green,
@@ -2441,33 +2574,29 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       warna: Colors.red,
                       judul: 'Tujuan',
                     ),
+                  // Terakhir supaya tergambar di atas pin lain.
+                  if (_posisiTerbaca)
+                    penandaMotor(
+                      titik: _driverLatLng,
+                      judul: 'Posisi Anda',
+                      ikon: _kendaraan == 'mobil' ? Icons.directions_car : Icons.two_wheeler,
+                    ),
                 ]),
                 sumberPeta,
               ],
             ),
           ),
 
-          // Header Panel
+          // Tombol di atas peta, tanpa sapaan dan latar: yang perlu terlihat
+          // driver adalah petanya. Tiap tombol membawa latarnya sendiri.
           Positioned(
             top: 0,
             left: 0,
             right: 0,
-            child: Container(
-              padding: const EdgeInsets.only(top: 50, left: 20, right: 20, bottom: 20),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    isDark ? const Color(0xFF0F172A).withOpacity(0.95) : Colors.white.withOpacity(0.95),
-                    isDark ? const Color(0xFF0F172A).withOpacity(0.8) : Colors.white.withOpacity(0.8),
-                    Colors.transparent
-                  ],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
-              ),
-              child: Column(
-                children: [
-                  Row(
+            child: SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       // Active Toggle Badge
@@ -2506,18 +2635,25 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       ),
 
                       // Online Switch Button
-                      Row(
-                        children: [
-                          const Text('Online', style: TextStyle(fontWeight: FontWeight.bold)),
-                          const SizedBox(width: 8),
-                          Switch.adaptive(
-                            value: _isOnline,
-                            activeColor: AppTheme.primaryBlue, // Blue instead of green
-                            onChanged: _toggleOnline,
-                          ),
-                        ],
+                      Container(
+                        padding: const EdgeInsets.only(left: 14),
+                        decoration: BoxDecoration(
+                          color: latarTombol,
+                          borderRadius: BorderRadius.circular(30),
+                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.12), blurRadius: 8)],
+                        ),
+                        child: Row(
+                          children: [
+                            const Text('Online', style: TextStyle(fontWeight: FontWeight.bold)),
+                            Switch.adaptive(
+                              value: _isOnline,
+                              activeColor: AppTheme.primaryBlue, // Blue instead of green
+                              onChanged: _toggleOnline,
+                            ),
+                          ],
+                        ),
                       ),
-                      
+
                       // Pindai QR setoran. Hanya muncul kalau memang ada komisi
                       // yang belum disetor — driver yang tidak berutang tidak
                       // punya QR untuk dipindai, dan tombol yang selalu ada
@@ -2525,70 +2661,45 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       if (_walletBalance < 0)
                         IconButton(
                           tooltip: 'Pindai QR setoran komisi',
+                          style: IconButton.styleFrom(backgroundColor: latarTombol),
                           icon: const Icon(Icons.qr_code_scanner, color: AppTheme.errorColor),
                           onPressed: _pindaiSetoran,
                         ),
 
                       // Logout
                       IconButton(
+                        style: IconButton.styleFrom(backgroundColor: latarTombol),
                         icon: Icon(Icons.logout, color: isDark ? Colors.white70 : Colors.black87),
                         onPressed: _logout,
                       )
                     ],
                   ),
-                  const SizedBox(height: 16),
-                  // Greet Row
-                  Row(
-                    children: [
-                      CircleAvatar(
-                        radius: 20,
-                        backgroundColor: AppTheme.primaryBlue.withOpacity(0.12),
-                        child: Text(
-                          _userName.isNotEmpty ? _userName[0].toUpperCase() : (widget.name.isNotEmpty ? widget.name[0].toUpperCase() : 'D'),
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppTheme.primaryBlue),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Halo, ${_userName.isNotEmpty ? _userName : widget.name}!',
-                              style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 15,
-                                  color: isDark ? Colors.white : Colors.black87,
-                              ),
-                            ),
-                            Text(
-                              'Mitra Driver bohAntar',
-                              style: TextStyle(
-                                  color: isDark ? Colors.white60 : Colors.grey,
-                                  fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
               ),
             ),
           ),
 
-          // Bottom Section (States: Offline, Online-Radar, Incoming Order)
+          // Bottom Section (States: Offline, Online-Radar, Incoming Order).
+          // Peta tidak bisa ditarik untuk menyegarkan — geser ke bawah di sana
+          // menggeser peta — jadi panel inilah yang ditarik.
           Positioned(
             bottom: 0,
             left: 0,
             right: 0,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (_walletBalance < _ambangSaldoMenipis) _kartuSaldoDriver(isDark),
-                _buildBottomPanel(isDark, theme),
-              ],
+            child: RefreshIndicator(
+              onRefresh: _segarkanDriver,
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  // RefreshIndicator melonggarkan lebarnya; tanpa stretch panel
+                  // menyusut selebar isinya dan menempel ke kiri.
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_walletBalance < _ambangSaldoMenipis) _kartuSaldoDriver(isDark),
+                    _buildBottomPanel(isDark, theme),
+                  ],
+                ),
+              ),
             ),
           ),
         ],
@@ -2613,7 +2724,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     return RefreshIndicator(
       onRefresh: () async {
         setState(() => _pendapatanFuture = ApiService().getOrders());
-        await _pendapatanFuture;
+        // Saldo komisi di atas riwayat ikut dibaca ulang.
+        await Future.wait([_pendapatanFuture!, _fetchUserProfile()]);
       },
       child: FutureBuilder<Map<String, dynamic>>(
         future: _pendapatanFuture,
@@ -2749,6 +2861,16 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   /// gerbang saldo di server mulai menolak pesanan tunai.
   static const double _ambangSaldoMenipis = 10000;
 
+  // Tujuan pencairan yang umum. Bank Kalbar karena armada pertama di Sintang.
+  // Namanya tersimpan apa adanya di pengajuan, jadi admin membaca nama yang sama.
+  static const _daftarBank = [
+    'BRI', 'BCA', 'BNI', 'Mandiri', 'BSI (Bank Syariah Indonesia)', 'Bank Kalbar',
+    'BTN', 'CIMB Niaga', 'Permata', 'Danamon', 'OCBC', 'Maybank', 'Panin',
+    'Bank Mega', 'SeaBank', 'Bank Jago', 'Jenius / SMBC Indonesia',
+    'DANA', 'OVO', 'GoPay', 'ShopeePay', 'LinkAja',
+  ];
+  static const _bankLainnya = 'Lainnya';
+
   /// Tarik saldo ke rekening. Pencairan manual: saldo dipotong server saat
   /// diajukan, admin mentransfer lalu menandai selesai — atau menolak dan
   /// saldonya kembali. Rekening diisi dari pengajuan terakhir.
@@ -2765,7 +2887,13 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     final akhir = riwayat.isNotEmpty ? riwayat.first as Map : null;
     final menunggu = riwayat.cast<Map>().where((p) => p['status'] == 'menunggu').firstOrNull;
     final nominal = TextEditingController();
-    final bank = TextEditingController(text: akhir?['bank'] ?? '');
+    // Rekening terakhir diisikan lagi: yang ada di daftar terpilih langsung,
+    // yang tidak masuk ke "Lainnya" dengan namanya sudah tertulis.
+    final bankLama = (akhir?['bank'] as String?) ?? '';
+    final bankDikenal = _daftarBank.contains(bankLama);
+    String? pilihBank = bankLama.isEmpty ? null : (bankDikenal ? bankLama : _bankLainnya);
+    var bankKosong = false;
+    final bank = TextEditingController(text: bankDikenal ? '' : bankLama);
     final nomor = TextEditingController(text: akhir?['nomor_rekening'] ?? '');
     final pemilik = TextEditingController(text: akhir?['nama_pemilik'] ?? '');
     final formKey = GlobalKey<FormState>();
@@ -2805,11 +2933,38 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       decoration: const InputDecoration(labelText: 'Nominal (minimal Rp10.000)'),
                       validator: (v) => (int.tryParse((v ?? '').replaceAll(angka, '')) ?? 0) < 10000 ? 'Minimal Rp10.000' : null,
                     ),
-                    TextFormField(
-                      controller: bank,
-                      decoration: const InputDecoration(labelText: 'Bank atau e-wallet (BRI, DANA, ...)'),
-                      validator: (v) => (v ?? '').trim().length < 2 ? 'Wajib diisi' : null,
+                    const SizedBox(height: 12),
+                    // Ketik untuk mencari. Yang tidak ada di daftar lewat "Lainnya".
+                    DropdownMenu<String>(
+                      initialSelection: pilihBank,
+                      expandedInsets: EdgeInsets.zero,
+                      menuHeight: 300,
+                      enableFilter: true,
+                      requestFocusOnTap: true,
+                      label: const Text('Bank atau e-wallet'),
+                      leadingIcon: const Icon(Icons.search),
+                      errorText: bankKosong ? 'Pilih bank atau e-wallet' : null,
+                      filterCallback: (entri, cari) {
+                        final q = cari.trim().toLowerCase();
+                        // Teks yang persis nama pilihan berarti belum mencari.
+                        if (q.isEmpty || entri.any((e) => e.label.toLowerCase() == q)) return entri;
+                        // "Lainnya" selalu ada: bank yang tidak ketemu tetap bisa dipilih.
+                        return [...entri.where((e) => e.value != _bankLainnya && e.label.toLowerCase().contains(q)), entri.last];
+                      },
+                      dropdownMenuEntries: [
+                        for (final b in [..._daftarBank, _bankLainnya]) DropdownMenuEntry(value: b, label: b),
+                      ],
+                      onSelected: (b) => setSheet(() {
+                        pilihBank = b;
+                        bankKosong = false;
+                      }),
                     ),
+                    if (pilihBank == _bankLainnya)
+                      TextFormField(
+                        controller: bank,
+                        decoration: const InputDecoration(labelText: 'Tulis nama bank atau e-wallet'),
+                        validator: (v) => (v ?? '').trim().length < 2 ? 'Wajib diisi' : null,
+                      ),
                     TextFormField(
                       controller: nomor,
                       keyboardType: TextInputType.number,
@@ -2833,7 +2988,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       onPressed: mengirim
                           ? null
                           : () async {
-                              if (!formKey.currentState!.validate()) return;
+                              // DropdownMenu bukan FormField, jadi diperiksa sendiri.
+                              final sah = formKey.currentState!.validate();
+                              setSheet(() => bankKosong = pilihBank == null);
+                              if (!sah || pilihBank == null) return;
                               setSheet(() {
                                 mengirim = true;
                                 galat = '';
@@ -2841,7 +2999,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                               try {
                                 await ApiService().ajukanPencairan(
                                   amount: int.parse(nominal.text.replaceAll(angka, '')),
-                                  bank: bank.text.trim(),
+                                  bank: pilihBank == _bankLainnya ? bank.text.trim() : pilihBank!,
                                   nomorRekening: nomor.text,
                                   namaPemilik: pemilik.text.trim(),
                                 );
@@ -2996,7 +3154,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     try {
       await ApiService().lepasPesanan(orderId);
       if (!mounted) return;
-      setState(() => _acceptedOrder = null);
+      setState(_tutupPesananDriver);
       // Saldo dibaca ulang: komisi yang tadi tertahan sekarang bebas lagi.
       await _fetchUserProfile();
       if (!mounted) return;
@@ -3632,6 +3790,21 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               ],
             ),
             _detailBarang(_acceptedOrder!, tampilkanCatatan: true),
+            if (teksEstimasi(_ruteAktif, _driverLatLng) case final eta?) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  const Icon(Icons.schedule, size: 16, color: AppTheme.primaryBlue),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${_sudahDijemput ? 'Ke tujuan' : _makanan(_acceptedOrder) ? 'Ke warung' : _kirimBarang(_acceptedOrder) ? 'Ke titik ambil' : 'Ke penumpang'}: $eta',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 16),
             // Chat & Call buttons
             Row(
@@ -3705,6 +3878,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       setState(() {
                         _acceptedOrder = res['order'];
                       });
+                      // Rute pindah: dari posisi driver ke tujuan penumpang.
+                      _setupDriverOrderRouting();
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(
@@ -3728,7 +3903,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   try {
                     String? foto;
                     String? penerima;
-                    if (_kirimBarang(_acceptedOrder)) {
+                    // ponytail: BohFood cukup tombol selesai — makanan diterima
+                    // langsung oleh pemesan, nama+foto cuma menahan driver.
+                    if (_kirimBarang(_acceptedOrder) && !_makanan(_acceptedOrder)) {
                       penerima = await _tanyaNamaPenerima();
                       if (penerima == null) return;
                       foto = await _unggahFotoBukti('Foto barang saat diserahkan');
@@ -3737,9 +3914,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     final res = await ApiService().completeOrder(orderId, photoUrl: foto, receivedBy: penerima);
                     if (!mounted) return;
                     if (res['status'] == 'success') {
-                      setState(() {
-                        _acceptedOrder = null;
-                      });
+                      setState(_tutupPesananDriver);
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text("Perjalanan berhasil diselesaikan!"), backgroundColor: Colors.green),
                       );
@@ -4000,6 +4175,19 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           const Text(
             'Pastikan GPS Anda aktif. Berkelilinglah ke area ramai.',
             style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          // Orderan yang terlewat hitung mundurnya atau dilewati tidak muncul
+          // lagi sendiri; tombol ini menawarkannya lagi kalau belum diambil.
+          OutlinedButton.icon(
+            onPressed: _segarkanDriver,
+            icon: const Icon(Icons.refresh, size: 18),
+            label: const Text('Muat ulang orderan', style: TextStyle(fontWeight: FontWeight.bold)),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppTheme.primaryBlue,
+              side: const BorderSide(color: AppTheme.primaryBlue),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
           ),
         ],
       ),

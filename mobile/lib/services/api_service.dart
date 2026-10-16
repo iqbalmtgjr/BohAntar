@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile/tarif.dart';
 
@@ -387,9 +388,27 @@ class ApiService {
     } catch (_) {}
   }
 
+  /// Benar kalau server sudah tidak melayani versi aplikasi ini (MIN_APP_BUILD
+  /// di backend). Galat apa pun dianggap "tidak perlu": HP yang sedang tanpa
+  /// sinyal tidak boleh terkunci di layar perbarui.
+  Future<bool> perluPerbarui() async {
+    try {
+      final info = await PackageInfo.fromPlatform();
+      final r = await http
+          .get(Uri.parse('$baseUrl/api/aplikasi/versi'))
+          .timeout(const Duration(seconds: 5));
+      final minimal = (jsonDecode(r.body)['minimal_build'] as num?)?.toInt() ?? 0;
+      return (int.tryParse(info.buildNumber) ?? 0) < minimal;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // URL publik kebijakan privasi sekaligus cara hapus akun tanpa aplikasi.
-  // Google Play menuntut keduanya bisa dibuka dari luar aplikasi.
-  String get privacyUrl => '$baseUrl/privasi';
+  // Google Play menuntut keduanya bisa dibuka dari luar aplikasi. Lewat /api/
+  // karena nginx produksi hanya meneruskan /api/* ke backend — /privasi
+  // berakhir di halaman 404 dashboard.
+  String get privacyUrl => '$baseUrl/api/privasi';
 
   // Hapus akun sendiri. Backend menolak kalau masih ada pesanan berjalan atau
   // komisi yang belum disetor, jadi pesan errornya diteruskan apa adanya.

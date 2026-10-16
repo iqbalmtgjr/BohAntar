@@ -1,0 +1,25 @@
+bohAntar adalah aplikasi ojek online, pesan makanan, dan kirim barang untuk warga Sintang dan sekitarnya, Kalimantan Barat. Satu aplikasi untuk bepergian, makan, dan mengirim paket.
+
+LAYANAN
+• BohRide – ojek motor untuk perjalanan harian. Ongkos tampil sebelum Anda memesan.
+• BohFood – pesan makanan dari warung dan rumah makan sekitar, driver mengambil dan mengantarnya ke tempat Anda.
+• BohSend – kirim barang dan dokumen dalam kota, lengkap dengan foto bukti saat barang diambil dan diserahkan.
+
+KENAPA bohAntar
+• Lacak posisi driver di peta secara langsung, lengkap dengan perkiraan waktu tiba.
+• Chat langsung dengan driver selama pesanan berjalan.
+• Notifikasi setiap kali status pesanan berubah.
+• Bayar tunai atau pakai saldo dompet PayAntar. Top up lewat QRIS.
+• Bayar tagihan di warung mitra cukup dengan memindai kode QR.
+• Simpan alamat yang sering dipakai supaya memesan lebih cepat.
+
+UNTUK DRIVER
+Daftar jadi driver langsung dari aplikasi. Terima orderan di sekitar Anda, pantau penghasilan, dan cairkan saldo ke rekening bank.
+
+UNTUK WARUNG
+Warung mitra menerima pesanan BohFood, termasuk lewat aplikasi kasir Kasvo.
+
+PRIVASI
+Kami hanya mengumpulkan data yang diperlukan agar layanan berjalan, tidak menjual data Anda, dan tidak menampilkan iklan. Akun bisa dihapus kapan saja dari menu Akun.
+
+Butuh bantuan? Hubungi cs.bohantar@gmail.com

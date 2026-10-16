@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:mobile/services/maps_service.dart';
 
 /// Decoder polyline ditulis sendiri ketimbang menambah paket, jadi harus ada
@@ -20,6 +21,18 @@ void main() {
 
   test('string kosong menghasilkan daftar kosong, bukan galat', () {
     expect(decodePolyline(''), isEmpty);
+  });
+
+  test('estimasi menyusut sebanding sisa jarak, dan "Hampir tiba" di ujung', () {
+    // ±1,1 km lurus ke timur di khatulistiwa, 10 menit, 1,5 km lewat jalan.
+    const awal = LatLng(0, 0), ujung = LatLng(0, 0.01);
+    const rute = Rute(titik: [awal, ujung], meter: 1500, detik: 600);
+
+    expect(teksEstimasi(rute, awal), '± 10 menit · 1,5 km');
+    expect(teksEstimasi(rute, const LatLng(0, 0.004)), '± 6 menit · 0,9 km');
+    expect(teksEstimasi(rute, const LatLng(0, 0.0095)), 'Hampir tiba');
+    expect(teksEstimasi(null, awal), isNull);
+    expect(teksEstimasi(const Rute(titik: [awal, ujung], meter: 1500), awal), isNull);
   });
 
   test('koordinat belahan selatan dan timur seperti Sintang terbaca benar', () {

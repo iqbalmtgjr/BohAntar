@@ -229,8 +229,10 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
         backgroundColor: Colors.transparent,
         elevation: 0,
       ),
-      body: ListView(
-        physics: const BouncingScrollPhysics(),
+      body: RefreshIndicator(
+        onRefresh: _muatSaldo,
+        child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
           _bagian(
@@ -405,6 +407,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
             ),
           ),
         ],
+      ),
       ),
       bottomNavigationBar: SafeArea(
         top: false,

@@ -149,8 +149,10 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
-      body: CustomScrollView(
-        physics: const BouncingScrollPhysics(),
+      body: RefreshIndicator(
+        onRefresh: _muat,
+        child: CustomScrollView(
+        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
         slivers: [
           SliverAppBar(
             expandedHeight: 210,
@@ -305,6 +307,7 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
               ),
             ),
         ],
+      ),
       ),
       bottomNavigationBar: _keranjang.kosong ? null : _BarKeranjang(_keranjang, saatLanjut: _lanjut),
     );

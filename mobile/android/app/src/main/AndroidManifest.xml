@@ -4,15 +4,14 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- Driver perlu tetap terlacak saat layarnya terkunci: ojek tidak menyetir
-         sambil menatap aplikasi. Tanpa ketiga izin di bawah, Android
-         menghentikan aliran GPS begitu aplikasi ke latar belakang, dan penumpang
-         berhenti melihat drivernya bergerak di tengah perjalanan.
+         sambil menatap aplikasi. Caranya foreground service bertipe location yang
+         dinyalakan selagi aplikasi terbuka (dashboard_screen.dart,
+         _mulaiPantauPosisi): Android tetap mengalirkan GPS ke layanan itu
+         setelah layar terkunci, cukup dengan izin "saat aplikasi digunakan".
 
-         ACCESS_BACKGROUND_LOCATION menuntut alasan tertulis saat pengajuan ke
-         Google Play, dan sejak Android 11 hanya bisa disetujui lewat halaman
-         pengaturan aplikasi ("Izinkan sepanjang waktu"), bukan dari dialog izin
-         biasa. -->
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
+         Sengaja TANPA ACCESS_BACKGROUND_LOCATION. Izin itu tidak menambah apa pun
+         di sini, sedangkan Google Play menuntut formulir, video, dan peninjauan
+         khusus untuknya — dan sering menolak bila foreground service sudah cukup. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
@@ -21,9 +20,14 @@
     <!-- Memindai QR setoran komisi. Kamera hanya dipakai di layar pindai;
          izinnya diminta sistem saat layar itu dibuka, bukan saat aplikasi mulai. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- allowBackup="false": token login tersimpan terenkripsi dengan kunci yang
+         terikat ke HP ini (flutter_secure_storage). Kalau ikut dicadangkan dan
+         dipulihkan ke HP baru, isinya tidak bisa dibuka lagi. Datanya ada di
+         server, jadi di HP baru cukup login ulang. -->
     <application
         android:label="bohAntar"
         android:name="${applicationName}"
+        android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:icon="@mipmap/ic_launcher">
         <!-- Tidak ada kunci Maps SDK di sini: peta digambar dari ubin

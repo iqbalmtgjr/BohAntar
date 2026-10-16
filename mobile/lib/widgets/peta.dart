@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:mobile/theme.dart';
 
 /// Bahan peta yang dipakai layar penumpang dan layar driver.
 ///
@@ -51,5 +52,25 @@ Marker penandaPeta({
       child: Tooltip(
         message: judul,
         child: Icon(Icons.location_pin, size: 44, color: warna),
+      ),
+    );
+
+/// Penanda driver: motor dalam lingkaran, titiknya tepat di tengah — beda dari
+/// pin jemput/tujuan supaya sekali lihat tahu mana yang bergerak.
+Marker penandaMotor({required LatLng titik, required String judul, IconData ikon = Icons.two_wheeler}) => Marker(
+      point: titik,
+      width: 40,
+      height: 40,
+      child: Tooltip(
+        message: judul,
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+            border: Border.all(color: AppTheme.primaryBlue, width: 2),
+            boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+          ),
+          child: Icon(ikon, color: AppTheme.primaryBlue, size: 24),
+        ),
       ),
     );

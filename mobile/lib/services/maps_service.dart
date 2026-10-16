@@ -105,6 +105,8 @@ class MapsService {
     return Rute(
       titik: decodePolyline(encoded),
       meter: (data['distance_m'] as num?)?.toDouble() ?? 0,
+      // Backend menulisnya "930s".
+      detik: double.tryParse('${data['duration'] ?? ''}'.replaceAll('s', '')) ?? 0,
     );
   }
 
@@ -139,7 +141,29 @@ class PlaceDetail {
 class Rute {
   final List<LatLng> titik;
   final double meter;
-  const Rute({required this.titik, required this.meter});
+  final double detik;
+  const Rute({required this.titik, required this.meter, this.detik = 0});
+}
+
+/// Perkiraan sisa perjalanan, misalnya "± 7 menit · 2,3 km".
+///
+/// Waktu dan jarak rute terakhir disusutkan sebanding sisa jarak lurus dari
+/// [posisi] ke ujung rute, jadi angkanya turun selagi driver mendekat tanpa
+/// meminta rute baru setiap 30 m.
+///
+/// ponytail: perkiraan linear, dan waktunya dari profil mobil OSRM (lihat
+/// backend/maps.go). Melenceng di jalan yang berkelok jauh dari garis lurus;
+/// kalau angkanya terasa ngawur, turunkan ambang gambar ulang rutenya.
+String? teksEstimasi(Rute? rute, LatLng? posisi) {
+  if (rute == null || posisi == null || rute.titik.length < 2 || rute.detik <= 0) return null;
+  const ukur = Distance();
+  final sisa = ukur.distance(posisi, rute.titik.last);
+  if (sisa < 100) return 'Hampir tiba';
+  final awal = ukur.distance(rute.titik.first, rute.titik.last);
+  final skala = awal <= 0 ? 1.0 : (sisa / awal).clamp(0.0, 1.0);
+  final menit = (rute.detik * skala / 60).round().clamp(1, 999);
+  final km = (rute.meter * skala / 1000).toStringAsFixed(1).replaceAll('.', ',');
+  return '± $menit menit · $km km';
 }
 
 /// Membongkar polyline terkode jadi daftar titik. Google dan OSRM memakai

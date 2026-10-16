@@ -1,0 +1,71 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&display=block" rel="stylesheet">
+<style>
+  html, body { margin: 0; width: 1024px; height: 500px; overflow: hidden; }
+  body { font-family: 'Plus Jakarta Sans', 'Segoe UI', sans-serif; position: relative;
+         background: linear-gradient(135deg, #F7FAFF 0%, #E4EEFF 100%); }
+  .bulat { position: absolute; border-radius: 50%; }
+  .b1 { width: 640px; height: 640px; left: 610px; top: -70px;
+        background: radial-gradient(circle at 30% 28%, #3A9CFF 0%, #1673F5 45%, #0A4FD6 100%); }
+  .b2 { width: 180px; height: 180px; left: 560px; top: 380px; background: rgba(30,127,255,.10); }
+  .b3 { width: 90px; height: 90px; left: 520px; top: 40px; background: rgba(30,127,255,.08); }
+  .garis { position: absolute; left: 618px; height: 10px; border-radius: 5px; background: rgba(255,255,255,.35); }
+  .logo { position: absolute; left: 58px; top: 118px; width: 500px; }
+  .chips { position: absolute; left: 66px; top: 312px; display: flex; gap: 12px; }
+  .chip { display: flex; align-items: center; gap: 10px; background: #fff; border-radius: 999px;
+          padding: 9px 18px 9px 9px; box-shadow: 0 6px 18px rgba(16,64,160,.10);
+          font-weight: 700; font-size: 17px; color: #0B1F44; }
+  .ik { width: 34px; height: 34px; border-radius: 50%; background: #1E7FFF; display: grid; place-items: center; }
+  .kartu { position: absolute; left: 668px; top: 78px; width: 284px; height: 344px; border-radius: 30px;
+           background: #fff; box-shadow: 0 24px 60px rgba(4,30,90,.35); overflow: hidden; }
+  .peta { position: absolute; inset: 0 0 86px 0; background: #EDF3FB; }
+  .info { position: absolute; left: 0; right: 0; bottom: 0; height: 86px; padding: 16px 20px; box-sizing: border-box; }
+  .info b { display: block; font-size: 16px; color: #0B1F44; }
+  .info span { font-size: 14px; color: #1E7FFF; font-weight: 700; }
+</style></head>
+<body>
+  <div class="bulat b1"></div>
+  <div class="bulat b2"></div>
+  <div class="bulat b3"></div>
+
+  <!-- Render ulang: chrome --headless=new --window-size=1024,500 --screenshot=feature-graphic-1024x500.png fg.html -->
+  <img class="logo" src="../logo_splash.png" alt="">
+
+  <div class="chips">
+    <div class="chip"><div class="ik">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="5.5" cy="17" r="3"/><circle cx="18.5" cy="17" r="3"/><path d="M5.5 17l4-7h5l4 7M12 10l-1.5-3H8M14.5 10l2-3h2"/></svg>
+    </div>Ojek Motor</div>
+    <div class="chip"><div class="ik">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12h18a9 9 0 0 1-18 0zM8 8c0-1.5 1-1.5 1-3M12 8c0-1.5 1-1.5 1-3M16 8c0-1.5 1-1.5 1-3"/></svg>
+    </div>Pesan Makanan</div>
+    <div class="chip"><div class="ik">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 7.5L12 3l9 4.5v9L12 21l-9-4.5zM3 7.5l9 4.5 9-4.5M12 12v9"/></svg>
+    </div>Kirim Barang</div>
+  </div>
+
+  <div class="kartu">
+    <svg class="peta" width="284" height="258" viewBox="0 0 284 258">
+      <rect width="284" height="258" fill="#EDF3FB"/>
+      <g stroke="#fff" stroke-width="16" stroke-linecap="round">
+        <path d="M-10 70 L300 40"/><path d="M-10 170 L300 200"/><path d="M80 -10 L60 270"/><path d="M200 -10 L230 270"/>
+      </g>
+      <rect x="100" y="80" width="80" height="70" rx="10" fill="#DCEBD9"/>
+      <path d="M58 205 C 70 150, 120 175, 150 120 S 200 80, 214 60" fill="none" stroke="#1E7FFF" stroke-width="7" stroke-linecap="round"/>
+      <circle cx="58" cy="205" r="9" fill="#fff" stroke="#1E7FFF" stroke-width="5"/>
+      <g transform="translate(214 60)">
+        <path d="M0 0 C -16 -18, -16 -40, 0 -40 C 16 -40, 16 -18, 0 0z" fill="#0A4FD6"/>
+        <circle cx="0" cy="-26" r="6" fill="#fff"/>
+      </g>
+      <g transform="translate(141 133)">
+        <circle r="17" fill="#fff" stroke="#1E7FFF" stroke-width="3"/>
+        <g fill="none" stroke="#1E7FFF" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" transform="translate(-9 -9) scale(.75)">
+          <circle cx="5.5" cy="17" r="3"/><circle cx="18.5" cy="17" r="3"/><path d="M5.5 17l4-7h5l4 7M12 10l-1.5-3H8M14.5 10l2-3h2"/></g>
+      </g>
+    </svg>
+    <div class="info"><b>Driver menuju lokasi Anda</b><span>± 4 menit · 1,2 km</span></div>
+  </div>
+</body></html>

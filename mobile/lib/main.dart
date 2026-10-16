@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile/screens/login_screen.dart';
 import 'package:mobile/screens/dashboard_screen.dart';
 import 'package:mobile/services/api_service.dart';
@@ -51,6 +52,12 @@ class _AuthGateState extends State<AuthGate> {
   Future<void> _checkStatus() async {
     try {
       final apiService = ApiService();
+      // Diperiksa sebelum sesi dipulihkan: versi yang sudah tidak dilayani
+      // jangan sampai sempat memanggil API yang mungkin sudah berubah.
+      if (await apiService.perluPerbarui()) {
+        setState(() => _targetScreen = const _LayarPerbarui());
+        return;
+      }
       final hasToken = await apiService.tryAutoLogin();
       
       if (hasToken) {
@@ -111,5 +118,49 @@ class _AuthGateState extends State<AuthGate> {
       );
     }
     return _targetScreen;
+  }
+}
+
+// Layar buntu untuk versi yang sudah tidak dilayani server. Sengaja tanpa
+// tombol "nanti saja": versi ini mungkin memanggil domain atau API yang sudah
+// berubah, jadi melanjutkan hanya berujung galat yang membingungkan.
+class _LayarPerbarui extends StatelessWidget {
+  const _LayarPerbarui();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.system_update, size: 64, color: AppTheme.primaryBlue),
+              const SizedBox(height: 24),
+              const Text('Perbarui bohAntar',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+              const SizedBox(height: 12),
+              const Text(
+                'Versi aplikasi ini sudah tidak didukung. Perbarui lewat Google Play untuk melanjutkan.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, height: 1.5),
+              ),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => launchUrl(
+                    Uri.parse('https://play.google.com/store/apps/details?id=com.bohantar.mobile'),
+                    mode: LaunchMode.externalApplication,
+                  ),
+                  child: const Text('Buka Google Play'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
