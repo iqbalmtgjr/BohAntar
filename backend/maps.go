@@ -64,7 +64,7 @@ const (
 
 	// Layanan gratis berbasis OpenStreetMap minta pemakainya memperkenalkan diri
 	// supaya bisa dihubungi kalau ada yang menyalahgunakan. Jangan dikosongkan.
-	userAgentPeta = "bohAntar/1.0 (https://bohantar.com)"
+	userAgentPeta = "bohAntar/1.0 (https://bohantar.indotechconsulting.com/api/privasi)"
 )
 
 var mapsClient = &http.Client{Timeout: 12 * time.Second}

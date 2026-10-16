@@ -9,7 +9,7 @@ import {
     ArrowRight, Download, ExternalLink, ChevronDown, Clock, Sparkles, Smartphone,
     CheckCircle2, Menu, X, Wallet, Percent, Calculator, Users, CreditCard,
     Navigation, Zap, Globe, HeartHandshake, Play, ChevronRight, ArrowUpRight,
-    Send, MousePointerClick, Mail, ShoppingBag, Grid, Home, FileText, HelpCircle, User
+    Send, MousePointerClick, ShoppingBag, Grid, Home, FileText, HelpCircle, User
 } from 'lucide-react';
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -253,7 +253,7 @@ export default function LandingPage({ onSelectPortal }) {
             features: ['Kabin bersih & wangi', 'Reguler & Eksekutif', 'Hingga 6 penumpang'],
         },
         {
-            key: 'send', name: 'bohSend', tagline: 'Kurir on-demand kilat, kirim dokumen & paket dalam hitungan menit.',
+            key: 'send', name: 'bohSend', tagline: 'Kurir on-demand kilat, kirim dokumen, paket & barang dalam hitungan menit.',
             icon: Package, color: 'from-cyan-500 to-blue-600', iconBg: 'bg-sky-50 text-sky-600 border-sky-100',
             img: 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=800&q=80',
             features: ['Same-day delivery', 'Asuransi proteksi', 'Tanda terima digital'],
@@ -802,10 +802,10 @@ export default function LandingPage({ onSelectPortal }) {
                                     {/* 4. Grid 6 Service Icons */}
                                     <div className="px-4 grid grid-cols-3 gap-y-2.5 gap-x-2 text-center mb-3">
                                         {[
-                                            { key: 'car', name: 'BohAntar', icon: Package, bg: 'bg-blue-500' },
                                             { key: 'ride', name: 'BohRide', icon: Bike, bg: 'bg-blue-600' },
+                                            { key: 'car', name: 'BohCar', icon: Car, bg: 'bg-emerald-500' },
                                             { key: 'food', name: 'BohFood', icon: UtensilsCrossed, bg: 'bg-rose-500' },
-                                            { key: 'send', name: 'BohSend', icon: Mail, bg: 'bg-cyan-500' },
+                                            { key: 'send', name: 'BohSend', icon: Package, bg: 'bg-cyan-500' },
                                             { key: 'rental', name: 'BohMart', icon: ShoppingBag, bg: 'bg-amber-500' },
                                             { key: 'rental', name: 'Lainnya', icon: Grid, bg: 'bg-slate-600' }
                                         ].map((item, idx) => {

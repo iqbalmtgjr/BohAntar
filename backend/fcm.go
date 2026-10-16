@@ -230,19 +230,27 @@ func notifikasiDriverSiaga(o Order) {
 		// is_driver_active ikut jadi syarat: driver yang dinonaktifkan admin tidak
 		// perlu lagi dibangunkan orderan yang tidak boleh ia terima.
 		rows, err := db.Query(
-			"SELECT COALESCE(fcm_token, '') FROM users WHERE role = 'driver' AND is_driver_active = 1 AND COALESCE(fcm_token, '') != '' AND driver_loc_at > ?",
+			"SELECT phone_number, COALESCE(fcm_token, '') FROM users WHERE role = 'driver' AND is_driver_active = 1 AND COALESCE(fcm_token, '') != '' AND driver_loc_at > ?",
 			batas,
 		)
 		if err != nil {
 			return
 		}
-		defer rows.Close()
-
-		var tokens []string
+		var siaga [][2]string
 		for rows.Next() {
-			var t string
-			if rows.Scan(&t) == nil && t != "" {
-				tokens = append(tokens, t)
+			var p, t string
+			if rows.Scan(&p, &t) == nil && t != "" {
+				siaga = append(siaga, [2]string{p, t})
+			}
+		}
+		rows.Close()
+
+		// ponytail: satu kueri kendaraan per driver siaga; cukup untuk armada
+		// puluhan. Gabungkan ke kueri di atas kalau armadanya ratusan.
+		var tokens []string
+		for _, s := range siaga {
+			if cocokKendaraan(o.Service, kendaraanDriver(s[0])) {
+				tokens = append(tokens, s[1])
 			}
 		}
 		// Judulnya menyebut isi kiriman: driver yang motornya sudah penuh tidak

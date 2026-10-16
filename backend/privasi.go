@@ -18,8 +18,14 @@ import (
 // lebih berbahaya daripada tidak punya kebijakan.
 
 // kontakPrivasi bisa diganti lewat environment variable tanpa build ulang.
+// Bawaannya harus kotak masuk yang benar-benar dibaca: dulu admin@bohantar.com,
+// padahal domain itu tidak pernah ada, sehingga setiap permintaan hapus akun
+// lewat email mental. Variabel yang ada tapi kosong juga jatuh ke bawaan.
 func kontakPrivasi() string {
-	return getEnv("PRIVACY_CONTACT_EMAIL", "admin@bohantar.com")
+	if v := getEnv("PRIVACY_CONTACT_EMAIL", ""); v != "" {
+		return v
+	}
+	return "cs.bohantar@gmail.com"
 }
 
 var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
@@ -50,30 +56,35 @@ var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
 <h2>Data yang kami kumpulkan</h2>
 <ul>
   <li><strong>Identitas akun</strong> — nama, alamat email, dan nomor handphone yang Anda isi saat mendaftar, atau yang diberikan Google kalau Anda masuk lewat akun Google.</li>
-  <li><strong>Lokasi</strong> — titik jemput dan tujuan yang Anda pilih saat memesan. Untuk driver, posisi GPS dikirim selama Anda menyalakan status online, supaya penumpang bisa melihat Anda mendekat.</li>
-  <li><strong>Riwayat pesanan</strong> — alamat, jarak, ongkos, metode pembayaran, dan waktu setiap pesanan.</li>
-  <li><strong>Saldo dan transaksi</strong> — saldo dompet PayAntar serta catatan pemasukan dan pengeluarannya.</li>
+  <li><strong>Lokasi</strong> — titik jemput dan tujuan yang Anda pilih saat memesan. Untuk driver, posisi GPS dikirim selama Anda menyalakan status online, termasuk saat layar terkunci; selama itu notifikasi <em>bohAntar aktif</em> tampil di HP Anda.</li>
+  <li><strong>Riwayat pesanan</strong> — alamat, jarak, ongkos, metode pembayaran, dan waktu setiap pesanan. Untuk kirim barang juga nama dan nomor penerima, serta foto barang saat diambil dan diserahkan.</li>
+  <li><strong>Saldo dan transaksi</strong> — saldo dompet PayAntar, top up, pembayaran tagihan QR di warung, dan setoran komisi driver.</li>
+  <li><strong>Rekening bank</strong> — bagi driver dan mitra yang mencairkan saldo: nama bank, nomor rekening, dan nama pemiliknya.</li>
   <li><strong>Percakapan</strong> — pesan antara penumpang dan driver selama satu pesanan berlangsung.</li>
-  <li><strong>Dokumen driver</strong> — bagi calon driver: foto KTP, SIM, dan STNK, dipakai hanya untuk memverifikasi kelayakan berkendara.</li>
+  <li><strong>Dokumen driver</strong> — bagi calon driver: nomor dan foto KTP, SIM, dan STNK, serta data kendaraan, dipakai hanya untuk memverifikasi kelayakan berkendara.</li>
+  <li><strong>Data mitra</strong> — bagi pemilik warung dan rental: nomor KTP, nama usaha, serta alamat dan titik lokasinya.</li>
+  <li><strong>Token perangkat</strong> — kode dari Firebase yang dipakai untuk mengirim notifikasi pesanan dan chat ke HP Anda.</li>
 </ul>
 
 <h2>Kenapa kami memerlukannya</h2>
-<p>Untuk mempertemukan penumpang dengan driver, menghitung ongkos, memproses pembayaran, menampilkan posisi driver di peta selama perjalanan, dan menjawab keluhan bila terjadi masalah dalam sebuah pesanan.</p>
+<p>Untuk mempertemukan penumpang dengan driver, menghitung ongkos, memproses pembayaran dan pencairan saldo, menampilkan posisi driver di peta selama perjalanan, mengirim notifikasi, dan menjawab keluhan bila terjadi masalah dalam sebuah pesanan.</p>
 
 <h2>Siapa yang bisa melihatnya</h2>
 <ul>
   <li><strong>Driver dan penumpang yang sedang terhubung</strong> saling melihat nama, nomor handphone, dan lokasi masing-masing selama pesanan berjalan — dan berhenti melihatnya setelah pesanan selesai.</li>
-  <li><strong>OpenStreetMap</strong> menerima koordinat yang Anda cari untuk menampilkan peta, mencari alamat, dan menghitung rute.</li>
-  <li><strong>Google</strong> menerima permintaan verifikasi bila Anda memilih masuk dengan akun Google.</li>
-  <li><strong>Xendit</strong> memproses pembayaran langganan mitra.</li>
+  <li><strong>Warung bohFood</strong> menerima nama pemesan dan isi pesanan, serta nama, nomor handphone, dan kendaraan driver yang mengambilnya. Warung yang memakai aplikasi kasir Kasvo menerimanya lewat Kasvo.</li>
+  <li><strong>Layanan peta berbasis OpenStreetMap</strong> (OpenStreetMap, Photon, OSRM) menerima koordinat untuk menampilkan peta, mencari alamat, dan menghitung rute.</li>
+  <li><strong>Google</strong> menerima permintaan verifikasi bila Anda masuk dengan akun Google, dan token perangkat untuk mengantarkan notifikasi (Firebase Cloud Messaging).</li>
+  <li><strong>Xendit</strong> menerima nominal dan alamat email Anda untuk memproses top up QRIS dan pembayaran langganan mitra.</li>
 </ul>
 <p>Kami tidak menjual data Anda, dan tidak membaginya untuk keperluan iklan.</p>
 
 <h2>Berapa lama disimpan</h2>
 <ul>
   <li>Posisi driver hanya disimpan satu titik terakhir dan ditimpa setiap kali diperbarui — kami tidak menyimpan jejak perjalanan.</li>
-  <li>Riwayat pesanan disimpan selama akun aktif, dan tetap disimpan dalam bentuk anonim setelah akun dihapus karena dibutuhkan untuk pembukuan.</li>
-  <li>Percakapan dan alamat tersimpan dihapus bersama akun Anda.</li>
+  <li>Riwayat pesanan disimpan selama akun aktif. Setelah akun dihapus, yang tersisa hanya tanggal, layanan, dan nominalnya.</li>
+  <li>Catatan transaksi keuangan — top up, setoran komisi, pembayaran tagihan, dan pencairan saldo beserta rekening tujuannya — disimpan selama diwajibkan untuk pembukuan, termasuk setelah akun dihapus.</li>
+  <li>Percakapan, alamat tersimpan, dokumen driver, dan data pengajuan mitra dihapus bersama akun Anda.</li>
 </ul>
 
 <h2>Menghapus akun Anda</h2>
@@ -81,9 +92,9 @@ var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
   <p><strong>Dari dalam aplikasi:</strong> buka tab <strong>Akun</strong> → <strong>Hapus akun</strong>, lalu konfirmasi.</p>
   <p><strong>Tanpa aplikasi:</strong> kirim email ke <code>{{.Kontak}}</code> dari alamat email yang terdaftar, dengan subjek <em>Hapus Akun</em>. Permintaan diproses dalam 7 hari kerja.</p>
 </div>
-<p><strong>Yang ikut terhapus:</strong> nama, email, nomor handphone, alamat tersimpan, isi percakapan, dan saldo dompet yang tersisa.</p>
-<p><strong>Yang tetap disimpan:</strong> catatan pesanan tanpa nama dan nomor Anda — hanya tanggal, jarak, dan nominalnya — karena diperlukan untuk pembukuan usaha.</p>
-<p>Akun tidak bisa dihapus selagi ada pesanan yang sedang berjalan, atau bila masih ada komisi yang belum disetor.</p>
+<p><strong>Yang ikut terhapus:</strong> nama, email, nomor handphone, alamat tersimpan, pesan yang Anda kirim, nomor dan foto KTP/SIM/STNK, data pengajuan mitra, warung atau kendaraan rental beserta menunya, dan sisa saldo PayAntar penumpang.</p>
+<p><strong>Yang tetap disimpan:</strong> catatan pesanan tanpa nama, nomor, alamat, dan foto Anda — hanya tanggal, layanan, dan nominalnya — serta catatan transaksi keuangan, karena keduanya diperlukan untuk pembukuan usaha.</p>
+<p>Akun tidak bisa dihapus selagi ada pesanan yang sedang berjalan, bila masih ada komisi yang belum disetor, atau — bagi driver dan mitra — bila masih ada saldo yang belum dicairkan atau pengajuan pencairan yang belum diproses. Cairkan saldo Anda lebih dulu supaya tidak hangus.</p>
 
 <h2>Hak Anda</h2>
 <p>Anda berhak meminta salinan data Anda, memperbaiki data yang keliru, atau menarik izin lokasi kapan saja lewat pengaturan perangkat. Menarik izin lokasi membuat pemesanan dan penerimaan orderan tidak lagi berfungsi.</p>

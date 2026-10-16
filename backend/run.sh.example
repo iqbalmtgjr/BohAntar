@@ -70,6 +70,14 @@ export FCM_SERVICE_ACCOUNT="/www/wwwroot/bohantar-backend/fcm-service-account.js
 # Bawaannya admin@bohantar.com kalau kosong.
 export PRIVACY_CONTACT_EMAIL=""
 
+# ---- Wajib update aplikasi ----
+# versionCode terkecil yang masih boleh dipakai (angka setelah "+" di
+# mobile/pubspec.yaml). Aplikasi yang lebih tua menampilkan layar "Perbarui" dan
+# tidak bisa dipakai. Naikkan HANYA setelah versi baru sudah tersedia di Play
+# Store — kalau lebih tinggi dari versi di Play, semua pengguna terkunci.
+# Kosong atau 0 = semua versi boleh. Berlaku setelah backend direstart.
+# export MIN_APP_BUILD="0"
+
 # ---- Opsional ----
 # Sub-akun xenPlatform. Kalau diisi, invoice diterbitkan atas nama sub-akun lewat
 # header for-user-id. Kosongkan selama bohAntar masih menumpang akun Kasvo.

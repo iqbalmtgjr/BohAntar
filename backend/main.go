@@ -421,6 +421,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", homeHandler)
 	mux.HandleFunc("/api/health", healthHandler)
+	mux.HandleFunc("/api/aplikasi/versi", versiAplikasiHandler)
 	// ponytail: rute OTP dimatikan selama belum ada gateway SMS/WA — kodenya cuma
 	// masuk backend.log, jadi endpoint ini hanya berjanji tanpa pernah mengirim.
 	// Handler dan storenya sengaja dibiarkan utuh: hidupkan lagi dua baris ini
@@ -1391,12 +1392,6 @@ func dbFindUserByEmail(email string) (User, string, bool) {
 	return u, hash, true
 }
 
-func dbDeleteUser(phone string) error {
-	db.Exec("DELETE FROM user_addresses WHERE phone_number = ?", phone)
-	_, err := db.Exec("DELETE FROM users WHERE phone_number = ?", phone)
-	return err
-}
-
 func dbGetUsers(roleFilter string, page, limit int) ([]User, int, error) {
 	var total int
 	var err error
@@ -2043,6 +2038,16 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, http.StatusOK, map[string]string{"status": "healthy"})
 }
 
+// versiAplikasiHandler memberi tahu aplikasi nomor build (versionCode) terkecil
+// yang masih dilayani. Aplikasi yang lebih tua menampilkan layar "Perbarui"
+// alih-alih memanggil API yang mungkin sudah berubah — jalan keluar untuk pindah
+// domain, atau perubahan yang membuat versi lama salah menagih. Tanpa token:
+// diperiksa sebelum login. MIN_APP_BUILD kosong atau 0 berarti semua versi boleh.
+func versiAplikasiHandler(w http.ResponseWriter, r *http.Request) {
+	minimal, _ := strconv.Atoi(getEnv("MIN_APP_BUILD", "0"))
+	writeJSONResponse(w, http.StatusOK, map[string]int{"minimal_build": minimal})
+}
+
 func requestOTPHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
@@ -2438,7 +2443,12 @@ func profileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "user": u, "business_name": businessNameOf(phone)})
+	resp := map[string]interface{}{"status": "success", "user": u, "business_name": businessNameOf(phone)}
+	if u.Role == "driver" {
+		// Ikon posisi driver di petanya sendiri: motor atau mobil.
+		resp["kendaraan"] = kendaraanDriver(phone)
+	}
+	writeJSONResponse(w, 200, resp)
 }
 
 // awalanTopUp menandai invoice dompet di antara invoice langganan mitra yang
@@ -2843,9 +2853,13 @@ func getActiveOrdersHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	semua, _ := dbGetPendingOrders()
 	lat, lng, _, adaLokasi := dbGetDriverLocation(callerPhone(r))
+	kendaraan := kendaraanDriver(callerPhone(r))
 
 	hasil := make([]map[string]interface{}, 0, len(semua))
 	for _, o := range semua {
+		if !cocokKendaraan(o.Service, kendaraan) {
+			continue
+		}
 		// Papan orderan disaring sejauh driver, bukan disiarkan ke seluruh
 		// provinsi. Driver yang belum pernah mengirim posisinya tetap melihat
 		// semuanya — menyembunyikan orderan dari driver yang siap kerja lebih
@@ -2942,6 +2956,10 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	o, oe := dbGetOrder(orderID)
 	if !oe {
 		writeJSONResponse(w, 404, map[string]string{"error": "Pesanan tidak ditemukan"})
+		return
+	}
+	if !cocokKendaraan(o.Service, kendaraanDriver(driver.PhoneNumber)) {
+		writeJSONResponse(w, 403, map[string]string{"error": "Pesanan " + o.Service + " butuh kendaraan lain dari yang terdaftar di akun Anda"})
 		return
 	}
 	now := time.Now().Format(time.RFC3339)
@@ -3459,6 +3477,31 @@ func infoDriver(phone string) map[string]interface{} {
 	}
 }
 
+// kendaraanDriver membaca jenis kendaraan ("motor"/"mobil") dari pengajuan
+// terakhir yang disetujui. Driver yang dibuat admin tanpa pengajuan dianggap
+// motor — semua driver sebelum BohCar dibuka memang motor.
+func kendaraanDriver(phone string) string {
+	var jenis sql.NullString
+	db.QueryRow(`SELECT vehicle_type FROM driver_applications
+		WHERE phone_number = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1`, phone).Scan(&jenis)
+	if strings.EqualFold(strings.TrimSpace(jenis.String), "mobil") {
+		return "mobil"
+	}
+	return "motor"
+}
+
+// cocokKendaraan: penumpang BohCar tidak boleh dijemput motor, penumpang
+// BohRide tidak dijemput mobil; kiriman dan makanan boleh dibawa keduanya.
+func cocokKendaraan(layanan, kendaraan string) bool {
+	switch layanan {
+	case "BohCar":
+		return kendaraan == "mobil"
+	case "BohRide":
+		return kendaraan != "mobil"
+	}
+	return true
+}
+
 // ==================== ADMIN HANDLERS ====================
 
 func adminUsersHandler(w http.ResponseWriter, r *http.Request) {
@@ -3533,25 +3576,19 @@ func adminUserDetailHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "user": u, "orders": result})
 		return
 	} else if r.Method == http.MethodDelete {
-		_, ex := dbGetUser(phone)
+		u, ex := dbGetUser(phone)
 		if !ex {
 			writeJSONResponse(w, 404, map[string]string{"error": "User tidak ditemukan"})
 			return
 		}
-		if err := dbDeleteUser(phone); err != nil {
-			// Pesanan menunjuk users lewat foreign key RESTRICT, jadi database
-			// menolak menghapus pemilik riwayat pesanan. Itu memang disengaja:
-			// catatan keuangan tidak boleh ikut lenyap. Yang mau menutup sebuah
-			// akun mengubah perannya, bukan menghapus barisnya — dan pesan ini
-			// yang menyebutkannya, supaya admin tidak menghadap 500 tanpa sebab.
-			var e *mysql.MySQLError
-			if errors.As(err, &e) && e.Number == 1451 {
-				writeJSONResponse(w, 409, map[string]string{"error": "Akun ini punya riwayat pesanan dan tidak bisa dihapus — catatan keuangannya ikut hilang. Nonaktifkan saja dengan mengubah perannya."})
-				return
-			}
-			writeJSONResponse(w, 500, map[string]string{"error": "Gagal menghapus dari database: " + err.Error()})
+		// Jalur yang sama dengan hapus akun dari aplikasi: pesanan dianonimkan,
+		// bukan ikut lenyap, jadi akun yang punya riwayat pesanan pun bisa dihapus
+		// saat pemiliknya memintanya lewat email.
+		if kode, pesan := hapusAkun(u); kode != 200 {
+			writeJSONResponse(w, kode, map[string]string{"error": pesan})
 			return
 		}
+		log.Printf("Akun dihapus oleh admin %s: %s (%s)", callerPhone(r), phone, u.Role)
 		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "User berhasil dihapus"})
 		return
 	} else if r.Method == http.MethodPut {
@@ -3684,12 +3721,26 @@ func adminAnalyticsHandler(w http.ResponseWriter, r *http.Request) {
 // Menghapus barisnya akan membuat laporan pendapatan bulan-bulan lalu berubah
 // sendiri setiap ada pengguna yang pergi.
 func hapusAkunSendiri(w http.ResponseWriter, r *http.Request) {
-	phone := callerPhone(r)
-	u, exists := dbGetUser(phone)
+	u, exists := dbGetUser(callerPhone(r))
 	if !exists {
 		writeJSONResponse(w, 404, map[string]string{"error": "Akun tidak ditemukan"})
 		return
 	}
+	if kode, pesan := hapusAkun(u); kode != 200 {
+		writeJSONResponse(w, kode, map[string]string{"error": pesan})
+		return
+	}
+	log.Printf("Akun dihapus atas permintaan pemiliknya: %s (%s)", u.PhoneNumber, u.Role)
+	writeJSONResponse(w, 200, map[string]string{"status": "success", "message": "Akun Anda telah dihapus."})
+}
+
+// hapusAkun menghapus satu akun beserta data pribadinya. Dipakai dua jalur:
+// pemiliknya sendiri dari aplikasi, dan admin yang memproses permintaan hapus
+// akun lewat email — halaman /privasi menjanjikan jalur kedua itu, jadi
+// hasilnya harus sama persis. Kodenya 200 kalau terhapus, selain itu kode HTTP
+// beserta alasan yang bisa ditampilkan apa adanya.
+func hapusAkun(u User) (int, string) {
+	phone := u.PhoneNumber
 
 	// Pesanan yang sedang berjalan menyangkut orang lain yang sedang menunggu.
 	var berjalan int
@@ -3698,52 +3749,106 @@ func hapusAkunSendiri(w http.ResponseWriter, r *http.Request) {
 		phone, phone,
 	).Scan(&berjalan)
 	if berjalan > 0 {
-		writeJSONResponse(w, 409, map[string]string{"error": "Masih ada pesanan berjalan. Selesaikan dulu sebelum menghapus akun."})
-		return
+		return 409, "Masih ada pesanan berjalan. Selesaikan dulu sebelum menghapus akun."
 	}
 
 	// Saldo minus berarti komisi tunai yang belum disetor. Menghapus akun tidak
 	// boleh jadi cara membatalkan utang.
 	if u.Balance < 0 {
-		writeJSONResponse(w, 409, map[string]string{"error": "Masih ada komisi yang belum disetor. Lunasi dulu sebelum menghapus akun."})
-		return
+		return 409, "Masih ada komisi yang belum disetor. Lunasi dulu sebelum menghapus akun."
 	}
+	// Saldo driver dan mitra adalah pendapatan yang bisa dicairkan, jadi tidak
+	// boleh hangus bersama akunnya. Saldo penumpang hasil top up dan memang tidak
+	// bisa dicairkan; dialog hapus akun di aplikasi menyebut saldo itu ikut hilang.
+	if u.Balance > 0 && slices.Contains(peranBolehCair, u.Role) {
+		return 409, fmt.Sprintf("Masih ada saldo Rp%.0f. Cairkan dulu sebelum menghapus akun.", u.Balance)
+	}
+	// Pengajuan yang menunggu sudah memotong saldo. Kalau ditolak setelah akunnya
+	// hilang, uangnya dikembalikan ke akun yang tidak ada lagi.
+	var menunggu int
+	_ = db.QueryRow("SELECT COUNT(*) FROM pencairan_saldo WHERE phone_number = ? AND status = 'menunggu'", phone).Scan(&menunggu)
+	if menunggu > 0 {
+		return 409, "Masih ada pengajuan pencairan saldo yang belum diproses admin."
+	}
+
+	// Berkas dikumpulkan sebelum barisnya hilang, dan baru dihapus dari disk
+	// setelah transaksi berhasil — kalau terbalik, kegagalan di tengah jalan
+	// meninggalkan akun utuh dengan dokumen yang sudah lenyap.
+	berkas := berkasMilikAkun(phone)
 
 	tx, err := db.Begin()
 	if err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal memulai penghapusan"})
-		return
+		return 500, "Gagal memulai penghapusan"
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec("UPDATE orders SET rider_name = 'Pengguna dihapus', rider_phone = NULL WHERE rider_phone = ?", phone); err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menganonimkan pesanan"})
-		return
+	langkah := []struct{ sql, gagal string }{
+		// Pesanan tetap ada untuk pembukuan, tapi tanpa apa pun yang menunjuk ke
+		// pemesannya: alamat dan titik jemput bisa berupa rumahnya sendiri, dan
+		// penerima barang adalah orang yang ia sebut, bukan pengguna kita.
+		{`UPDATE orders SET rider_name = 'Pengguna dihapus', rider_phone = NULL,
+			pickup = '', dropoff = '', pickup_lat = 0, pickup_lng = 0, dropoff_lat = 0, dropoff_lng = 0,
+			receiver_name = '', receiver_phone = '', received_by = '', package_notes = '',
+			pickup_photo_url = '', delivery_photo_url = ''
+			WHERE rider_phone = ?`, "Gagal menganonimkan pesanan"},
+		{"UPDATE orders SET driver_name = 'Pengguna dihapus', driver_phone = NULL WHERE driver_phone = ?", "Gagal menganonimkan pesanan"},
+		{"UPDATE order_ratings SET rider_phone = NULL WHERE rider_phone = ?", "Gagal menganonimkan penilaian"},
+		{"UPDATE order_ratings SET driver_phone = NULL WHERE driver_phone = ?", "Gagal menganonimkan penilaian"},
+		{"DELETE FROM chat_messages WHERE sender_phone = ?", "Gagal menghapus percakapan"},
+		{"DELETE FROM user_addresses WHERE phone_number = ?", "Gagal menghapus alamat"},
+		// Kedua pengajuan memuat nomor KTP. Dihapus terang-terangan, bukan
+		// mengandalkan foreign key: partner_applications tidak punya, dan
+		// driver_applications baru punya kalau migrasi 002 sudah dijalankan.
+		{"DELETE FROM driver_applications WHERE phone_number = ?", "Gagal menghapus pengajuan driver"},
+		{"DELETE FROM partner_applications WHERE phone_number = ?", "Gagal menghapus pengajuan mitra"},
+		// Terakhir: warung, mobil rental, dan langganan menunjuk ke sini dengan
+		// ON DELETE CASCADE.
+		{"DELETE FROM users WHERE phone_number = ?", "Gagal menghapus akun"},
 	}
-	if _, err := tx.Exec("UPDATE orders SET driver_name = 'Pengguna dihapus', driver_phone = NULL WHERE driver_phone = ?", phone); err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menganonimkan pesanan"})
-		return
-	}
-	if _, err := tx.Exec("DELETE FROM chat_messages WHERE sender_phone = ?", phone); err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menghapus percakapan"})
-		return
-	}
-	if _, err := tx.Exec("DELETE FROM user_addresses WHERE phone_number = ?", phone); err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menghapus alamat"})
-		return
-	}
-	// Baris users dihapus terakhir: tabel langganan mitra menunjuk ke sini dengan
-	// ON DELETE CASCADE, jadi ikut terhapus sendiri.
-	if _, err := tx.Exec("DELETE FROM users WHERE phone_number = ?", phone); err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menghapus akun"})
-		return
+	for _, l := range langkah {
+		if _, err := tx.Exec(l.sql, phone); err != nil {
+			log.Printf("hapus akun %s: %s: %v", phone, l.gagal, err)
+			return 500, l.gagal
+		}
 	}
 	if err := tx.Commit(); err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan penghapusan"})
-		return
+		return 500, "Gagal menyimpan penghapusan"
 	}
-	log.Printf("Akun dihapus atas permintaan pemiliknya: %s (%s)", phone, u.Role)
-	writeJSONResponse(w, 200, map[string]string{"status": "success", "message": "Akun Anda telah dihapus."})
+	for _, b := range berkas {
+		if err := os.Remove(filepath.Join("uploads", strings.TrimPrefix(b, "/uploads/"))); err != nil && !os.IsNotExist(err) {
+			log.Printf("hapus akun %s: berkas %s tertinggal: %v", phone, b, err)
+		}
+	}
+	return 200, ""
+}
+
+// berkasMilikAkun mengumpulkan unggahan yang ikut lenyap bersama akun: dokumen
+// pengajuan driver dan foto bukti serah pesanan yang ia pesan. Hanya path hasil
+// /api/upload yang dikembalikan, supaya isi kolom yang aneh tidak pernah sampai
+// ke os.Remove.
+func berkasMilikAkun(phone string) []string {
+	var hasil []string
+	rows, err := db.Query(`
+		SELECT ktp_photo_url, sim_photo_url, stnk_photo_url FROM driver_applications WHERE phone_number = ?
+		UNION ALL
+		SELECT pickup_photo_url, delivery_photo_url, '' FROM orders WHERE rider_phone = ?`, phone, phone)
+	if err != nil {
+		log.Printf("hapus akun %s: daftar berkas gagal dibaca: %v", phone, err)
+		return nil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var a, b, c sql.NullString
+		if rows.Scan(&a, &b, &c) != nil {
+			continue
+		}
+		for _, s := range []sql.NullString{a, b, c} {
+			if isUploadedFileURL(s.String) {
+				hasil = append(hasil, s.String)
+			}
+		}
+	}
+	return hasil
 }
 
 // ==================== POSISI DRIVER ====================
