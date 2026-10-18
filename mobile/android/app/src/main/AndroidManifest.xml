@@ -30,12 +30,16 @@
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
         android:icon="@mipmap/ic_launcher">
-        <!-- Tidak ada kunci Maps SDK di sini: peta digambar dari ubin
-             OpenStreetMap lewat flutter_map, yang tidak butuh kunci maupun akun
-             berbayar. Lihat mobile/lib/widgets/peta.dart.
+        <!-- Kunci Maps SDK, hanya untuk menggambar peta (tidak ditagih).
+             Nilainya dari mapsApiKey di android/key.properties, lihat
+             app/build.gradle.kts; dibatasi ke package + SHA-1 di Google Cloud.
 
-             Kunci untuk Places (cari alamat) ada di backend dan dikunci ke IP
-             VPS, tidak pernah ikut ke dalam APK. Lihat backend/maps.go. -->
+             Kunci untuk Places (cari alamat) terpisah, ada di backend dan
+             dikunci ke IP VPS, tidak pernah ikut ke dalam APK. Lihat
+             backend/maps.go. -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${MAPS_API_KEY}" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

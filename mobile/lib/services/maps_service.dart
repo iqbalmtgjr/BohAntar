@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
-import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 import 'package:http/http.dart' as http;
 import 'api_service.dart';
 
@@ -8,8 +9,8 @@ import 'api_service.dart';
 ///
 /// Kunci API yang ditaruh di dalam APK bisa diambil siapa saja dengan `unzip`,
 /// lalu kuota berbayar dihabiskan orang lain — jadi kunci Places disimpan di VPS
-/// dan dikunci ke IP-nya. Peta sendiri digambar dari ubin OpenStreetMap yang
-/// tidak butuh kunci apa pun, lihat widgets/peta.dart.
+/// dan dikunci ke IP-nya. Kunci Maps SDK di APK hanya untuk menggambar peta,
+/// yang tidak ditagih; lihat widgets/peta.dart.
 ///
 /// Bentuk balasan sudah dinormalkan backend, jadi berkas ini tidak tahu-menahu
 /// penyedia mana yang sedang dipakai — lihat backend/maps.go kalau penasaran.
@@ -156,10 +157,10 @@ class Rute {
 /// kalau angkanya terasa ngawur, turunkan ambang gambar ulang rutenya.
 String? teksEstimasi(Rute? rute, LatLng? posisi) {
   if (rute == null || posisi == null || rute.titik.length < 2 || rute.detik <= 0) return null;
-  const ukur = Distance();
-  final sisa = ukur.distance(posisi, rute.titik.last);
+  double ukur(LatLng a, LatLng b) => Geolocator.distanceBetween(a.latitude, a.longitude, b.latitude, b.longitude);
+  final sisa = ukur(posisi, rute.titik.last);
   if (sisa < 100) return 'Hampir tiba';
-  final awal = ukur.distance(rute.titik.first, rute.titik.last);
+  final awal = ukur(rute.titik.first, rute.titik.last);
   final skala = awal <= 0 ? 1.0 : (sisa / awal).clamp(0.0, 1.0);
   final menit = (rute.detik * skala / 60).round().clamp(1, 999);
   final km = (rute.meter * skala / 1000).toStringAsFixed(1).replaceAll('.', ',');

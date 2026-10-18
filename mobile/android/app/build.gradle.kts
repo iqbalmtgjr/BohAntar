@@ -42,6 +42,13 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Kunci Maps SDK untuk menggambar peta. Ikut ke dalam APK, jadi di
+        // Google Cloud dibatasi ke package + SHA-1; nilainya ikut key.properties
+        // supaya tidak masuk git.
+        val mapsApiKey = keystoreProperties.getProperty("mapsApiKey") ?: ""
+        if (mapsApiKey.isBlank()) logger.warn("PERINGATAN: mapsApiKey belum ada di android/key.properties — peta Google tampil kosong.")
+        manifestPlaceholders["MAPS_API_KEY"] = mapsApiKey
     }
 
     signingConfigs {

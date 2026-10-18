@@ -1,10 +1,7 @@
 import 'dart:async';
-// Path dari dart:ui dipakai beralias: latlong2 lewat flutter_map juga
-// mengekspor Path (versi LatLng), dan tanpa alias namanya bentrok.
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -60,10 +57,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   bool _menerima = false; // permintaan Terima sedang di jalan
 
   // Driver map states
-  final MapController _driverMapController = MapController();
-  // Menggeser peta sebelum ia sempat tergambar sekali melempar galat, dan
-  // pesanan bisa masuk sebelum layar petanya terpasang.
-  bool _petaSiap = false;
+  // Null sampai peta tergambar: pesanan bisa masuk sebelum layar petanya
+  // terpasang, dan gerakan kamera sebelum itu cukup dilewati.
+  GoogleMapController? _driverMapController;
   // Titik awal peta sebelum GPS terbaca. Begitu _mulaiPantauPosisi() jalan,
   // isinya selalu posisi sungguhan.
   LatLng _driverLatLng = const LatLng(-0.0784, 111.4933); // Default: kota Sintang
@@ -87,7 +83,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   /// terakhir yang diingat HP muncul seketika; GPS segar menyusul.
   Future<void> _posisiAwalDriver() async {
     try {
-      final izin = await Geolocator.checkPermission();
+      var izin = await Geolocator.checkPermission();
+      // Instalasi baru belum pernah ditanya; tanpa ini peta driver diam di
+      // tengah kota sampai tombol Online ditekan.
+      if (izin == LocationPermission.denied) izin = await Geolocator.requestPermission();
       if (izin == LocationPermission.denied || izin == LocationPermission.deniedForever) return;
       final terakhir = await Geolocator.getLastKnownPosition();
       if (terakhir != null && mounted) _pakaiPosisi(LatLng(terakhir.latitude, terakhir.longitude));
@@ -103,7 +102,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   LatLng? _titikRuteTerakhir;
 
   void _pindahPeta(LatLng titik, double zoom) {
-    if (_petaSiap) _driverMapController.move(titik, zoom);
+    _driverMapController?.moveCamera(CameraUpdate.newLatLngZoom(titik, zoom));
   }
 
   // Jarak minimum sebelum rute digambar ulang. Knob: turunkan kalau garis
@@ -172,6 +171,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       vsync: this,
       duration: const Duration(seconds: 2),
     );
+    muatIkonKendaraan().then((_) {
+      if (mounted) setState(() {});
+    });
 
     // Countdown animation for incoming order
     _countdownController = AnimationController(
@@ -2439,7 +2441,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
       // IndexedStack, bukan if/else seperti sisi penumpang: peta yang dibuang
       // tiap pindah tab akan mengunduh ubinnya lagi saat kembali — itu kuota
-      // driver — dan _petaSiap tertinggal true sementara controllernya sudah
+      // driver — dan _driverMapController tertinggal menunjuk peta yang sudah
       // lepas, jadi _pindahPeta berikutnya menembak peta yang tidak ada.
       body: IndexedStack(
         index: _driverTabIndex,
@@ -2527,63 +2529,58 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     final latarTombol = isDark ? const Color(0xFF1E293B) : Colors.white;
     return Stack(
         children: [
-          // Peta driver. Label "Jemput"/"Tujuan" muncul saat penandanya ditekan
-          // lama, menggantikan gelembung info bawaan Google.
+          // Peta driver. Label "Jemput"/"Tujuan" muncul saat penandanya diketuk.
           Positioned.fill(
-            child: FlutterMap(
-              mapController: _driverMapController,
-              options: MapOptions(
-                initialCenter: _orderPickupLatLng ?? _driverLatLng,
-                initialZoom: 14,
-                onMapReady: () {
-                  _petaSiap = true;
-                  // GPS bisa lebih cepat dari peta; gerakan kameranya tadi terlewat.
-                  if (_posisiTerbaca && _acceptedOrder == null && !_hasIncomingOrder) _pindahPeta(_driverLatLng, 15);
-                },
-              ),
-              children: [
-                ubinOSM,
+            child: GoogleMap(
+              initialCameraPosition: CameraPosition(target: _orderPickupLatLng ?? _driverLatLng, zoom: 14),
+              // Tombol bawaan Google bertabrakan dengan tombol driver di atas peta.
+              zoomControlsEnabled: false,
+              mapToolbarEnabled: false,
+              myLocationButtonEnabled: false,
+              onMapCreated: (peta) {
+                _driverMapController = peta;
+                // GPS bisa lebih cepat dari peta; gerakan kameranya tadi terlewat.
+                if (_posisiTerbaca && _acceptedOrder == null && !_hasIncomingOrder) _pindahPeta(_driverLatLng, 15);
+              },
+              polylines: {
                 // Ruas 1: driver menuju titik jemput (biru)
                 if (_driverRoutePoints.isNotEmpty)
-                  PolylineLayer(polylines: [
-                    Polyline(
-                      points: _driverRoutePoints,
-                      color: AppTheme.primaryBlue,
-                      strokeWidth: 5,
-                    ),
-                  ]),
+                  Polyline(
+                    polylineId: const PolylineId('driver'),
+                    points: _driverRoutePoints,
+                    color: AppTheme.primaryBlue,
+                    width: 5,
+                  ),
                 // Ruas 2: titik jemput menuju tujuan (hijau)
                 if (_dropoffRoutePoints.isNotEmpty)
-                  PolylineLayer(polylines: [
-                    Polyline(
-                      points: _dropoffRoutePoints,
-                      color: Colors.green.shade600,
-                      strokeWidth: 4,
-                    ),
-                  ]),
-                MarkerLayer(markers: [
-                  if (_orderPickupLatLng != null && !_sudahDijemput)
-                    penandaPeta(
-                      titik: _orderPickupLatLng!,
-                      warna: Colors.green,
-                      judul: 'Jemput penumpang',
-                    ),
-                  if (_orderDropoffLatLng != null)
-                    penandaPeta(
-                      titik: _orderDropoffLatLng!,
-                      warna: Colors.red,
-                      judul: 'Tujuan',
-                    ),
-                  // Terakhir supaya tergambar di atas pin lain.
-                  if (_posisiTerbaca)
-                    penandaMotor(
-                      titik: _driverLatLng,
-                      judul: 'Posisi Anda',
-                      ikon: _kendaraan == 'mobil' ? Icons.directions_car : Icons.two_wheeler,
-                    ),
-                ]),
-                sumberPeta,
-              ],
+                  Polyline(
+                    polylineId: const PolylineId('antar'),
+                    points: _dropoffRoutePoints,
+                    color: Colors.green.shade600,
+                    width: 4,
+                  ),
+              },
+              markers: {
+                if (_orderPickupLatLng != null && !_sudahDijemput)
+                  penandaPeta(
+                    titik: _orderPickupLatLng!,
+                    warna: Colors.green,
+                    judul: 'Jemput penumpang',
+                  ),
+                if (_orderDropoffLatLng != null)
+                  penandaPeta(
+                    titik: _orderDropoffLatLng!,
+                    warna: Colors.red,
+                    judul: 'Tujuan',
+                  ),
+                // zIndex 1 di penandaMotor: tergambar di atas pin lain.
+                if (_posisiTerbaca)
+                  penandaMotor(
+                    titik: _driverLatLng,
+                    judul: 'Posisi Anda',
+                    ikon: _kendaraan == 'mobil' ? Icons.directions_car : Icons.two_wheeler,
+                  ),
+              },
             ),
           ),
 

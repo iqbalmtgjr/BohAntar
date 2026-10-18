@@ -1,4 +1,4 @@
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 import 'package:mobile/services/api_service.dart';
 
 /// "Rp 48.000" — dipakai semua layar BohFood.

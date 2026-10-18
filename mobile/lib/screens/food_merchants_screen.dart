@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 import 'package:mobile/models/food.dart';
 import 'package:mobile/screens/food_menu_screen.dart';
 import 'package:mobile/services/api_service.dart';

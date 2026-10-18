@@ -1,14 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:mobile/models/food.dart';
 import 'package:mobile/services/api_service.dart';
 import 'package:mobile/services/maps_service.dart';
 import 'package:mobile/tarif.dart';
 import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/food_widgets.dart';
-import 'package:mobile/widgets/peta.dart';
 
 /// Konfirmasi pesanan: ke mana diantar, bayar bagaimana, berapa totalnya.
 ///
@@ -511,8 +509,7 @@ class _KartuMetode extends StatelessWidget {
 }
 
 /// Peta dengan pin di tengah: geser petanya, bukan pinnya. Lebih mudah dikenai
-/// jempol daripada menyeret penanda kecil, dan tidak butuh dukungan drag dari
-/// flutter_map.
+/// jempol daripada menyeret penanda kecil.
 class _PetaPilihTitik extends StatefulWidget {
   final LatLng awal;
   const _PetaPilihTitik({required this.awal});
@@ -522,7 +519,9 @@ class _PetaPilihTitik extends StatefulWidget {
 }
 
 class _PetaPilihTitikState extends State<_PetaPilihTitik> {
-  final _peta = MapController();
+  // Tengah peta, dicatat tiap kamera bergerak — Google tidak punya
+  // `camera.center` yang bisa dibaca seketika.
+  late LatLng _pusat = widget.awal;
 
   @override
   Widget build(BuildContext context) {
@@ -530,10 +529,12 @@ class _PetaPilihTitikState extends State<_PetaPilihTitik> {
       appBar: AppBar(title: const Text('Geser peta ke titik antar', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
       body: Stack(
         children: [
-          FlutterMap(
-            mapController: _peta,
-            options: MapOptions(initialCenter: widget.awal, initialZoom: 16),
-            children: [ubinOSM, sumberPeta],
+          GoogleMap(
+            initialCameraPosition: CameraPosition(target: widget.awal, zoom: 16),
+            zoomControlsEnabled: false,
+            mapToolbarEnabled: false,
+            myLocationButtonEnabled: false,
+            onCameraMove: (kamera) => _pusat = kamera.target,
           ),
           // Ujung pin tepat di pusat peta: ikonnya digeser naik setengah tinggi.
           const IgnorePointer(
@@ -549,7 +550,7 @@ class _PetaPilihTitikState extends State<_PetaPilihTitik> {
             right: 16,
             bottom: 24,
             child: ElevatedButton.icon(
-              onPressed: () => Navigator.pop(context, _peta.camera.center),
+              onPressed: () => Navigator.pop(context, _pusat),
               icon: const Icon(Icons.check),
               label: const Text('Antar ke titik ini'),
             ),

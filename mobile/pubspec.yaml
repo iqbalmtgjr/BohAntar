@@ -38,8 +38,6 @@ dependencies:
   shared_preferences: ^2.5.5
   # Peta digambar dari ubin OpenStreetMap: gratis, tanpa kunci API, tanpa
   # billing. Google Maps SDK menagih per pemuatan peta dan wajib kartu kredit.
-  flutter_map: ^8.3.2
-  latlong2: ^0.10.1
 
   geolocator: ^14.0.3
   web_socket_channel: ^3.0.1
@@ -56,6 +54,7 @@ dependencies:
   # Membaca versionCode untuk dibandingkan dengan versi minimal dari server.
   # Sudah ikut terpasang lewat paket lain; di sini hanya dijadikan langsung.
   package_info_plus: ^10.2.1
+  google_maps_flutter: ^2.18.1
 
 dev_dependencies:
   flutter_test:

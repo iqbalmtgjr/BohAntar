@@ -1,7 +1,7 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile/models/food.dart' show rupiah;
@@ -86,11 +86,12 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   int _ratingStars = 5;
   final _reviewController = TextEditingController();
   
-  // Map Controller and LatLng coordinates
-  final MapController _mapController = MapController();
-  // Menggeser peta sebelum ia sempat tergambar sekali melempar galat, dan
-  // pengambilan GPS memang sering selesai lebih dulu.
-  bool _petaSiap = false;
+  // Null sampai peta tergambar; pengambilan GPS memang sering selesai lebih
+  // dulu, dan gerakan kamera sebelum itu cukup dilewati.
+  GoogleMapController? _mapController;
+  // Tengah peta terakhir. Google tidak punya `camera.center` yang bisa dibaca
+  // seketika, jadi dicatat dari onCameraMove.
+  LatLng? _pusatPeta;
   LatLng _currentLatLng = const LatLng(-0.0784, 111.4933); // Default: kota Sintang
   // Titik Sintang di atas cuma isian peta sebelum GPS terbaca — kota tempat
   // layanan ini berjalan, bukan Pontianak yang 400 km jauhnya. _gpsTerbaca tetap
@@ -146,6 +147,10 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       // sebelum pesanannya termuat.
       _orderStatus = "searching";
       _muatPesananBerjalan(widget.initialOrderId!);
+    } else {
+      // Pesanan berjalan membawa titik jemputnya sendiri; pesanan baru
+      // dimulai dari posisi penumpang.
+      _lokasiAwal();
     }
     if (widget.initialDestination != null) {
       _destinationController.text = widget.initialDestination!;
@@ -158,6 +163,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       vsync: this,
       duration: const Duration(seconds: 2),
     );
+    muatIkonKendaraan().then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -304,7 +312,27 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     }
   }
 
-  Future<void> _getCurrentLocation() async {
+  /// Peta penumpang dibuka di posisinya sendiri, bukan di tengah kota. Posisi
+  /// terakhir yang diingat HP muncul seketika (bisa basi, jadi _gpsTerbaca
+  /// tetap false); GPS segar menyusul lewat jalur yang sama dengan tombol
+  /// "Pakai GPS", dan baru itu yang dianggap titik jemput sungguhan.
+  Future<void> _lokasiAwal() async {
+    try {
+      final izin = await Geolocator.checkPermission();
+      if (izin == LocationPermission.whileInUse || izin == LocationPermission.always) {
+        final terakhir = await Geolocator.getLastKnownPosition();
+        if (terakhir != null && mounted && !_gpsTerbaca) {
+          setState(() => _currentLatLng = LatLng(terakhir.latitude, terakhir.longitude));
+          _pindahPeta(_currentLatLng, 15);
+        }
+      }
+    } catch (e) {
+      debugPrint('Posisi terakhir penumpang gagal: $e');
+    }
+    if (mounted) await _getCurrentLocation(senyap: true);
+  }
+
+  Future<void> _getCurrentLocation({bool senyap = false}) async {
     bool serviceEnabled;
     LocationPermission permission;
 
@@ -419,7 +447,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       // Reverse geocode to get human-readable address
       await _reverseGeocode(_currentLatLng, true);
 
-      if (!mounted) return;
+      // Saat layar dibuka, alamat di kolom jemput sudah cukup jadi kabar.
+      if (!mounted || senyap) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text("Lokasi berhasil didapatkan: ${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}"),
@@ -603,19 +632,18 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   }
 
   void _pindahPeta(LatLng titik, double zoom) {
-    if (_petaSiap) _mapController.move(titik, zoom);
+    _pusatPeta = titik;
+    _mapController?.moveCamera(CameraUpdate.newLatLngZoom(titik, zoom));
   }
 
-  // Penanda di peta. Penanda flutter_map tidak bisa digeser sendiri seperti
-  // `draggable` milik Google, jadi pemindahannya dilakukan lewat peta: ketuk
-  // untuk memindahkan tujuan, tekan lama untuk memindahkan titik jemput.
-  // Keduanya diurus di MapOptions, dan hasilnya lebih sedikit kode daripada
-  // menggeser pin.
-  List<Marker> _penandaPeta() {
+  // Penanda di peta. Pemindahannya lewat peta, bukan pin `draggable`: ketuk
+  // untuk memindahkan tujuan, tekan lama untuk memindahkan titik jemput —
+  // lebih mudah dikenai jempol daripada menyeret pin kecil.
+  Set<Marker> _penandaPeta() {
     final tujuan = _destinationLatLng;
     final driver = _driverLatLng;
 
-    return [
+    return {
       // Titik yang sedang digeser diwakili pin tetap di tengah layar, jadi
       // penandanya disembunyikan supaya tidak ada dua pin di tempat sama.
       if (!(_geserPeta && _geserJemput) && _orderStatus != "picked_up")
@@ -626,23 +654,31 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       // begitu status berpindah dari "accepted" ke "picked_up".
       if (driver != null && (_orderStatus == "accepted" || _orderStatus == "picked_up"))
         penandaMotor(titik: driver, judul: _driverName.isEmpty ? 'Driver' : _driverName, ikon: _ikonKendaraan),
-    ];
+    };
   }
 
   // Memuat kotak batasnya langsung, jadi zoom tidak ditebak dengan angka tetap
   // 13 yang dulu memotong tujuan jauh di luar layar.
   void _fitMapBounds() {
     final tujuan = _destinationLatLng;
-    if (tujuan == null || !_petaSiap) return;
+    final peta = _mapController;
+    if (tujuan == null || peta == null) return;
 
-    // LatLngBounds flutter_map merapikan sendiri sudut mana yang barat daya dan
-    // mana yang timur laut, jadi tidak perlu lagi min/max manual.
-    _mapController.fitCamera(CameraFit.bounds(
-      bounds: LatLngBounds(_currentLatLng, tujuan),
-      padding: const EdgeInsets.all(60),
-      // Tanpa batas ini, tujuan yang diketuk tepat di atas titik jemput membuat
-      // kotak batasnya nol dan zoom-nya dihitung tak terhingga.
-      maxZoom: 17,
+    final a = _currentLatLng;
+    // Google tidak punya maxZoom untuk kotak batas: dua titik yang nyaris
+    // berimpit (±100 m) membuatnya zoom sampai batas teratas, jadi dipusatkan
+    // saja di zoom 17.
+    if ((a.latitude - tujuan.latitude).abs() < 1e-3 && (a.longitude - tujuan.longitude).abs() < 1e-3) {
+      peta.moveCamera(CameraUpdate.newLatLngZoom(tujuan, 17));
+      return;
+    }
+    // LatLngBounds Google menuntut sudut barat daya dan timur laut yang benar.
+    peta.moveCamera(CameraUpdate.newLatLngBounds(
+      LatLngBounds(
+        southwest: LatLng(min(a.latitude, tujuan.latitude), min(a.longitude, tujuan.longitude)),
+        northeast: LatLng(max(a.latitude, tujuan.latitude), max(a.longitude, tujuan.longitude)),
+      ),
+      60,
     ));
   }
 
@@ -862,7 +898,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     if (_ambilRuteDriver ||
         (_ruteDriverUntuk == _orderStatus &&
             terakhir != null &&
-            const Distance().distance(terakhir, driver) < 2000)) {
+            Geolocator.distanceBetween(terakhir.latitude, terakhir.longitude, driver.latitude, driver.longitude) < 2000)) {
       return;
     }
     _ambilRuteDriver = true;
@@ -936,17 +972,26 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       ),
       body: Stack(
         children: [
-          // Peta OpenStreetMap. Selama masih di langkah memilih tujuan, ketuk
-          // peta memindahkan tujuan dan tekan lama memindahkan titik jemput —
-          // pengganti pin geser milik Google, yang tidak ada di flutter_map.
+          // Selama masih di langkah memilih tujuan, ketuk peta memindahkan
+          // tujuan dan tekan lama memindahkan titik jemput.
           Positioned.fill(
-            child: FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: _currentLatLng,
-                initialZoom: 14,
-                onMapReady: () => _petaSiap = true,
-                onTap: (_, titik) {
+            child: GoogleMap(
+                initialCameraPosition: CameraPosition(target: _currentLatLng, zoom: 14),
+                // Tombol bawaan Google bertabrakan dengan panel di atas peta.
+                zoomControlsEnabled: false,
+                mapToolbarEnabled: false,
+                myLocationButtonEnabled: false,
+                onMapCreated: (peta) {
+                  _mapController = peta;
+                  // GPS dan pesanan berjalan bisa lebih cepat dari peta;
+                  // gerakan kameranya tadi terlewat.
+                  if (_destinationLatLng != null) {
+                    _fitMapBounds();
+                  } else {
+                    _pindahPeta(_currentLatLng, 15);
+                  }
+                },
+                onTap: (titik) {
                   if (_orderStatus != "input" || _inputStep != 0) return;
                   setState(() {
                     _destinationLatLng = titik;
@@ -955,7 +1000,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                   _calculateFareFromDistance();
                   _reverseGeocode(titik, false);
                 },
-                onLongPress: (_, titik) {
+                onLongPress: (titik) {
                   if (_orderStatus != "input" || _inputStep != 0) return;
                   setState(() {
                     _currentLatLng = titik;
@@ -969,9 +1014,10 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                 // Sambil digeser, titiknya ikut tengah peta. Alamatnya ditahan
                 // sampai peta berhenti, supaya satu geseran tidak jadi puluhan
                 // panggilan geocode.
-                onPositionChanged: (kamera, _) {
+                onCameraMove: (kamera) {
+                  final titik = kamera.target;
+                  _pusatPeta = titik;
                   if (!_geserPeta) return;
-                  final titik = kamera.center;
                   if (_geserJemput) {
                     _currentLatLng = titik;
                     _gpsTerbaca = true;
@@ -985,20 +1031,16 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                     _reverseGeocode(titik, _geserJemput);
                   });
                 },
-              ),
-              children: [
-                ubinOSM,
-                if ((_ruteDriver?.titik ?? _routePoints).isNotEmpty)
-                  PolylineLayer(polylines: [
+                polylines: {
+                  if ((_ruteDriver?.titik ?? _routePoints).isNotEmpty)
                     Polyline(
+                      polylineId: const PolylineId('rute'),
                       points: _ruteDriver?.titik ?? _routePoints,
                       color: AppTheme.primaryBlue,
-                      strokeWidth: 5,
+                      width: 5,
                     ),
-                  ]),
-                MarkerLayer(markers: _penandaPeta()),
-                sumberPeta,
-              ],
+                },
+                markers: _penandaPeta(),
             ),
           ),
 
@@ -1048,8 +1090,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     _geserDebounce?.cancel();
     final jemput = _geserJemput;
     // Peta yang tidak sempat bergerak sama sekali belum pernah memanggil
-    // onPositionChanged, jadi titiknya diambil langsung dari kamera.
-    final titik = _petaSiap ? _mapController.camera.center : _currentLatLng;
+    // onCameraMove; _pindahPeta di _mulaiGeser sudah mencatat titik awalnya.
+    final titik = _pusatPeta ?? _currentLatLng;
     setState(() {
       _geserPeta = false;
       if (jemput) {
