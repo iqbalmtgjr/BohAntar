@@ -472,6 +472,7 @@ func main() {
 	mux.HandleFunc("/api/admin/analytics", admin(adminAnalyticsHandler))
 	mux.HandleFunc("/api/admin/tarif", admin(adminTarifHandler))
 	mux.HandleFunc("/api/admin/tarif/contoh", admin(adminTarifContohHandler))
+	mux.HandleFunc("/api/admin/peta/pemakaian", admin(adminPemakaianPetaHandler))
 	mux.HandleFunc("/api/admin/komisi", admin(adminKomisiHandler))
 	mux.HandleFunc("/api/admin/setoran", admin(adminSetoranHandler))
 	mux.HandleFunc("/api/admin/setoran/qr/", admin(adminSetoranQRHandler))

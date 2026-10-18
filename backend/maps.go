@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -38,8 +40,9 @@ import (
 //  3. Bentuk balasannya dinormalkan di sini. Kalau suatu hari pindah penyedia,
 //     yang berubah cuma berkas ini — aplikasi tidak perlu tahu.
 //
-// Aplikasi menggambar petanya dengan ubin OpenStreetMap lewat flutter_map, jadi
-// tidak ada lagi kunci Maps SDK di dalam APK.
+// Aplikasi menggambar petanya dengan Google Maps SDK (sejak 17 Okt 2026). Kunci
+// SDK itu terpisah, ada di APK dan dibatasi ke package + SHA-1; menampilkan peta
+// lewat SDK seluler tidak ditagih.
 //
 // ponytail: tanpa cache. Penggambaran rute sudah dibatasi di sisi aplikasi
 // (lihat _jarakUntukGambarUlangRute), jadi satu perjalanan hanya beberapa
@@ -70,6 +73,87 @@ const (
 var mapsClient = &http.Client{Timeout: 12 * time.Second}
 
 func mapsAPIKey() string { return getEnv("GOOGLE_MAPS_API_KEY", "") }
+
+// ---------- JATAH HARIAN GOOGLE PLACES ----------
+//
+// Places API (New) hanya punya batas per menit, tanpa batas harian, dan budget
+// di billing cuma mengirim email. Karena kuncinya dikunci ke IP VPS, setiap
+// panggilan Places lewat sini — hitungan di bawah sama dengan yang ditagih
+// Google, jadi batas hariannya dipasang sendiri: lewat batas, pencarian pindah
+// ke Photon sampai tengah malam WIB. Angkanya tampil di dashboard super admin.
+//
+// ponytail: hitungan di memori, kembali nol saat backend direstart (deploy),
+// jadi sehari paling banyak lolos dua kali batas. Pindahkan ke tabel kalau
+// butuh riwayat atau angka yang tahan restart.
+
+var zonaWIB = time.FixedZone("WIB", 7*60*60)
+
+type pemakaianPlaces struct {
+	Tanggal      string `json:"tanggal"`
+	Autocomplete int    `json:"google_autocomplete"`
+	Detail       int    `json:"google_detail"`
+	GagalGoogle  int    `json:"google_gagal"`
+	Photon       int    `json:"photon"`
+}
+
+var (
+	muPlaces   sync.Mutex
+	hariPlaces pemakaianPlaces
+)
+
+// batasHarianPlaces: panggilan Google (cari + detail) per hari. Bawaan 300 ≈
+// 60–100 pencarian sehari, ±9.000 panggilan sebulan. Naikkan lewat
+// PLACES_BATAS_HARIAN di run.sh kalau Photon terlalu sering mengambil alih;
+// 0 berarti Google tidak pernah dipanggil.
+func batasHarianPlaces() int {
+	n, err := strconv.Atoi(getEnv("PLACES_BATAS_HARIAN", "300"))
+	if err != nil || n < 0 {
+		return 300
+	}
+	return n
+}
+
+// catatPlaces mengubah hitungan hari ini lalu mengembalikan salinannya, dan
+// memulai dari nol begitu tanggal WIB berganti.
+func catatPlaces(ubah func(*pemakaianPlaces)) pemakaianPlaces {
+	muPlaces.Lock()
+	defer muPlaces.Unlock()
+	if hari := time.Now().In(zonaWIB).Format("2006-01-02"); hariPlaces.Tanggal != hari {
+		hariPlaces = pemakaianPlaces{Tanggal: hari}
+	}
+	if ubah != nil {
+		ubah(&hariPlaces)
+	}
+	return hariPlaces
+}
+
+// pesanJatahGoogle memesan satu pencarian ke Google kalau jatah hari ini
+// masih ada. Detail tempat tidak ikut dijaga: menolaknya merusak saran Google
+// yang sudah terlanjur diketuk penumpang.
+func pesanJatahGoogle() bool {
+	boleh := false
+	catatPlaces(func(p *pemakaianPlaces) {
+		if p.Autocomplete+p.Detail < batasHarianPlaces() {
+			p.Autocomplete++
+			boleh = true
+		}
+	})
+	return boleh
+}
+
+// adminPemakaianPetaHandler: GET /api/admin/peta/pemakaian
+func adminPemakaianPetaHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
+		return
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{
+		"status":       "success",
+		"pemakaian":    catatPlaces(nil),
+		"batas_harian": batasHarianPlaces(),
+		"kunci_google": mapsAPIKey() != "",
+	})
+}
 
 // mapsSiap menolak permintaan lebih awal kalau kunci belum dipasang, supaya
 // pesannya jelas ketimbang balasan aneh dari Google. Sekarang hanya tersisa
@@ -129,7 +213,7 @@ func mapsAutocompleteHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "suggestions": []interface{}{}})
 		return
 	}
-	if mapsAPIKey() == "" {
+	if mapsAPIKey() == "" || !pesanJatahGoogle() {
 		cariTempatGratis(w, r, q)
 		return
 	}
@@ -165,7 +249,11 @@ func mapsAutocompleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	hasil, err := kirimPermintaan(req)
 	if err != nil {
-		writeJSONResponse(w, 502, map[string]string{"error": err.Error()})
+		// Kuota per menit habis, billing bermasalah, atau Google gangguan:
+		// penumpang tetap bisa mencari lewat Photon, hanya hasilnya kurang lengkap.
+		log.Printf("Places autocomplete gagal, pindah ke Photon: %v", err)
+		catatPlaces(func(p *pemakaianPlaces) { p.GagalGoogle++ })
+		cariTempatGratis(w, r, q)
 		return
 	}
 
@@ -200,6 +288,7 @@ func mapsAutocompleteHandler(w http.ResponseWriter, r *http.Request) {
 // belum ada. Bentuk balasannya sama persis dengan jalur Google, jadi aplikasi
 // tidak tahu — dan tidak perlu tahu — penyedia mana yang menjawab.
 func cariTempatGratis(w http.ResponseWriter, r *http.Request, q string) {
+	catatPlaces(func(p *pemakaianPlaces) { p.Photon++ })
 	v := url.Values{"q": {q}, "limit": {"15"}}
 	lat, lng, adaLokasi := bacaKoordinat(r, "lat", "lng")
 	if adaLokasi {
@@ -348,8 +437,10 @@ func mapsPlaceHandler(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("X-Goog-Api-Key", mapsAPIKey())
 	req.Header.Set("X-Goog-FieldMask", "location,displayName,formattedAddress")
 
+	catatPlaces(func(p *pemakaianPlaces) { p.Detail++ })
 	hasil, err := kirimPermintaan(req)
 	if err != nil {
+		catatPlaces(func(p *pemakaianPlaces) { p.GagalGoogle++ })
 		writeJSONResponse(w, 502, map[string]string{"error": err.Error()})
 		return
 	}

@@ -48,6 +48,10 @@ export XENDIT_CALLBACK_TOKEN="xxx"
 # Kalau diisi: batasi ke IP VPS ini (bukan ke package aplikasi) dan aktifkan
 # Places API (New) dengan billing account hidup.
 export GOOGLE_MAPS_API_KEY=""
+# Batas panggilan Google Places (cari + detail) per hari WIB. Lewat batas,
+# pencarian pindah ke Photon (gratis) sampai tengah malam. Kosong = 300.
+# Pemakaiannya terlihat di dashboard super admin, menu "Pemakaian Peta".
+export PLACES_BATAS_HARIAN="300"
 
 # ---- Integrasi Kasvo (toko Kasvo bergabung ke BohFood) ----
 # Kosong = integrasi mati: tombol Gabung di Kasvo ditolak 401 dan warung Kasvo

@@ -125,3 +125,42 @@ func TestSaranPhoton(t *testing.T) {
 		t.Errorf("tanpa lokasi dapat %d saran, harusnya 4", len(semua))
 	}
 }
+
+// Jatah harian Places adalah satu-satunya rem tagihan Google selain kuota per
+// menit. Kalau hitungannya tidak berhenti di batas, atau tidak kembali nol
+// esok harinya, tagihan bocor atau pencarian Google mati selamanya.
+func TestJatahHarianPlaces(t *testing.T) {
+	t.Setenv("PLACES_BATAS_HARIAN", "2")
+	muPlaces.Lock()
+	hariPlaces = pemakaianPlaces{}
+	muPlaces.Unlock()
+
+	if !pesanJatahGoogle() || !pesanJatahGoogle() {
+		t.Fatal("dua pencarian pertama harus boleh ke Google")
+	}
+	if pesanJatahGoogle() {
+		t.Fatal("pencarian ketiga melewati batas 2, harus pindah ke Photon")
+	}
+	if p := catatPlaces(nil); p.Autocomplete != 2 {
+		t.Fatalf("hitungan Google = %d, mau 2", p.Autocomplete)
+	}
+
+	// Detail tempat ikut menghabiskan jatah yang sama.
+	catatPlaces(func(p *pemakaianPlaces) { p.Autocomplete, p.Detail = 0, 2 })
+	if pesanJatahGoogle() {
+		t.Fatal("dua detail sudah menghabiskan jatah 2")
+	}
+
+	// Tanggal berganti: hitungan mulai dari nol lagi.
+	muPlaces.Lock()
+	hariPlaces.Tanggal = "2000-01-01"
+	muPlaces.Unlock()
+	if !pesanJatahGoogle() {
+		t.Fatal("hari baru, jatah harus kembali")
+	}
+
+	t.Setenv("PLACES_BATAS_HARIAN", "0")
+	if pesanJatahGoogle() {
+		t.Fatal("batas 0 berarti Google tidak pernah dipanggil")
+	}
+}
