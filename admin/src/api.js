@@ -73,6 +73,7 @@ export const api = {
   // Pratinjau untuk angka yang belum disimpan. Rumusnya ada di backend supaya
   // kolom contoh di halaman tarif tidak pernah menghitung versinya sendiri.
   contohTarif: (data) => post(`/admin/tarif/contoh`, data),
+  getPemakaianPeta: () => json(`/admin/peta/pemakaian`),
   getApplications: (status) => json(`/admin/applications${status ? "?status=" + status : ""}`),
   registerDriver: (data) => post(`/admin/drivers/register`, data),
   // Content-Type sengaja tidak diset supaya browser menulis boundary multipart-nya sendiri.

@@ -20,6 +20,7 @@ import UsersPage from "./pages/UsersPage";
 import OrdersPage from "./pages/OrdersPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 import TarifPage from "./pages/TarifPage";
+import PetaPage from "./pages/PetaPage";
 import KomisiPage from "./pages/KomisiPage";
 import PencairanPage from "./pages/PencairanPage";
 import DriverRegistPage from "./pages/DriverRegistPage";
@@ -195,6 +196,7 @@ export default function App() {
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/tarif" element={<TarifPage />} />
+        <Route path="/peta" element={<PetaPage />} />
         <Route path="/komisi" element={<KomisiPage />} />
         <Route path="/pencairan" element={<PencairanPage />} />
         <Route path="/driver-register" element={<DriverRegistPage />} />
