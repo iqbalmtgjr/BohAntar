@@ -1,4 +1,4 @@
-"""Membuat aset ikon & splash dari assets/images/logo.png.
+"""Membuat aset ikon & splash dari branding/logo_sumber.png (resolusi penuh).
 
 Jalankan dari folder `mobile/`:
 
@@ -9,7 +9,7 @@ Jalankan dari folder `mobile/`:
 Berkas di folder ini sengaja di luar `assets/` supaya tidak ikut dibungkus ke
 dalam APK — ini bahan build, bukan gambar yang dibaca aplikasi saat berjalan.
 
-logo.png adalah wordmark 3:1. Dipakai apa adanya sebagai ikon peluncur ia jadi
+logo_sumber.png adalah wordmark 3:1 (assets/images/logo.png = salinan kecilnya). Dipakai apa adanya sebagai ikon peluncur ia jadi
 sesobek tipis di tengah kotak, jadi lambangnya (jempol + pin) dipotong terpisah.
 Wordmark utuh tetap dipakai untuk splash, tempat rasio lebar memang cocok.
 """
@@ -19,7 +19,7 @@ import os
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SRC = os.path.join(HERE, "..", "assets", "images", "logo.png")
+SRC = os.path.join(HERE, "logo_sumber.png")
 
 img = Image.open(SRC).convert("RGBA")
 print("sumber:", img.size)
@@ -60,7 +60,7 @@ write("logo_icon_splash.png", 0.60, (0, 0, 0, 0), canvas=1152)
 write("logo_icon.png", 0.78, (255, 255, 255, 255))
 
 # Wordmark untuk splash. flutter_native_splash memperlakukan berkas sumber
-# sebagai aset 4x, jadi logo.png yang 2172px berarti 543dp — lebih lebar dari
+# sebagai aset 4x, jadi logo_sumber.png yang 2172px berarti 543dp — lebih lebar dari
 # layar HP mana pun dan terpotong di kiri-kanan. 800px = 200dp, muat di layar
 # tersempit sekalipun.
 SPLASH_WIDTH = 800

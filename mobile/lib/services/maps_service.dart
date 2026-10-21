@@ -50,7 +50,7 @@ class MapsService {
       if (dekat != null) 'lng': '${dekat.longitude}',
     };
     final uri = Uri.parse('$_base/api/maps/autocomplete').replace(queryParameters: q);
-    final res = await http.get(uri, headers: _headers);
+    final res = await klienHttp.get(uri, headers: _headers);
     final data = _urai(res);
     final daftar = data['suggestions'] as List? ?? [];
     return daftar
@@ -67,7 +67,7 @@ class MapsService {
   Future<PlaceDetail?> detailTempat(String placeId) async {
     final uri = Uri.parse('$_base/api/maps/place')
         .replace(queryParameters: {'place_id': placeId, 'session': _mulaiSesi()});
-    final res = await http.get(uri, headers: _headers);
+    final res = await klienHttp.get(uri, headers: _headers);
     final data = _urai(res);
     selesaikanSesi();
     final lat = (data['lat'] as num?)?.toDouble();
@@ -86,7 +86,7 @@ class MapsService {
       'lat': '${titik.latitude}',
       'lng': '${titik.longitude}',
     });
-    final res = await http.get(uri, headers: _headers);
+    final res = await klienHttp.get(uri, headers: _headers);
     final data = _urai(res);
     return data['address'] as String?;
   }
@@ -99,7 +99,7 @@ class MapsService {
       'to_lat': '${ke.latitude}',
       'to_lng': '${ke.longitude}',
     });
-    final res = await http.get(uri, headers: _headers);
+    final res = await klienHttp.get(uri, headers: _headers);
     final data = _urai(res);
     final encoded = data['polyline'] as String?;
     if (encoded == null || encoded.isEmpty) return null;

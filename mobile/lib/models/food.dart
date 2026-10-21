@@ -35,9 +35,13 @@ class MenuMakanan {
   final double harga;
   final bool tersedia;
   final List<GrupOpsi> grup;
+  final String idWarung;
+  final int terjual; // porsi 30 hari terakhir; hanya terisi di etalase BohFood
 
   MenuMakanan.dariJson(Map<String, dynamic> j)
       : id = (j['id'] ?? '').toString(),
+        idWarung = (j['merchant_id'] ?? '').toString(),
+        terjual = (j['terjual'] as num?)?.toInt() ?? 0,
         nama = (j['name'] ?? '').toString(),
         deskripsi = (j['description'] ?? '').toString(),
         kategori = (j['category'] ?? '').toString(),

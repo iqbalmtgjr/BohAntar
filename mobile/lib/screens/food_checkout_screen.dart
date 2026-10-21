@@ -27,7 +27,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   EstimasiTarif? _estimasi;
   String _alamatTujuan = '';
   bool _mencariLokasi = true;
-  String _metode = 'Tunai'; // "Tunai" | "PayAntar"
+  String _metode = 'Tunai'; // "Tunai" | "BohPay"
   final _catatan = TextEditingController();
   // Patokan untuk driver, ditempel ke alamat antar. Titik GPS dan nama jalan
   // sering tidak cukup untuk menemukan rumah di gang.
@@ -186,7 +186,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
         // Driver membaca alamat tujuan, jadi patokannya ikut di situ.
         dropoff: patokan.isEmpty ? alamat : '$alamat (Patokan: $patokan)',
         service: 'BohFood',
-        paymentMethod: _metode == 'PayAntar' ? 'wallet' : 'cash',
+        paymentMethod: _metode == 'BohPay' ? 'wallet' : 'cash',
         pickupLat: _warung.posisi.latitude,
         pickupLng: _warung.posisi.longitude,
         dropoffLat: tujuan.latitude,
@@ -196,14 +196,14 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
         items: widget.keranjang.keJson(),
       );
       final id = res['order']?['id'];
-      if (id == null) throw Exception('Server tidak mengembalikan nomor pesanan');
+      if (id == null) throw Exception('Pesanan mungkin sudah terkirim. Cek tab Aktivitas sebelum memesan lagi.');
       if (!mounted) return;
       Navigator.pop(context, id.toString());
     } catch (e) {
       if (!mounted) return;
       setState(() => _mengirim = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceAll('Exception: ', '')), backgroundColor: AppTheme.errorColor),
+        SnackBar(content: Text(pesanGalat(e)), backgroundColor: AppTheme.errorColor),
       );
     }
   }
@@ -223,7 +223,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Konfirmasi pesanan', style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text('Cek pesananmu', style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.transparent,
         elevation: 0,
       ),
@@ -234,7 +234,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         children: [
           _bagian(
-            'Diantar ke',
+            'Diantar ke mana?',
             _kartu(
               isDark,
               Row(
@@ -324,7 +324,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
           ),
 
           _bagian(
-            'Cara bayar',
+            'Bayar pakai apa?',
             Column(
               children: [
                 _KartuMetode(
@@ -338,7 +338,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                 const SizedBox(height: 8),
                 _KartuMetode(
                   ikon: Icons.account_balance_wallet_outlined,
-                  judul: 'PayAntar',
+                  judul: 'BohPay',
                   keterangan: _saldo == null
                       ? 'Dipotong dari saldo setelah makanan diterima'
                       : saldoCukup
@@ -347,7 +347,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                   peringatan: !saldoCukup,
                   dipilih: !tunai,
                   isDark: isDark,
-                  saatTekan: () => setState(() => _metode = 'PayAntar'),
+                  saatTekan: () => setState(() => _metode = 'BohPay'),
                 ),
               ],
             ),
@@ -394,7 +394,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                         child: Text(
                           tunai
                               ? 'Driver membayar dulu ke warung. Kamu bayar total ini ke driver saat makanan tiba.'
-                              : 'Driver membayar dulu ke warung. Saldo PayAntar-mu dipotong setelah makanan diterima.',
+                              : 'Driver membayar dulu ke warung. Saldo BohPay-mu dipotong setelah makanan diterima.',
                           style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)),
                         ),
                       ),
@@ -552,7 +552,7 @@ class _PetaPilihTitikState extends State<_PetaPilihTitik> {
             child: ElevatedButton.icon(
               onPressed: () => Navigator.pop(context, _pusat),
               icon: const Icon(Icons.check),
-              label: const Text('Antar ke titik ini'),
+              label: const Text('Antar ke sini'),
             ),
           ),
         ],

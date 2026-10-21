@@ -89,7 +89,7 @@ class _OtpScreenState extends State<OtpScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = e.toString().replaceAll('Exception: ', '');
+        _errorMessage = pesanGalat(e);
       });
     } finally {
       if (mounted) {
@@ -144,7 +144,7 @@ class _OtpScreenState extends State<OtpScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = e.toString().replaceAll('Exception: ', '');
+        _errorMessage = pesanGalat(e);
       });
     } finally {
       if (mounted) {

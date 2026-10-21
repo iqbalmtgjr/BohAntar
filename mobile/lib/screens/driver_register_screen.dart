@@ -148,7 +148,7 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
         (route) => false,
       );
     } catch (e) {
-      setState(() => _errorMessage = e.toString().replaceAll('Exception: ', ''));
+      setState(() => _errorMessage = pesanGalat(e));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -256,7 +256,7 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
                     Text(
                       'Data diri dan kendaraan Anda diperiksa admin sebelum akun '
                       'driver bisa dipakai. Siapkan KTP, SIM, dan STNK asli.',
-                      style: theme.textTheme.bodyMedium,
+                      style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.teksRedup(context)),
                     ),
                     const SizedBox(height: 24),
                     _kolom('Nama Lengkap', _nameController,

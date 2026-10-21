@@ -71,11 +71,13 @@ class _AuthGateState extends State<AuthGate> {
           // beranda tergambar, supaya tombol kembali mendarat di beranda.
           WidgetsBinding.instance.addPostFrameCallback((_) => NotifikasiService().bukaChatDariPeluncuran());
           final user = profileResponse['user'] as Map<String, dynamic>;
+          final phone = user['phone_number'] ?? '';
+          final role = await DashboardScreen.peranTampil(user['role'] ?? 'rider', phone);
           setState(() {
             _targetScreen = DashboardScreen(
               name: user['name'] ?? '',
-              role: user['role'] ?? 'rider',
-              phone: user['phone_number'] ?? '',
+              role: role,
+              phone: phone,
             );
           });
         }

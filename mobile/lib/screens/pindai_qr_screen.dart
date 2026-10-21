@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mobile/services/api_service.dart' show pesanGalat;
 import 'package:mobile/theme.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
@@ -87,7 +88,7 @@ class _PindaiQRScreenState extends State<PindaiQRScreen> {
       if (!mounted) return;
       setState(() {
         _sedangMengirim = false;
-        _pesanGagal = e.toString().replaceFirst('Exception: ', '');
+        _pesanGagal = pesanGalat(e);
       });
     }
   }

@@ -11,10 +11,7 @@ class RegisterScreen extends StatefulWidget {
   // datang dari alur yang sudah tahu nomornya (mis. OTP, kalau dihidupkan lagi).
   final String phoneNumber;
 
-  const RegisterScreen({
-    super.key,
-    this.phoneNumber = '',
-  });
+  const RegisterScreen({super.key, this.phoneNumber = ''});
 
   @override
   State<RegisterScreen> createState() => _RegisterScreenState();
@@ -90,7 +87,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = e.toString().replaceAll('Exception: ', '');
+        _errorMessage = pesanGalat(e);
       });
     } finally {
       if (mounted) {
@@ -120,22 +117,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   children: [
                     const SizedBox(height: 10),
                     Text(
-                      widget.phoneNumber.isEmpty ? 'Buat Akun Baru' : 'Lengkapi Profil Anda',
+                      widget.phoneNumber.isEmpty
+                          ? 'Buat akun baru'
+                          : 'Lengkapi profilmu',
                       style: theme.textTheme.headlineMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Tinggal satu langkah lagi sebelum Anda bisa menggunakan bohAntar.',
-                      style: theme.textTheme.bodyMedium,
+                      'Isi data di bawah, lalu kamu langsung bisa pesan.',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: AppTheme.teksRedup(context),
+                      ),
                     ),
                     const SizedBox(height: 32),
-                    
+
                     // Name Field
                     Text(
                       'Nama Lengkap',
-                      style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     TextFormField(
@@ -143,7 +146,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       textCapitalization: TextCapitalization.words,
                       keyboardType: TextInputType.name,
                       decoration: const InputDecoration(
-                        hintText: 'Masukkan nama lengkap Anda',
+                        hintText: 'Nama yang dilihat driver',
                         prefixIcon: Icon(Icons.person_outline),
                       ),
                       validator: (value) {
@@ -157,25 +160,29 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       },
                     ),
                     const SizedBox(height: 24),
-                    
+
                     // Email Field
                     Text(
-                      'Alamat Email',
-                      style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+                      'Email',
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
                       decoration: const InputDecoration(
-                        hintText: 'name@email.com',
+                        hintText: 'nama@email.com',
                         prefixIcon: Icon(Icons.mail_outline),
                       ),
                       validator: (value) {
                         if (value == null || value.trim().isEmpty) {
                           return 'Email tidak boleh kosong';
                         }
-                        final emailRegex = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+                        final emailRegex = RegExp(
+                          r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$',
+                        );
                         if (!emailRegex.hasMatch(value.trim())) {
                           return 'Format email tidak valid';
                         }
@@ -187,8 +194,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     if (widget.phoneNumber.isEmpty) ...[
                       const SizedBox(height: 24),
                       Text(
-                        'Nomor Handphone',
-                        style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+                        'Nomor HP aktif',
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                       const SizedBox(height: 8),
                       TextFormField(
@@ -200,10 +209,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) {
-                            return 'Nomor handphone tidak boleh kosong';
+                            return 'Nomor HP belum diisi';
                           }
                           if (value.trim().length < 9) {
-                            return 'Nomor handphone terlalu pendek';
+                            return 'Nomor HP terlalu pendek';
                           }
                           return null;
                         },
@@ -214,7 +223,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     // Password Field
                     Text(
                       'Password',
-                      style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600),
+                      style: theme.textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     TextFormField(
@@ -225,8 +236,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         hintText: 'Minimal 8 karakter',
                         prefixIcon: const Icon(Icons.lock_outline),
                         suffixIcon: IconButton(
-                          icon: Icon(_obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined),
-                          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                          icon: Icon(
+                            _obscurePassword
+                                ? Icons.visibility_off_outlined
+                                : Icons.visibility_outlined,
+                          ),
+                          onPressed: () => setState(
+                            () => _obscurePassword = !_obscurePassword,
+                          ),
                         ),
                       ),
                       validator: (value) {
@@ -250,13 +267,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: AppTheme.primaryBlue.withValues(alpha: isDark ? 0.15 : 0.08),
+                        color: AppTheme.primaryBlue.withValues(
+                          alpha: isDark ? 0.15 : 0.08,
+                        ),
                         borderRadius: BorderRadius.circular(16),
                       ),
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Icon(Icons.sports_motorsports_outlined, color: AppTheme.primaryBlue, size: 24),
+                          const Icon(
+                            Icons.sports_motorsports_outlined,
+                            color: AppTheme.primaryBlue,
+                            size: 24,
+                          ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -267,27 +290,35 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   style: TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 14,
-                                    color: isDark ? Colors.white : Colors.black87,
+                                    color: isDark
+                                        ? Colors.white
+                                        : Colors.black87,
                                   ),
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  'Ajukan lewat formulir berdokumen. Akun driver aktif setelah KTP, SIM, dan STNK Anda disetujui admin.',
+                                  'Ajukan lewat formulir berdokumen. Akun driver aktif setelah KTP, SIM, dan STNK-mu disetujui admin.',
                                   style: TextStyle(
                                     fontSize: 12,
                                     height: 1.5,
-                                    color: isDark ? Colors.blueGrey.shade300 : Colors.grey.shade700,
+                                    color: isDark
+                                        ? Colors.blueGrey.shade300
+                                        : Colors.grey.shade700,
                                   ),
                                 ),
                                 TextButton(
                                   style: TextButton.styleFrom(
                                     padding: EdgeInsets.zero,
                                     minimumSize: const Size(0, 32),
-                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
                                   ),
                                   onPressed: () => Navigator.push(
                                     context,
-                                    MaterialPageRoute(builder: (_) => const DriverRegisterScreen()),
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          const DriverRegisterScreen(),
+                                    ),
                                   ),
                                   child: const Text('Daftar jadi driver'),
                                 ),
@@ -302,12 +333,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       const SizedBox(height: 24),
                       Text(
                         _errorMessage,
-                        style: const TextStyle(color: AppTheme.errorColor, fontWeight: FontWeight.w500),
+                        style: const TextStyle(
+                          color: AppTheme.errorColor,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ],
 
                     const SizedBox(height: 40),
-                    
+
                     // Submit Button
                     ElevatedButton(
                       onPressed: _isLoading ? null : _submitRegistration,

@@ -37,6 +37,25 @@ class ChatMessage {
   }
 }
 
+/// Isi tab Chat sekaligus sumber lencana merah di ikon Chat; null = belum
+/// pernah dimuat. Disegarkan saat beranda dibuka, aplikasi kembali ke depan,
+/// notifikasi chat masuk, layar chat ditutup, dan tab Chat dibuka.
+final ValueNotifier<List<Map<String, dynamic>>?> daftarChat = ValueNotifier(null);
+
+int jumlahBelumDibaca(List<Map<String, dynamic>>? daftar) =>
+    (daftar ?? const []).fold(0, (n, c) => n + ((c['belum_dibaca'] as num?)?.toInt() ?? 0));
+
+/// Gagal diam-diam: isi lama tetap tampil, lencana tidak hilang karena sinyal.
+Future<void> segarkanDaftarChat() async {
+  if (ApiService().token == null) return;
+  try {
+    final data = await ApiService().getDaftarChat();
+    daftarChat.value = [for (final c in (data['chats'] as List?) ?? const []) Map<String, dynamic>.from(c as Map)];
+  } catch (e) {
+    debugPrint('Daftar chat gagal dimuat: $e');
+  }
+}
+
 class ChatService {
   /// Hanya untuk tes: alamat WebSocket lengkap, menggantikan alamat produksi
   /// dan token. Lihat test/chat_service_test.dart.

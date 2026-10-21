@@ -5,6 +5,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../firebase_config.dart';
 import '../screens/chat_screen.dart';
 import 'api_service.dart';
+import 'chat_service.dart';
 
 /// Notifikasi orderan masuk dan perubahan status pesanan.
 ///
@@ -91,6 +92,7 @@ class NotifikasiService {
   /// detik itulah yang dulu membuat chat terasa "tidak ada notifikasinya".
   void _pesanSaatAplikasiTerbuka(RemoteMessage pesan) {
     if (pesan.data['tipe'] != 'chat') return;
+    segarkanDaftarChat();
     final isi = pesan.notification?.body ?? '';
     final pengirim = pesan.notification?.title ?? 'Pesan baru';
     if (isi.isEmpty) return;

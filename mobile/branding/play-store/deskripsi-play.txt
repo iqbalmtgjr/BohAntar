@@ -9,7 +9,7 @@ KENAPA bohAntar
 • Lacak posisi driver di peta secara langsung, lengkap dengan perkiraan waktu tiba.
 • Chat langsung dengan driver selama pesanan berjalan.
 • Notifikasi setiap kali status pesanan berubah.
-• Bayar tunai atau pakai saldo dompet PayAntar. Top up lewat QRIS.
+• Bayar tunai atau pakai saldo dompet BohPay. Isi saldo lewat QRIS.
 • Bayar tagihan di warung mitra cukup dengan memindai kode QR.
 • Simpan alamat yang sering dipakai supaya memesan lebih cepat.
 

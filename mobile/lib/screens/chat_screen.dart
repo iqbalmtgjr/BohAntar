@@ -100,6 +100,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _chat.removeListener(_onMessages);
     _chat.disconnect();
+    // Server sudah menandai pesannya terbaca saat layar ini tersambung.
+    segarkanDaftarChat();
     _input.dispose();
     _scroll.dispose();
     super.dispose();

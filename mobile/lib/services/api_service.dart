@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -7,6 +8,30 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile/tarif.dart';
 
+/// Satu klien untuk semua permintaan ke server. http.get dan kawan-kawan
+/// membuat klien baru tiap panggilan, jadi tiap permintaan — termasuk polling
+/// tiap beberapa detik — berjabat tangan TCP + TLS dari nol. Klien bersama
+/// memakai ulang sambungannya (keep-alive). Dibuat lewat http.Client() supaya
+/// http.runWithClient di tes tetap bisa menggantinya.
+final http.Client klienHttp = http.Client();
+
+/// Pesan galat yang layak dibaca pemakai, untuk SEMUA galat yang tampil di
+/// layar. Galat jaringan dan galat bawaan Dart (ClientException,
+/// SocketException, TimeoutException, FormatException, …) memuat alamat
+/// server, port, dan kode OS — yang perlu dibaca pemakai cuma apa yang terjadi
+/// dan apa yang bisa dilakukan. Pesan yang kita tulis sendiri (termasuk dari
+/// server) dilempar sebagai Exception('…') dan diteruskan apa adanya.
+String pesanGalat(Object e) {
+  final teks = e.toString();
+  if (teks.startsWith('Exception: ')) return teks.substring('Exception: '.length);
+  if (e is TimeoutException) return 'Server tidak menjawab. Cek koneksi internet, lalu coba lagi.';
+  if (e is SocketException || e is http.ClientException || e is HandshakeException || e is HttpException) {
+    return 'Tidak bisa terhubung ke server. Cek koneksi internet, lalu coba lagi.';
+  }
+  debugPrint('Galat tanpa pesan ramah: $e'); // yang begini perlu pesan sendiri
+  return 'Terjadi kesalahan. Coba lagi sebentar, ya.';
+}
+
 class ApiService {
   static final ApiService _instance = ApiService._internal();
   factory ApiService() => _instance;
@@ -15,6 +40,10 @@ class ApiService {
   // Set to true ketika ingin rilis menggunakan VPS produksi
   static const bool isProduction = true;
   static const String prodUrl = 'https://bohantar.indotechconsulting.com';
+
+  /// WhatsApp CS/admin bohAntar (format wa.me, tanpa "+"). Dipakai "Lupa
+  /// password?" di layar masuk dan menu Bantuan.
+  static const String waCS = '628996979079';
 
   // Determine base URL dynamically based on platform (Emulator vs. Device/Simulator)
   String get baseUrl {
@@ -70,7 +99,7 @@ class ApiService {
   // selama belum ada gateway SMS/WA. Dibiarkan supaya tinggal dipanggil lagi.
   // Request OTP
   Future<Map<String, dynamic>> requestOtp(String phoneNumber) async {
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/auth/request-otp'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'phone_number': phoneNumber}),
@@ -80,7 +109,7 @@ class ApiService {
 
   // Verify OTP
   Future<Map<String, dynamic>> verifyOtp(String phoneNumber, String otp) async {
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/auth/verify-otp'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'phone_number': phoneNumber, 'otp': otp}),
@@ -95,7 +124,7 @@ class ApiService {
 
   // Login dengan email + password
   Future<Map<String, dynamic>> login(String email, String password) async {
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/auth/login'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email, 'password': password}),
@@ -115,7 +144,7 @@ class ApiService {
     required String role,
     required String password,
   }) async {
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/auth/register'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -172,14 +201,14 @@ class ApiService {
       await http.MultipartFile.fromPath('stnk_photo', stnkPhotoPath),
     ]);
     return _handleResponse(
-      await http.Response.fromStream(await request.send()),
+      await http.Response.fromStream(await klienHttp.send(request)),
     );
   }
 
   // Google Login
   // id_token dikirim mentah; verifikasi tanda tangan dilakukan di backend.
   Future<Map<String, dynamic>> googleLogin(String idToken, {String? phoneNumber}) async {
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/auth/google'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -197,7 +226,7 @@ class ApiService {
   // Lupa password: token Google membuktikan pemilik email akun, lalu password
   // baru disimpan. Sesi tidak dibuat — pengguna masuk seperti biasa sesudahnya.
   Future<Map<String, dynamic>> resetPasswordGoogle(String idToken, String newPassword) async {
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/auth/reset-password-google'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'id_token': idToken, 'new_password': newPassword}),
@@ -208,26 +237,30 @@ class ApiService {
   // Fetch User Profile
   Future<Map<String, dynamic>> getProfile() async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
 
-    final response = await http.get(
+    final response = await klienHttp.get(
       Uri.parse('$baseUrl/api/users/profile'),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $_token',
       },
     );
-    return _handleResponse(response);
+    final data = _handleResponse(response);
+    // Server mengirim token baru kalau peran akun sudah berubah sejak token ini
+    // terbit — misalnya penumpang yang baru disetujui jadi driver.
+    if (data['token'] is String) await setToken(data['token']);
+    return data;
   }
 
   /// Ganti password dari dalam aplikasi. Password lama wajib — server menolak
   /// tanpanya, supaya sesi yang dibajak tidak bisa mengunci pemilik akun.
   Future<Map<String, dynamic>> gantiPassword(String lama, String baru) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.put(
+    final response = await klienHttp.put(
       Uri.parse('$baseUrl/api/users/profile'),
       headers: {
         'Content-Type': 'application/json',
@@ -253,24 +286,26 @@ class ApiService {
 
     final ok = response.statusCode >= 200 && response.statusCode < 300;
     if (data == null) {
-      throw Exception(ok
-          ? 'Respons server tidak dikenali. Coba lagi sebentar.'
-          : 'Server sedang bermasalah (kode ${response.statusCode}). Coba lagi nanti.');
+      // Bukan JSON: biasanya halaman galat nginx/Cloudflare saat backend mati.
+      throw Exception(ok ? 'Balasan server tidak terbaca. Coba lagi sebentar.' : 'Server sedang gangguan. Coba lagi beberapa saat lagi.');
     }
     if (ok) {
       return data;
     }
-    throw Exception(data['error'] ?? 'Terjadi kesalahan pada server');
+    if (response.statusCode == 401 && data['error'] == 'Token otorisasi diperlukan') throw Exception(_sesiHabis);
+    throw Exception(data['error'] ?? 'Terjadi kesalahan di server. Coba lagi sebentar.');
   }
+
+  static const _sesiHabis = 'Sesi sudah berakhir. Silakan keluar, lalu masuk lagi.';
 
   // Wallet Top Up
   /// Menukar QR setoran jadi saldo. Nominalnya ditentukan petugas saat membuat
   /// QR, bukan dikirim dari sini — aplikasi cuma menyerahkan isi QR-nya.
   Future<Map<String, dynamic>> klaimSetoran(String token) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/driver/setoran/klaim'),
       headers: {
         'Content-Type': 'application/json',
@@ -283,7 +318,7 @@ class ApiService {
 
   /// Riwayat pencairan saldo milik akun ini, terbaru dulu.
   Future<List<dynamic>> getPencairan() async {
-    final response = await http.get(
+    final response = await klienHttp.get(
       Uri.parse('$baseUrl/api/pencairan'),
       headers: {'Authorization': 'Bearer $_token'},
     );
@@ -298,7 +333,7 @@ class ApiService {
     required String nomorRekening,
     required String namaPemilik,
   }) async {
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/pencairan'),
       headers: {
         'Content-Type': 'application/json',
@@ -324,13 +359,13 @@ class ApiService {
   /// bisa menampilkan angka palsu di layar konfirmasi.
   Future<Map<String, dynamic>> lihatTagihan(String isiQR) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
     if (!isiQR.startsWith(awalanQRTagihan)) {
       throw Exception('QR ini bukan QR pembayaran bohAntar.');
     }
     final id = isiQR.substring(awalanQRTagihan.length);
-    final response = await http.get(
+    final response = await klienHttp.get(
       Uri.parse('$baseUrl/api/tagihan?id=${Uri.encodeQueryComponent(id)}'),
       headers: {
         'Content-Type': 'application/json',
@@ -344,9 +379,9 @@ class ApiService {
   /// bukan dikirim dari sini — aplikasi cuma menyerahkan isi QR-nya.
   Future<Map<String, dynamic>> bayarTagihan(String isiQR) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/tagihan/bayar'),
       headers: {
         'Content-Type': 'application/json',
@@ -359,9 +394,9 @@ class ApiService {
 
   Future<Map<String, dynamic>> topUp(double amount) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/users/topup'),
       headers: {
         'Content-Type': 'application/json',
@@ -377,7 +412,7 @@ class ApiService {
   Future<void> kirimTokenPerangkat(String token) async {
     if (_token == null) return;
     try {
-      await http.post(
+      await klienHttp.post(
         Uri.parse('$baseUrl/api/users/fcm-token'),
         headers: {
           'Content-Type': 'application/json',
@@ -394,7 +429,7 @@ class ApiService {
   Future<bool> perluPerbarui() async {
     try {
       final info = await PackageInfo.fromPlatform();
-      final r = await http
+      final r = await klienHttp
           .get(Uri.parse('$baseUrl/api/aplikasi/versi'))
           .timeout(const Duration(seconds: 5));
       final minimal = (jsonDecode(r.body)['minimal_build'] as num?)?.toInt() ?? 0;
@@ -414,9 +449,9 @@ class ApiService {
   // komisi yang belum disetor, jadi pesan errornya diteruskan apa adanya.
   Future<Map<String, dynamic>> deleteAccount() async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/users/delete'),
       headers: {
         'Content-Type': 'application/json',
@@ -439,7 +474,7 @@ class ApiService {
     required double keLng,
   }) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
     final uri = Uri.parse('$baseUrl/api/tarif/estimasi').replace(queryParameters: {
       'layanan': layanan,
@@ -448,7 +483,7 @@ class ApiService {
       'to_lat': '$keLat',
       'to_lng': '$keLng',
     });
-    final response = await http.get(uri, headers: {
+    final response = await klienHttp.get(uri, headers: {
       'Content-Type': 'application/json',
       'Authorization': 'Bearer $_token',
     });
@@ -459,7 +494,7 @@ class ApiService {
   // dari sini — supaya tidak ada yang bisa memalsukan posisi driver lain.
   Future<void> sendDriverLocation(double lat, double lng) async {
     if (_token == null) return;
-    await http.post(
+    await klienHttp.post(
       Uri.parse('$baseUrl/api/driver/location'),
       headers: {
         'Content-Type': 'application/json',
@@ -474,7 +509,7 @@ class ApiService {
   Future<void> setDriverOffline() async {
     if (_token == null) return;
     try {
-      await http.post(
+      await klienHttp.post(
         Uri.parse('$baseUrl/api/driver/offline'),
         headers: {
           'Content-Type': 'application/json',
@@ -514,9 +549,9 @@ class ApiService {
     List<Map<String, dynamic>>? items,
   }) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/orders'),
       headers: {
         'Content-Type': 'application/json',
@@ -549,31 +584,44 @@ class ApiService {
   /// Daftar warung BohFood. Dengan posisi, server mengurutkan yang terdekat dan
   /// mengisi jarak_km serta ongkir. Dengan q, server mencocokkan nama warung,
   /// alamat, dan nama menu.
-  Future<List<dynamic>> getFoodMerchants({double? lat, double? lng, String q = ''}) async {
+  Future<List<dynamic>> getFoodMerchants({double? lat, double? lng, String q = ''}) async =>
+      ((await getEtalaseFood(lat: lat, lng: lng, q: q, menu: false))['merchants'] as List?) ?? [];
+
+  /// Layar depan BohFood, satu halaman: 'menus' (dengan porsi terjual 30 hari
+  /// terakhir, sudah diurutkan server), 'merchants' pemilik menu-menu itu, dan
+  /// 'ada_lagi'. Dengan q, server mencari nama menu, kategori, dan nama warung.
+  Future<Map<String, dynamic>> getEtalaseFood({double? lat, double? lng, String q = '', bool menu = true, int page = 1, int limit = 10}) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
     final uri = Uri.parse('$baseUrl/api/food/merchants').replace(queryParameters: {
       if (lat != null && lng != null) 'lat': '$lat',
       if (lat != null && lng != null) 'lng': '$lng',
       if (q.trim().isNotEmpty) 'q': q.trim(),
+      if (menu) ...{'menu': '1', 'page': '$page', 'limit': '$limit'},
     });
-    final data = _handleResponse(await http.get(uri, headers: {'Authorization': 'Bearer $_token'}));
-    return (data['merchants'] as List?) ?? [];
+    return _handleResponse(await klienHttp.get(uri, headers: {'Authorization': 'Bearer $_token'}));
+  }
+
+  /// Banner beranda yang aktif, diatur dari dashboard. Tanpa token: isinya
+  /// memang untuk dipajang. Kosong berarti tidak ada yang aktif.
+  Future<List<Map<String, dynamic>>> getBanner() async {
+    final data = _handleResponse(await klienHttp.get(Uri.parse('$baseUrl/api/banner')));
+    return [for (final b in (data['banner'] as List?) ?? const []) Map<String, dynamic>.from(b as Map)];
   }
 
   /// Menu satu warung. Endpoint ini membalas array polos, bukan {status, ...},
   /// jadi tidak lewat _handleResponse.
   Future<List<dynamic>> getFoodMenus(String merchantId) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.get(
+    final response = await klienHttp.get(
       Uri.parse('$baseUrl/api/food/menus').replace(queryParameters: {'merchant_id': merchantId}),
       headers: {'Authorization': 'Bearer $_token'},
     );
     if (response.statusCode != 200) {
-      throw Exception('Gagal memuat menu (kode ${response.statusCode}). Coba lagi sebentar.');
+      throw Exception('Menu warung gagal dimuat. Coba lagi sebentar.');
     }
     final decoded = jsonDecode(response.body);
     return decoded is List ? decoded : [];
@@ -582,9 +630,9 @@ class ApiService {
   // Get Active Orders (Driver)
   Future<Map<String, dynamic>> getActiveOrders() async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.get(
+    final response = await klienHttp.get(
       Uri.parse('$baseUrl/api/orders/active'),
       headers: {
         'Content-Type': 'application/json',
@@ -597,9 +645,9 @@ class ApiService {
   // Accept Order (Driver)
   Future<Map<String, dynamic>> acceptOrder(String orderId) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/orders/$orderId/accept'),
       headers: {
         'Content-Type': 'application/json',
@@ -612,9 +660,9 @@ class ApiService {
   // Pickup Order (Driver - Ambil Barang). Foto bukti opsional — hasil uploadFoto.
   Future<Map<String, dynamic>> pickupOrder(String orderId, {String? photoUrl}) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/orders/$orderId/pickup'),
       headers: {
         'Content-Type': 'application/json',
@@ -628,9 +676,9 @@ class ApiService {
   // Complete Order (Driver). Foto serah-terima dan nama penerima opsional.
   Future<Map<String, dynamic>> completeOrder(String orderId, {String? photoUrl, String? receivedBy}) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/orders/$orderId/complete'),
       headers: {
         'Content-Type': 'application/json',
@@ -648,9 +696,9 @@ class ApiService {
   /// membuatnya tidak bisa menerima pesanan lain sama sekali.
   Future<Map<String, dynamic>> lepasPesanan(String orderId) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/orders/$orderId/lepas'),
       headers: {'Authorization': 'Bearer $_token'},
     );
@@ -660,12 +708,12 @@ class ApiService {
   /// Mengunggah satu foto dan mengembalikan path /uploads/... miliknya.
   Future<String> uploadFoto(String path) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
     final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/api/upload'))
       ..headers['Authorization'] = 'Bearer $_token'
       ..files.add(await http.MultipartFile.fromPath('file', path));
-    final data = _handleResponse(await http.Response.fromStream(await request.send()));
+    final data = _handleResponse(await http.Response.fromStream(await klienHttp.send(request)));
     return data['url'] as String;
   }
 
@@ -674,9 +722,9 @@ class ApiService {
   /// perjalanan selesai, dan satu pesanan tetap satu suara.
   Future<Map<String, dynamic>> rateOrder(String orderId, int stars, String review) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/orders/$orderId/rate'),
       headers: {
         'Content-Type': 'application/json',
@@ -690,9 +738,9 @@ class ApiService {
   /// Membatalkan pesanan. Backend hanya mengizinkannya sebelum penumpang naik.
   Future<Map<String, dynamic>> cancelOrder(String orderId) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/orders/$orderId/cancel'),
       headers: {
         'Content-Type': 'application/json',
@@ -704,9 +752,9 @@ class ApiService {
 
   Future<Map<String, dynamic>> getOrderStatus(String orderId) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.get(
+    final response = await klienHttp.get(
       Uri.parse('$baseUrl/api/orders/$orderId/status'),
       headers: {
         'Content-Type': 'application/json',
@@ -716,13 +764,83 @@ class ApiService {
     return _handleResponse(response);
   }
 
-  // Get Orders History
-  Future<Map<String, dynamic>> getOrders() async {
+  /// Tab Chat: satu baris per pesanan, pesan terakhir, dan jumlah belum dibaca.
+  Future<Map<String, dynamic>> getDaftarChat() async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.get(
-      Uri.parse('$baseUrl/api/orders'),
+    final response = await klienHttp.get(
+      Uri.parse('$baseUrl/api/chats'),
+      headers: {'Authorization': 'Bearer $_token'},
+    );
+    return _handleResponse(response);
+  }
+
+  /// BohRental: kendaraan aktif semua mitra.
+  Future<List<Map<String, dynamic>>> getKatalogRental() async {
+    if (_token == null) {
+      throw Exception(_sesiHabis);
+    }
+    final data = _handleResponse(await klienHttp.get(
+      Uri.parse('$baseUrl/api/rental/katalog'),
+      headers: {'Authorization': 'Bearer $_token'},
+    ));
+    return [for (final k in (data['kendaraan'] as List?) ?? const []) Map<String, dynamic>.from(k as Map)];
+  }
+
+  /// BohRental: sewa milik pemakai ini. Endpoint-nya dipakai juga oleh mitra
+  /// dan membalas array polos, jadi tidak lewat _handleResponse.
+  Future<List<Map<String, dynamic>>> getSewaSaya(String phone) async {
+    if (_token == null) {
+      throw Exception(_sesiHabis);
+    }
+    final response = await klienHttp.get(
+      Uri.parse('$baseUrl/api/rental/bookings'),
+      headers: {'Authorization': 'Bearer $_token'},
+    );
+    if (response.statusCode != 200) {
+      throw Exception('Daftar sewa gagal dimuat. Coba lagi sebentar.');
+    }
+    final decoded = jsonDecode(response.body);
+    final daftar = [
+      for (final b in decoded is List ? decoded : const [])
+        if ((b as Map)['customer_phone'] == phone) Map<String, dynamic>.from(b),
+    ];
+    daftar.sort((a, b) => '${b['created_at']}'.compareTo('${a['created_at']}'));
+    return daftar;
+  }
+
+  /// [mulai] dan [selesai] berformat "YYYY-MM-DD HH:mm:ss"; harga dihitung server.
+  Future<Map<String, dynamic>> ajukanSewa(String carId, String mulai, String selesai) async {
+    if (_token == null) {
+      throw Exception(_sesiHabis);
+    }
+    return _handleResponse(await klienHttp.post(
+      Uri.parse('$baseUrl/api/rental/bookings'),
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $_token'},
+      body: jsonEncode({'car_id': carId, 'start_time': mulai, 'end_time': selesai}),
+    ));
+  }
+
+  Future<Map<String, dynamic>> batalkanSewa(String bookingId) async {
+    if (_token == null) {
+      throw Exception(_sesiHabis);
+    }
+    return _handleResponse(await klienHttp.put(
+      Uri.parse('$baseUrl/api/rental/bookings/$bookingId'),
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $_token'},
+      body: jsonEncode({'status': 'cancelled'}),
+    ));
+  }
+
+  /// Riwayat pesanan (sebagai penumpang maupun driver), terbaru dulu, satu
+  /// halaman. 'ada_lagi' menandai masih ada halaman berikutnya.
+  Future<Map<String, dynamic>> getOrders({int page = 1, int limit = 20}) async {
+    if (_token == null) {
+      throw Exception(_sesiHabis);
+    }
+    final response = await klienHttp.get(
+      Uri.parse('$baseUrl/api/orders').replace(queryParameters: {'page': '$page', 'limit': '$limit'}),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $_token',
@@ -734,9 +852,9 @@ class ApiService {
   // Save Favorite Location / Address
   Future<Map<String, dynamic>> saveAddress(String type, String address) async {
     if (_token == null) {
-      throw Exception('Otorisasi diperlukan. Silakan login kembali.');
+      throw Exception(_sesiHabis);
     }
-    final response = await http.post(
+    final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/users/addresses'),
       headers: {
         'Content-Type': 'application/json',

@@ -88,7 +88,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = e.toString().replaceAll('Exception: ', '');
+        _errorMessage = pesanGalat(e);
       });
     } finally {
       if (mounted) {
@@ -106,6 +106,16 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  static const _dataGoogleKosong = 'Data akun Google tidak terbaca. Coba lagi.';
+
+  /// Null kalau pemakai sendiri yang menutup pemilih akun — itu bukan galat.
+  /// e.description berisi kode teknis Google ("[16] …"), jadi tidak ditampilkan.
+  String? _pesanGoogle(GoogleSignInException e) => switch (e.code) {
+        GoogleSignInExceptionCode.canceled => null,
+        GoogleSignInExceptionCode.interrupted => 'Masuk dengan Google terputus. Coba lagi.',
+        _ => 'Masuk dengan Google gagal. Coba lagi, atau masuk dengan email dan password.',
+      };
+
   Future<void> _loginWithGoogle() async {
     setState(() {
       _isLoading = true;
@@ -118,18 +128,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final String? idToken = googleUser.authentication.idToken;
       if (idToken == null || idToken.isEmpty) {
-        throw Exception('Google tidak mengembalikan id_token.');
+        throw Exception(_dataGoogleKosong);
       }
 
       await _authenticateGoogle(idToken);
     } on GoogleSignInException catch (e) {
       setState(() {
-        _errorMessage = 'Gagal masuk dengan Google: ${e.description ?? e.code.name}';
+        // Menutup pemilih akun bukan galat yang perlu diumumkan.
+        _errorMessage = _pesanGoogle(e) ?? '';
         _isLoading = false;
       });
     } catch (e) {
       setState(() {
-        _errorMessage = 'Gagal masuk dengan Google: $e';
+        _errorMessage = pesanGalat(e);
         _isLoading = false;
       });
     }
@@ -168,7 +179,7 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = e.toString().replaceAll('Exception: ', '');
+        _errorMessage = pesanGalat(e);
       });
     } finally {
       if (mounted) {
@@ -180,7 +191,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   // Nomor WhatsApp admin, sama dengan tombol "hubungi admin" di Portal Mitra.
-  static const _waAdmin = '628996979079';
+  static const _waAdmin = ApiService.waCS;
 
   /// Dua jalan pulih tanpa layanan email/SMS: atur ulang sendiri lewat Google
   /// kalau email akunnya akun Google, atau minta admin mengganti password-nya
@@ -198,7 +209,7 @@ class _LoginScreenState extends State<LoginScreen> {
             children: [
               Text('Lupa password?', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              const Text('Kalau email akun Anda akun Google (Gmail), Anda bisa membuat password baru sendiri sekarang.'),
+              const Text('Kalau email akunmu akun Google (Gmail), kamu bisa membuat password baru sendiri sekarang.'),
               const SizedBox(height: 16),
               ElevatedButton.icon(
                 onPressed: () => Navigator.pop(context, 'google'),
@@ -211,7 +222,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 20),
-              const Text('Email Anda bukan Gmail? Admin bisa mengatur ulang password Anda.'),
+              const Text('Emailmu bukan Gmail? Admin bisa mengatur ulang password-mu.'),
               const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: () => Navigator.pop(context, 'admin'),
@@ -245,7 +256,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final googleUser = await GoogleSignIn.instance.authenticate();
       final idToken = googleUser.authentication.idToken;
       if (idToken == null || idToken.isEmpty) {
-        throw Exception('Google tidak mengembalikan id_token.');
+        throw Exception(_dataGoogleKosong);
       }
       if (!mounted) return;
       final baru = await _mintaPasswordBaru(googleUser.email);
@@ -259,12 +270,10 @@ class _LoginScreenState extends State<LoginScreen> {
         SnackBar(content: Text(res['message'] ?? 'Password baru tersimpan. Silakan masuk.')),
       );
     } on GoogleSignInException catch (e) {
-      // Menutup pemilih akun bukan galat yang perlu diumumkan.
-      if (e.code != GoogleSignInExceptionCode.canceled && mounted) {
-        setState(() => _errorMessage = 'Gagal masuk ke Google: ${e.description ?? e.code.name}');
-      }
+      final pesan = _pesanGoogle(e);
+      if (pesan != null && mounted) setState(() => _errorMessage = pesan);
     } catch (e) {
-      if (mounted) setState(() => _errorMessage = e.toString().replaceAll('Exception: ', ''));
+      if (mounted) setState(() => _errorMessage = pesanGalat(e));
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -326,7 +335,7 @@ class _LoginScreenState extends State<LoginScreen> {
         final theme = Theme.of(context);
         final isDark = theme.brightness == Brightness.dark;
         return AlertDialog(
-          title: const Text('Lengkapi Nomor Handphone'),
+          title: const Text('Satu langkah lagi'),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           content: Form(
             key: formKey,
@@ -335,7 +344,7 @@ class _LoginScreenState extends State<LoginScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'Email Google Anda belum terdaftar. Silakan lengkapi nomor handphone aktif untuk membuat akun baru:',
+                  'Email Google-mu belum terdaftar. Isi nomor HP aktif untuk membuat akun baru — driver menghubungimu lewat nomor ini.',
                   style: TextStyle(fontSize: 14),
                 ),
                 const SizedBox(height: 20),
@@ -374,10 +383,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   validator: (value) {
                     if (value == null || value.isEmpty) {
-                      return 'Nomor handphone tidak boleh kosong';
+                      return 'Nomor HP belum diisi';
                     }
                     if (value.trim().length < 9) {
-                      return 'Nomor handphone terlalu pendek';
+                      return 'Nomor HP terlalu pendek';
                     }
                     return null;
                   },
@@ -419,7 +428,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
-      // ponytail: splash dibuat putih polos biar menyatu dengan bg_login.png
+      // ponytail: splash dibuat putih polos biar menyatu dengan bg_login.webp
       backgroundColor: _showSplash && !isDark ? Colors.white : null,
       body: Stack(
         children: [
@@ -451,7 +460,7 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Transform.scale(
             scale: 1.35,
             child: Image.asset(
-              'assets/images/bg_login.png',
+              'assets/images/bg_login.webp',
               fit: BoxFit.contain,
             ),
           ),
@@ -479,7 +488,15 @@ class _LoginScreenState extends State<LoginScreen> {
                   fontFamily: 'Inter',
                 ),
               ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 6),
+              // Orang yang baru memasang perlu tahu aplikasinya untuk apa
+              // sebelum diminta mendaftar.
+              Text(
+                'Ojek, mobil, makanan, dan kirim paket — semua di satu aplikasi.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13, height: 1.4, color: AppTheme.teksRedup(context)),
+              ),
+              const SizedBox(height: 28),
               ElevatedButton(
                 onPressed: () {
                   setState(() {
@@ -557,8 +574,8 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Masuk dengan email dan password akun bohAntar Anda.',
-              style: theme.textTheme.bodyMedium,
+              'Masuk pakai email dan password akun bohAntar-mu.',
+              style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.teksRedup(context)),
             ),
             if (widget.pesanInfo != null) ...[
               const SizedBox(height: 20),
@@ -591,7 +608,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
             // Email Input
             Text(
-              'Alamat Email',
+              'Email',
               style: theme.textTheme.bodyLarge?.copyWith(
                 fontWeight: FontWeight.w600,
               ),
@@ -628,7 +645,7 @@ class _LoginScreenState extends State<LoginScreen> {
               autofillHints: const [AutofillHints.password],
               onFieldSubmitted: (_) => _isLoading ? null : _submitLogin(),
               decoration: InputDecoration(
-                hintText: 'Masukkan password Anda',
+                hintText: 'Masukkan password',
                 prefixIcon: const Icon(Icons.lock_outline),
                 suffixIcon: IconButton(
                   icon: Icon(_obscurePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined),
@@ -737,7 +754,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 minimumSize: const Size(double.infinity, 56),
                 side: BorderSide(color: isDark ? Colors.blueGrey.shade700 : Colors.grey.shade300),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                textStyle: const TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.bold, fontSize: 16),
                 foregroundColor: isDark ? Colors.white : Colors.black87,
               ),
             ),
@@ -756,7 +773,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   foregroundColor: isDark ? Colors.blueGrey.shade300 : Colors.grey.shade700,
                 ),
                 child: const Text(
-                  'Dengan melanjutkan, Anda menyetujui Kebijakan Privasi kami.',
+                  'Dengan melanjutkan, kamu menyetujui Kebijakan Privasi kami.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 12, decoration: TextDecoration.underline),
                 ),

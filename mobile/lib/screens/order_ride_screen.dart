@@ -5,9 +5,11 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile/models/food.dart' show rupiah;
+import 'package:mobile/widgets/food_widgets.dart' show lebarDekode;
 import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/services/api_service.dart';
 import 'package:mobile/services/maps_service.dart';
+import 'package:mobile/status_pesanan.dart';
 import 'package:mobile/tarif.dart';
 import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/peta.dart';
@@ -22,6 +24,14 @@ class OrderRideScreen extends StatefulWidget {
   /// layar ini langsung membuka pelacakan alih-alih formulir pemesanan baru.
   final String? initialOrderId;
 
+  /// Kolom tujuan langsung aktif dengan keyboard terbuka — dari kotak "Diantar
+  /// ke mana?" di beranda, yang memang berarti "saya mau mengetik tujuan".
+  final bool fokusTujuan;
+
+  /// Tujuan yang sudah dipilih di layar pencarian beranda: langsung dipasang,
+  /// penumpang tidak disuruh memilih saran yang sama dua kali.
+  final PlaceSuggestion? initialTempat;
+
   const OrderRideScreen({
     super.key,
     required this.initialService,
@@ -29,6 +39,8 @@ class OrderRideScreen extends StatefulWidget {
     required this.riderName,
     required this.riderPhone,
     this.initialOrderId,
+    this.fokusTujuan = false,
+    this.initialTempat,
   });
 
   @override
@@ -36,14 +48,17 @@ class OrderRideScreen extends StatefulWidget {
 }
 
 class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderStateMixin {
-  final _pickupController = TextEditingController(text: "Lokasi saya di Sintang");
+  // Kosong sampai GPS terbaca, supaya petunjuk "Dijemput di mana?" yang
+  // terlihat — dulu "Lokasi saya di Sintang" tertulis seolah sudah pasti.
+  final _pickupController = TextEditingController();
   final _destinationController = TextEditingController();
+  final _fokusTujuan = FocusNode();
   final _formKey = GlobalKey<FormState>();
 
   late String _selectedService;
   // Tunai jadi bawaan: saldo pengguna baru nol dan top up belum tersedia, jadi
-  // memilih PayAntar duluan berarti pesanan pertama siapa pun pasti ditolak.
-  String _paymentMethod = "Tunai"; // "PayAntar" or "Tunai"
+  // memilih BohPay duluan berarti pesanan pertama siapa pun pasti ditolak.
+  String _paymentMethod = "Tunai"; // "BohPay" or "Tunai"
   double _fare = 0.0;
   double _biayaJasa = 0.0;
   // Taksiran dari server. Null berarti belum pernah berhasil diambil untuk
@@ -74,12 +89,18 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   List<dynamic> _itemsMakanan = const [];
   bool _bayarTunai = true;
   // Motor, plat, dan bintang driver dari server. Kosong = disembunyikan.
+  // Plat dipisah supaya bisa ditulis besar: itu yang dicari penumpang di jalan.
   String _driverKendaraan = "";
+  String _driverPlat = "";
   double _driverRating = 0;
   int _driverUlasan = 0;
+  // Saldo BohPay untuk kartu cara bayar. Null = belum terbaca, dianggap
+  // cukup; server tetap yang menolak kalau ternyata kurang.
+  double? _saldo;
 
   bool get _kirimBarang => _selectedService == "BohAntar" || _selectedService == "BohSend" || _selectedService == "BohFood";
   bool get _makanan => _selectedService == "BohFood";
+  bool get _orang => jenisPesanan(_selectedService) == JenisPesanan.orang;
   IconData get _ikonKendaraan => _selectedService == "BohCar" ? Icons.directions_car : Icons.two_wheeler;
   
   // Interactive rating state
@@ -123,6 +144,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
 
   // Routing points
   List<LatLng> _routePoints = [];
+  // Rute jalan jemput→tujuan, sumber perkiraan waktu di panel ongkos. Dulu
+  // waktunya dikarang dari jarak × 3 menit.
+  Rute? _ruteJalan;
   // Rute driver selama pesanan berjalan, lihat _perbaruiRuteDriver().
   Rute? _ruteDriver;
   LatLng? _titikRuteDriver;
@@ -151,8 +175,15 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       // Pesanan berjalan membawa titik jemputnya sendiri; pesanan baru
       // dimulai dari posisi penumpang.
       _lokasiAwal();
+      _muatSaldo();
     }
-    if (widget.initialDestination != null) {
+    if (widget.initialTempat case final tempat?) {
+      _destinationController.text = tempat.name;
+      // Setelah bingkai pertama: _pilihTempat memanggil setState.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _pilihTempat(tempat);
+      });
+    } else if (widget.initialDestination != null) {
       _destinationController.text = widget.initialDestination!;
       // Tujuan yang dibawa dari layar lain cuma teks, belum punya koordinat.
       // Cari sarannya supaya penumpang tinggal memilih, bukan ditebakkan.
@@ -172,6 +203,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   void dispose() {
     _pickupController.dispose();
     _destinationController.dispose();
+    _fokusTujuan.dispose();
     _packageNotesController.dispose();
     _receiverNameController.dispose();
     _receiverPhoneController.dispose();
@@ -188,11 +220,18 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   /// driver yang sedang bertugas.
   void _bacaInfoDriver(dynamic d) {
     if (d is! Map) return;
-    final kendaraan = (d['kendaraan'] ?? '').toString();
-    final plat = (d['plat'] ?? '').toString();
-    _driverKendaraan = [kendaraan, plat].where((s) => s.isNotEmpty).join(' • ');
+    _driverKendaraan = (d['kendaraan'] ?? '').toString();
+    _driverPlat = (d['plat'] ?? '').toString();
     _driverRating = (d['rating'] as num?)?.toDouble() ?? 0;
     _driverUlasan = (d['jumlah_ulasan'] as num?)?.toInt() ?? 0;
+  }
+
+  Future<void> _muatSaldo() async {
+    try {
+      final res = await ApiService().getProfile();
+      final saldo = (res['user']?['balance'] as num?)?.toDouble();
+      if (mounted && saldo != null) setState(() => _saldo = saldo);
+    } catch (_) {}
   }
 
   /// Membuka kembali pesanan yang sedang berjalan, bukan formulir kosong.
@@ -241,7 +280,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+        SnackBar(content: Text(pesanGalat(e))),
       );
     }
   }
@@ -260,14 +299,14 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       await ApiService().rateOrder(id, _ratingStars, _reviewController.text.trim());
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Terima kasih atas penilaiannya.')),
+        const SnackBar(content: Text('Terima kasih, penilaianmu sudah terkirim.')),
       );
     } catch (e) {
       if (!mounted) return;
       // Penilaian yang gagal terkirim bukan alasan menahan penumpang di layar
       // ini; perjalanannya sendiri sudah selesai dan terbayar.
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+        SnackBar(content: Text(pesanGalat(e))),
       );
     }
     if (mounted) Navigator.pop(context, true);
@@ -283,12 +322,15 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Batalkan pesanan?'),
-        content: const Text('Driver yang sedang menuju ke Anda akan diberi tahu.'),
+        // Selagi mencari belum ada driver yang perlu diberi tahu.
+        content: Text(_orderStatus == 'searching'
+            ? 'Pesananmu belum dapat driver. Kalau dibatalkan, pencarian dihentikan.'
+            : 'Driver yang sedang menuju ke tempatmu akan langsung diberi tahu.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Tidak')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Jangan')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Batalkan', style: TextStyle(color: AppTheme.errorColor)),
+            child: const Text('Ya, batalkan', style: TextStyle(color: AppTheme.errorColor)),
           ),
         ],
       ),
@@ -305,7 +347,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(e.toString().replaceAll('Exception: ', '')),
+          content: Text(pesanGalat(e)),
           backgroundColor: AppTheme.errorColor,
         ),
       );
@@ -348,16 +390,16 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               children: [
                 Icon(Icons.gps_off, color: AppTheme.errorColor),
                 SizedBox(width: 8),
-                Text("GPS Belum Aktif"),
+                Text("GPS belum nyala"),
               ],
             ),
             content: const Text(
-              "Layanan lokasi/GPS Anda belum aktif. Aktifkan GPS untuk mendeteksi lokasi penjemputan Anda secara otomatis."
+              "Nyalakan GPS supaya titik jemputmu terpasang otomatis. Bisa juga geser peta ke lokasimu."
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text("Batal"),
+                child: const Text("Nanti"),
               ),
               ElevatedButton(
                 onPressed: () {
@@ -368,7 +410,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                   backgroundColor: AppTheme.primaryBlue,
                   minimumSize: const Size(100, 40),
                 ),
-                child: const Text("Aktifkan GPS"),
+                child: const Text("Nyalakan GPS"),
               ),
             ],
           );
@@ -384,8 +426,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text("Izin akses lokasi ditolak"),
-            backgroundColor: AppTheme.errorColor,
+            content: Text("Tanpa izin lokasi, geser peta ke titik jemputmu ya."),
           ),
         );
         return;
@@ -398,14 +439,14 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         context: context,
         builder: (BuildContext context) {
           return AlertDialog(
-            title: const Text("Izin Lokasi Ditolak Permanen"),
+            title: const Text("Izin lokasi masih ditolak"),
             content: const Text(
-              "Izin lokasi diblokir secara permanen oleh pengaturan sistem. Buka pengaturan aplikasi untuk memberikan izin secara manual."
+              "Buka pengaturan, lalu izinkan bohAntar membaca lokasi supaya titik jemputmu terpasang otomatis."
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text("Batal"),
+                child: const Text("Nanti"),
               ),
               ElevatedButton(
                 onPressed: () {
@@ -416,7 +457,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                   backgroundColor: AppTheme.primaryBlue,
                   minimumSize: const Size(100, 40),
                 ),
-                child: const Text("Buka Pengaturan"),
+                child: const Text("Buka pengaturan"),
               ),
             ],
           );
@@ -427,7 +468,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
 
     // When we reach here, permissions are granted and we can fetch coordinates
     setState(() {
-      _pickupController.text = "Mengambil koordinat Anda...";
+      _pickupController.text = "Mencari lokasimu…";
     });
 
     try {
@@ -450,21 +491,22 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       // Saat layar dibuka, alamat di kolom jemput sudah cukup jadi kabar.
       if (!mounted || senyap) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Lokasi berhasil didapatkan: ${position.latitude.toStringAsFixed(5)}, ${position.longitude.toStringAsFixed(5)}"),
-          backgroundColor: Colors.teal,
-          duration: const Duration(seconds: 2),
+        const SnackBar(
+          content: Text("Titik jemput dipindah ke lokasimu sekarang."),
+          duration: Duration(seconds: 2),
         ),
       );
     } catch (e) {
+      debugPrint("GPS gagal: $e");
+      // Kosong, bukan "Sintang, Kalimantan Barat": tulisan kota terbaca seolah
+      // titik jemputnya sudah pasti, padahal _gpsTerbaca masih false.
       setState(() {
-        _pickupController.text = "Sintang, Kalimantan Barat";
+        _pickupController.text = "";
       });
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text("Gagal mengambil lokasi GPS: $e. Menggunakan lokasi default."),
-          backgroundColor: AppTheme.errorColor,
+        const SnackBar(
+          content: Text("Lokasimu belum terbaca. Geser peta ke titik jemput, atau coba lagi."),
         ),
       );
     }
@@ -480,12 +522,21 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     if (_destinationLatLng == null) {
       if (_destinationController.text.trim().isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Pilih tujuan dari daftar saran atau tekan titiknya di peta untuk melihat ongkos.")),
+          const SnackBar(content: Text("Pilih tujuan dari daftar, atau ketuk titiknya di peta untuk lihat ongkos.")),
         );
       }
       return;
     }
     _calculateFareFromDistance();
+  }
+
+  /// Tombol × di kolom tujuan: kosong sekaligus, tidak perlu menghapus huruf
+  /// satu per satu, lalu keyboard siap untuk tujuan baru.
+  void _hapusTujuan() {
+    _destinationController.clear();
+    _onDestinationChanged(''); // titik, rute, dan ongkos lama ikut dibuang
+    setState(() => _suggestions = []);
+    _fokusTujuan.requestFocus();
   }
 
   void _onDestinationChanged(String query) {
@@ -532,7 +583,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       setState(() {
         _suggestions = hasil;
         _loadingSuggestions = false;
-        _pesanCari = hasil.isEmpty ? 'Tidak ketemu. Coba nama lain, atau geser peta ke titik tujuan.' : '';
+        _pesanCari = hasil.isEmpty ? 'Tempatnya belum ketemu. Coba nama lain, atau geser peta ke tujuan.' : '';
       });
     } catch (e) {
       debugPrint("Suggestions fetch error: $e");
@@ -540,7 +591,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       setState(() {
         _suggestions = [];
         _loadingSuggestions = false;
-        _pesanCari = e.toString().replaceAll('Exception: ', '');
+        _pesanCari = pesanGalat(e);
       });
     }
   }
@@ -611,7 +662,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       if (detail == null) {
         setState(() => _loadingSuggestions = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Tempat ini tidak punya koordinat. Pilih yang lain atau tekan titiknya di peta.")),
+          const SnackBar(content: Text("Lokasi tempat ini belum tersedia. Pilih yang lain, atau ketuk titiknya di peta.")),
         );
         return;
       }
@@ -626,7 +677,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       if (!mounted) return;
       setState(() => _loadingSuggestions = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceAll('Exception: ', ''))),
+        SnackBar(content: Text(pesanGalat(e))),
       );
     }
   }
@@ -685,14 +736,20 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   Future<void> _fetchRoute() async {
     final tujuan = _destinationLatLng;
     if (tujuan == null) {
-      setState(() => _routePoints = []);
+      setState(() {
+        _routePoints = [];
+        _ruteJalan = null;
+      });
       return;
     }
     try {
       final hasil = await MapsService().rute(_currentLatLng, tujuan);
       if (!mounted) return;
       if (hasil != null && hasil.titik.isNotEmpty) {
-        setState(() => _routePoints = hasil.titik);
+        setState(() {
+          _routePoints = hasil.titik;
+          _ruteJalan = hasil;
+        });
         return;
       }
     } catch (e) {
@@ -701,8 +758,11 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     if (!mounted) return;
     // Garis lurus sebagai jalan terakhir supaya peta tidak kosong. Ini jelas
     // bukan rute sungguhan, tapi lebih jujur daripada tidak menggambar apa pun
-    // saat layanan rute sedang tidak bisa dihubungi.
-    setState(() => _routePoints = [_currentLatLng, tujuan]);
+    // saat layanan rute sedang tidak bisa dihubungi. Waktunya ikut kosong.
+    setState(() {
+      _routePoints = [_currentLatLng, tujuan];
+      _ruteJalan = null;
+    });
   }
 
   Future<void> _reverseGeocode(LatLng position, bool isPickup) async {
@@ -725,13 +785,13 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   Future<void> _bookRide() async {
     if (_pickupController.text.isEmpty || _destinationController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Lokasi penjemputan dan tujuan tidak boleh kosong.")),
+        const SnackBar(content: Text("Isi dulu titik jemput dan tujuannya, ya.")),
       );
       return;
     }
     if (!_gpsTerbaca) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Lokasi jemput belum pasti. Aktifkan GPS, atau tekan lama tempat Anda di peta.")),
+        const SnackBar(content: Text("Titik jemput belum pasti. Nyalakan GPS, atau tekan lama lokasimu di peta.")),
       );
       return;
     }
@@ -739,7 +799,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     final tujuan = _destinationLatLng;
     if (tujuan == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Pilih tujuan dari daftar saran atau tekan titiknya di peta.")),
+        const SnackBar(content: Text("Pilih tujuan dari daftar, atau ketuk titiknya di peta.")),
       );
       return;
     }
@@ -750,6 +810,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
 
     setState(() {
       _orderStatus = "searching";
+      // Kotak "siapkan uang" di layar pelacakan membaca ini.
+      _bayarTunai = _paymentMethod != "BohPay";
     });
     _radarController.repeat();
 
@@ -758,7 +820,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         pickup: _pickupController.text,
         dropoff: _destinationController.text,
         service: _selectedService,
-        paymentMethod: _paymentMethod == "PayAntar" ? "wallet" : "cash",
+        paymentMethod: _paymentMethod == "BohPay" ? "wallet" : "cash",
         pickupLat: _currentLatLng.latitude,
         pickupLng: _currentLatLng.longitude,
         dropoffLat: tujuan.latitude,
@@ -787,7 +849,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         // Start polling order status
         _startPollingStatus();
       } else {
-        throw Exception("Gagal membuat pesanan: Data order kosong dari server.");
+        throw Exception("Pesanan belum terkirim. Coba lagi sebentar, ya.");
       }
     } catch (e) {
       if (!mounted) return;
@@ -797,7 +859,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       _radarController.stop();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(e.toString().replaceAll('Exception: ', '')),
+          content: Text(pesanGalat(e)),
           backgroundColor: AppTheme.errorColor,
         ),
       );
@@ -808,6 +870,10 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     _statusTimer?.cancel();
     _statusTimer = Timer.periodic(const Duration(seconds: 2), (timer) async {
       if (_orderId == null) return;
+      // Di latar belakang tidak ada yang menatap peta; kabar penting tetap
+      // datang lewat notifikasi, dan tik pertama setelah dibuka lagi menyusul.
+      final s = WidgetsBinding.instance.lifecycleState;
+      if (s == AppLifecycleState.paused || s == AppLifecycleState.hidden) return;
 
       try {
         final response = await ApiService().getOrderStatus(_orderId!);
@@ -860,12 +926,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             timer.cancel();
             _radarController.stop();
             if (!mounted) return;
+            final kabar = kabarPesanan(_selectedService, status);
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(status == 'expired'
-                    ? 'Belum ada driver yang menerima. Silakan pesan lagi.'
-                    : 'Pesanan ini dibatalkan.'),
-              ),
+              SnackBar(content: Text('${kabar.judul}. ${kabar.keterangan}')),
             );
             Navigator.pop(context, true);
           }
@@ -923,51 +986,25 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       return _buildSuccessScreen(theme, isDark);
     }
 
-    return Scaffold(
+    // Tombol kembali di app bar dan gestur kembali Android lewat jalur yang
+    // sama. Dulu gestur kembali menutup layar di langkah mana pun, dan tombol
+    // kembali selagi mencari driver memunculkan formulir lagi padahal pesanannya
+    // tetap hidup di server — penumpang bisa memesan dua kali. Sekarang layar
+    // pelacakan cukup ditutup; pesanannya tetap tampil di beranda.
+    return PopScope(
+      canPop: !_geserPeta && (_orderStatus != "input" || _inputStep == 0),
+      onPopInvokedWithResult: (sudahKeluar, _) {
+        if (!sudahKeluar) _mundurSelangkah();
+      },
+      child: Scaffold(
       backgroundColor: isDark ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
       appBar: AppBar(
-        title: Text(
-          _orderStatus == "input"
-              ? (_inputStep == 0
-                  ? "Mau antar ke mana?"
-                  : _inputStep == 1
-                      ? "Detail Barang"
-                      : "Estimasi Harga")
-              : _orderStatus == "searching"
-                  ? "Mencari Driver..."
-                  : _kirimBarang
-                      ? "Pesanan Aktif"
-                      : "Perjalanan Aktif",
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
+        title: Text(_judulLayar, style: const TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            if (_geserPeta) {
-              // Keluar dari mode geser dulu, jangan langsung tutup layarnya.
-              _geserDebounce?.cancel();
-              setState(() => _geserPeta = false);
-            } else if (_orderStatus == "input") {
-              if (_inputStep > 0) {
-                setState(() {
-                  _inputStep--;
-                });
-              } else {
-                Navigator.pop(context, true);
-              }
-            } else if (_orderStatus == "searching") {
-              setState(() {
-                _orderStatus = "input";
-                _inputStep = 0;
-              });
-              _statusTimer?.cancel();
-              _radarController.stop();
-            } else {
-              Navigator.pop(context, true);
-            }
-          },
+          onPressed: () => Navigator.maybePop(context),
         ),
       ),
       body: Stack(
@@ -1056,17 +1093,48 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                   if (_inputStep == 2) _buildPriceEstimatePanel(theme, isDark),
                 ],
                 const Spacer(),
-                if (_orderStatus == "searching") _buildRadarSearchPanel(theme, isDark),
+                if (_orderStatus == "searching") _panelBawah(_buildRadarSearchPanel(theme, isDark)),
                 // Ikut tampil saat picked_up: justru saat barang sudah di tangan
                 // driver, penumpang paling butuh chat, telepon, dan status.
-                if (_orderStatus == "accepted" || _orderStatus == "picked_up") _buildDriverComingPanel(theme, isDark),
+                if (_orderStatus == "accepted" || _orderStatus == "picked_up") _panelBawah(_buildDriverComingPanel(theme, isDark)),
               ],
             ),
           ),
         ],
       ),
+      ),
     );
   }
+
+  String get _judulLayar {
+    if (_orderStatus == "input") {
+      if (_inputStep == 1) return "Detail paket";
+      if (_inputStep == 2) return "Cek ongkos";
+      return _kirimBarang ? "Kirim paket ke mana?" : "Mau ke mana?";
+    }
+    if (_orderStatus == "searching") return "Mencari driver";
+    return _orang ? "Perjalananmu" : "Pesananmu";
+  }
+
+  void _mundurSelangkah() {
+    if (_geserPeta) {
+      // Keluar dari mode geser dulu, jangan langsung tutup layarnya.
+      _geserDebounce?.cancel();
+      setState(() => _geserPeta = false);
+    } else if (_orderStatus == "input" && _inputStep > 0) {
+      // Layanan penumpang melompati langkah 1 (detail paket), jadi mundurnya
+      // juga melompat.
+      setState(() => _inputStep = _inputStep == 2 && !_kirimBarang ? 0 : _inputStep - 1);
+    }
+  }
+
+  /// Panel pelacakan bisa lebih tinggi dari layar HP kecil (makanan banyak,
+  /// timeline, tombol). Dibatasi lalu digulung supaya petanya tetap kelihatan
+  /// dan tidak ada galat luber.
+  Widget _panelBawah(Widget panel) => ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.66),
+        child: SingleChildScrollView(child: panel),
+      );
 
   // Ukuran pin tengah. Dengan Center + padding bawah setinggi pinnya, ujung
   // bawah pin jatuh persis di titik tengah peta — tidak ada angka ajaib.
@@ -1131,7 +1199,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             child: ElevatedButton.icon(
               onPressed: _selesaiGeser,
               icon: const Icon(Icons.check, size: 18),
-              label: Text(_geserJemput ? "Pilih Titik Jemput" : "Pilih Lokasi"),
+              label: Text(_geserJemput ? (_kirimBarang ? "Ambil paket di sini" : "Jemput di sini") : (_kirimBarang ? "Kirim ke sini" : "Antar ke sini")),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppTheme.primaryBlue,
                 foregroundColor: Colors.white,
@@ -1173,8 +1241,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                 Column(
                   children: [
                     const Icon(Icons.circle, color: Colors.green, size: 14),
-                    Container(width: 2, height: 36, color: Colors.grey.shade300),
-                    const Icon(Icons.location_on, color: Colors.red, size: 16),
+                    Container(width: 2, height: 44, color: Colors.grey.shade300),
+                    const Icon(Icons.location_on, color: Colors.red, size: 18),
                   ],
                 ),
                 const SizedBox(width: 12),
@@ -1185,60 +1253,67 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                       // Tidak bisa diketik: tulisan jemput yang diubah tangan
                       // tidak memindahkan titiknya, jadi driver datang ke titik
                       // lama dengan alamat baru. Mengetuknya membuka mode geser.
+                      // Label berupa pertanyaan: kosong ia jadi petunjuk, terisi
+                      // ia naik jadi judul jawabannya.
                       TextFormField(
                         controller: _pickupController,
                         readOnly: true,
                         onTap: () => _mulaiGeser(true),
-                        decoration: InputDecoration(
-                          hintText: "Pilih lokasi penjemputan",
-                          suffixIcon: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              IconButton(
-                                tooltip: "Geser peta",
-                                icon: const Icon(Icons.pin_drop_outlined, color: Colors.green, size: 18),
-                                onPressed: () => _mulaiGeser(true),
-                              ),
-                              IconButton(
-                                tooltip: "Pakai GPS",
-                                icon: const Icon(Icons.my_location, color: AppTheme.primaryBlue, size: 18),
-                                onPressed: _getCurrentLocation,
-                              ),
-                            ],
+                        decoration: _hiasKolomAlamat(
+                          isDark,
+                          label: _kirimBarang ? "Paket diambil di mana?" : "Dijemput di mana?",
+                          // Satu ikon saja: mengetuk kolomnya sudah membuka
+                          // mode geser peta, dan ikon pin kedua dulu memotong
+                          // alamatnya jadi tinggal belasan huruf.
+                          aksi: IconButton(
+                            tooltip: "Pakai lokasiku sekarang",
+                            icon: const Icon(Icons.my_location, color: AppTheme.primaryBlue, size: 18),
+                            onPressed: _getCurrentLocation,
                           ),
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                          filled: true,
-                          fillColor: isDark ? AppTheme.bgObsidianDark : Colors.grey.shade50,
                         ),
                       ),
-                      const Divider(height: 16),
+                      const SizedBox(height: 10),
                       // Dropoff text input
                       TextFormField(
                         controller: _destinationController,
-                        decoration: InputDecoration(
-                          hintText: "Cari, atau geser peta",
-                          suffixIcon: IconButton(
-                            tooltip: "Geser peta",
-                            icon: const Icon(Icons.pin_drop_outlined, color: Colors.red, size: 18),
-                            onPressed: () => _mulaiGeser(false),
+                        focusNode: _fokusTujuan,
+                        autofocus: widget.fokusTujuan,
+                        textInputAction: TextInputAction.search,
+                        decoration: _hiasKolomAlamat(
+                          isDark,
+                          label: _kirimBarang ? "Dikirim ke mana?" : "Diantar ke mana?",
+                          petunjuk: "Ketik nama tempat, mis. RSUD atau pasar",
+                          // Dibangun ulang sendiri tiap ketikan supaya tombol
+                          // hapus muncul/hilang tanpa menggambar ulang layar.
+                          aksi: ValueListenableBuilder<TextEditingValue>(
+                            valueListenable: _destinationController,
+                            builder: (_, nilai, _) => Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (nilai.text.isNotEmpty)
+                                  IconButton(
+                                    tooltip: "Hapus tujuan",
+                                    visualDensity: VisualDensity.compact,
+                                    icon: Icon(Icons.close, size: 18, color: AppTheme.teksRedup(context)),
+                                    onPressed: _hapusTujuan,
+                                  ),
+                                IconButton(
+                                  tooltip: "Pilih di peta",
+                                  icon: const Icon(Icons.pin_drop_outlined, color: Colors.red, size: 18),
+                                  onPressed: () => _mulaiGeser(false),
+                                ),
+                              ],
+                            ),
                           ),
-                          border: InputBorder.none,
-                          enabledBorder: InputBorder.none,
-                          focusedBorder: InputBorder.none,
-                          contentPadding: EdgeInsets.zero,
-                          filled: true,
-                          fillColor: isDark ? AppTheme.bgObsidianDark : Colors.grey.shade50,
                         ),
                         onChanged: _onDestinationChanged,
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 4),
                 IconButton(
+                  tooltip: "Tukar titik jemput dan tujuan",
                   onPressed: () {
                     // Swap pickup & destination
                     final tempText = _pickupController.text;
@@ -1275,7 +1350,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.location_on_outlined, color: AppTheme.primaryBlue, size: 18),
                       title: Text(place.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                      subtitle: Text(place.address, style: const TextStyle(fontSize: 11, color: Colors.grey), maxLines: 1, overflow: TextOverflow.ellipsis),
+                      subtitle: Text(place.address, style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)), maxLines: 1, overflow: TextOverflow.ellipsis),
                       // Koordinat baru diambil di sini, sekali, untuk tempat yang
                       // benar-benar dipilih.
                       onTap: () => _pilihTempat(place),
@@ -1289,11 +1364,31 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                 child: Row(
                   children: [
                     Expanded(
-                      child: Text(_pesanCari, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                      child: Text(_pesanCari, style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
                     ),
                     TextButton(
                       onPressed: () => _mulaiGeser(false),
-                      child: const Text('Geser peta'),
+                      child: const Text('Pilih di peta'),
+                    ),
+                  ],
+                ),
+              ),
+
+            // Ketuk dan tekan-lama peta tidak kelihatan dari mana pun; tanpa
+            // kalimat ini penumpang tidak tahu peta bisa dipakai memilih.
+            if (_destinationLatLng == null && _suggestions.isEmpty && _pesanCari.isEmpty && !_loadingSuggestions)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.touch_app_outlined, size: 16, color: AppTheme.teksRedup(context)),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        "Bisa juga ketuk peta untuk pilih tujuan, atau tekan lama untuk pindah titik jemput.",
+                        style: TextStyle(fontSize: 11.5, color: AppTheme.teksRedup(context)),
+                      ),
                     ),
                   ],
                 ),
@@ -1303,8 +1398,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             // karangan, dan mengetuknya diam-diam memindahkan titik jemput ke
             // koordinat tetap. Pasang lagi kalau user_addresses sudah
             // menyimpan koordinat, bukan cuma tulisan.
-            const SizedBox(height: 20),
-            
+            const SizedBox(height: 18),
+
             ElevatedButton(
               onPressed: _destinationLatLng != null
                   ? () {
@@ -1322,12 +1417,34 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                 minimumSize: const Size(double.infinity, 50),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               ),
-              child: const Text("Lanjutkan"),
+              // Menyebut langkah berikutnya, bukan sekadar "Lanjutkan".
+              child: Text(_kirimBarang ? "Lanjut isi detail paket" : "Lihat ongkos"),
             ),
           ],
         ),
         ),
       ),
+    );
+  }
+
+  /// Kolom alamat jemput dan tujuan: kotak membulat tanpa garis, label berupa
+  /// pertanyaan.
+  InputDecoration _hiasKolomAlamat(bool isDark, {required String label, String? petunjuk, Widget? aksi}) {
+    final tanpaGaris = OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none);
+    return InputDecoration(
+      labelText: label,
+      hintText: petunjuk,
+      labelStyle: TextStyle(fontSize: 13, color: AppTheme.teksRedup(context)),
+      floatingLabelStyle: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppTheme.teksRedup(context)),
+      hintStyle: TextStyle(fontSize: 13, color: AppTheme.teksRedup(context)),
+      suffixIcon: aksi,
+      isDense: true,
+      contentPadding: const EdgeInsets.fromLTRB(12, 10, 0, 10),
+      border: tanpaGaris,
+      enabledBorder: tanpaGaris,
+      focusedBorder: tanpaGaris,
+      filled: true,
+      fillColor: isDark ? AppTheme.bgObsidianDark : const Color(0xFFF1F5F9),
     );
   }
 
@@ -1351,7 +1468,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text("Detail Barang", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const Text("Paket & penerima", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               TextButton(
                 onPressed: () => setState(() => _inputStep = 0),
                 child: const Text("Kembali", style: TextStyle(color: AppTheme.primaryBlue)),
@@ -1359,8 +1476,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             ],
           ),
           const SizedBox(height: 16),
-          
-          const Text("Jenis barang", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+
+          const Text("Isi paket", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
           DropdownButtonFormField<String>(
             value: _packageType,
             items: ["Dokumen", "Makanan", "Pakaian", "Elektronik", "Lainnya"]
@@ -1398,7 +1515,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text("Berat (estimasi)", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+                    const Text("Perkiraan berat", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
                     DropdownButtonFormField<String>(
                       value: _packageWeight,
                       items: ["1 kg", "2 kg", "3 kg", "5 kg", "10 kg"]
@@ -1418,7 +1535,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           TextFormField(
             controller: _packageNotesController,
             decoration: const InputDecoration(
-              hintText: "Contoh: Hubungi saya sebelum pickup",
+              hintText: "Mis. telepon dulu, ya",
               contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             ),
           ),
@@ -1426,48 +1543,55 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
 
           // Driver yang sampai di tujuan menelepon nomor ini, bukan nomor
           // pemesan. Kosong berarti pemesan sendiri yang menerima.
-          const Text("Penerima di tujuan", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+          const Text("Siapa yang terima?", style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12)),
+          // Keterangan di luar kolom: di dalam petunjuk kolom kalimatnya
+          // terpotong di layar HP biasa.
+          Padding(
+            padding: const EdgeInsets.only(top: 2, bottom: 6),
+            child: Text(
+              "Kosongkan kalau kamu sendiri. Nomornya dipakai driver untuk menghubungi penerima.",
+              style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)),
+            ),
+          ),
           TextFormField(
             controller: _receiverNameController,
             textCapitalization: TextCapitalization.words,
             decoration: const InputDecoration(
-              hintText: "Nama penerima (kosongkan kalau Anda sendiri)",
+              hintText: "Nama penerima",
               contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             ),
           ),
+          const SizedBox(height: 8),
           TextFormField(
             controller: _receiverPhoneController,
             keyboardType: TextInputType.phone,
             decoration: const InputDecoration(
-              hintText: "Nomor HP penerima",
+              hintText: "No. HP penerima",
               contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             ),
           ),
           const SizedBox(height: 16),
 
-          const Text("Layanan tambahan", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              // Harga dilepas dari label: server tidak menagih tambahan ini.
-              const Text("Asuransi barang", style: TextStyle(fontSize: 12)),
-              Switch(
-                value: _insuranceActive,
-                onChanged: (val) => setState(() => _insuranceActive = val),
-                activeColor: AppTheme.primaryBlue,
-              ),
-            ],
+          const Text("Perlu perhatian khusus?", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          // Dulu berlabel "Asuransi barang", padahal server tidak mengasuransikan
+          // apa pun — keduanya cuma pesan untuk driver. Labelnya sekarang
+          // menyebut yang benar-benar terjadi. Nama kolomnya (insurance,
+          // special_handling) sengaja tetap supaya API tidak berubah.
+          SwitchListTile(
+            value: _insuranceActive,
+            onChanged: (val) => setState(() => _insuranceActive = val),
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text("Barang berharga", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            subtitle: Text("Driver diminta ekstra menjaga paketmu", style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context))),
           ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text("Penanganan khusus", style: TextStyle(fontSize: 12)),
-              Switch(
-                value: _specialHandlingActive,
-                onChanged: (val) => setState(() => _specialHandlingActive = val),
-                activeColor: AppTheme.primaryBlue,
-              ),
-            ],
+          SwitchListTile(
+            value: _specialHandlingActive,
+            onChanged: (val) => setState(() => _specialHandlingActive = val),
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text("Mudah pecah", style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            subtitle: Text("Jangan dibanting atau ditumpuk", style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context))),
           ),
           const SizedBox(height: 16),
 
@@ -1482,7 +1606,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               minimumSize: const Size(double.infinity, 50),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             ),
-            child: const Text("Lanjutkan"),
+            child: const Text("Lihat ongkos"),
           ),
         ],
       ),
@@ -1502,14 +1626,20 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     final tarif = _estimasi;
     final distanceKm = tarif?.km ?? 0;
 
+    final pakaiSaldo = _paymentMethod == "BohPay";
+    final saldoKurang = pakaiSaldo && tarif != null && _saldo != null && _saldo! < tarif.total;
+
     return Container(
       padding: const EdgeInsets.all(20),
       margin: const EdgeInsets.all(16),
+      // Digulung: kartu cara bayar membuat panel ini lebih tinggi dari HP kecil.
+      constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.75),
       decoration: BoxDecoration(
         color: isDark ? AppTheme.cardObsidianDark : Colors.white,
         borderRadius: BorderRadius.circular(24),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 16)],
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.08), blurRadius: 16)],
       ),
+      child: SingleChildScrollView(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1517,7 +1647,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text("Estimasi Harga", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const Text("Rincian ongkos", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
               TextButton(
                 onPressed: () {
                   setState(() {
@@ -1544,15 +1674,24 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             ),
             child: Column(
               children: [
-                _buildSummaryLine(Icons.circle, Colors.green, "Jemput di", _pickupController.text),
+                _buildSummaryLine(Icons.circle, Colors.green, _kirimBarang ? "Diambil" : "Dijemput", _pickupController.text),
                 const SizedBox(height: 8),
-                _buildSummaryLine(Icons.location_on, Colors.red, "Tujuan", _destinationController.text),
+                _buildSummaryLine(Icons.location_on, Colors.red, _kirimBarang ? "Dikirim ke" : "Diantar ke", _destinationController.text),
                 const Divider(height: 16),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    Text("Jarak: ${distanceKm.toStringAsFixed(1)} km", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-                    Text("Waktu: ${(distanceKm * 3).toStringAsFixed(0)} menit", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    Icon(Icons.route_outlined, size: 15, color: AppTheme.teksRedup(context)),
+                    const SizedBox(width: 6),
+                    Text("${distanceKm.toStringAsFixed(1).replaceAll('.', ',')} km", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    // Dari rute jalan sungguhan, bukan jarak × 3 menit seperti
+                    // dulu. Tanpa rute (layanan rute gagal) waktunya tidak
+                    // ditulis daripada dikarang.
+                    if ((_ruteJalan?.detik ?? 0) > 0) ...[
+                      const SizedBox(width: 16),
+                      Icon(Icons.schedule, size: 15, color: AppTheme.teksRedup(context)),
+                      const SizedBox(width: 6),
+                      Text("± ${(_ruteJalan!.detik / 60).round().clamp(1, 999)} menit perjalanan", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                    ],
                   ],
                 )
               ],
@@ -1560,20 +1699,26 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           ),
           const SizedBox(height: 16),
 
-          const Text("Rincian Biaya", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          const Text("Rincian biaya", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           const SizedBox(height: 8),
           if (tarif == null)
-            Text(
-              _estimasiGagal
-                  ? "Ongkos belum bisa dihitung. Periksa koneksi lalu pilih tujuannya lagi."
-                  : "Menghitung ongkos...",
-              style: TextStyle(fontSize: 13, color: _estimasiGagal ? AppTheme.errorColor : Colors.grey),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _estimasiGagal ? "Ongkos belum bisa dihitung. Cek koneksi internetmu." : "Menghitung ongkos…",
+                    style: TextStyle(fontSize: 13, color: _estimasiGagal ? AppTheme.errorColor : AppTheme.teksRedup(context)),
+                  ),
+                ),
+                if (_estimasiGagal)
+                  TextButton(onPressed: _calculateFareFromDistance, child: const Text("Coba lagi")),
+              ],
             )
           else ...[
             // Ongkos ditampilkan sebagai satu angka, bukan dipecah jadi tarif
             // dasar ditambah jarak: sejak ada jarak dasar dan pembulatan ke
             // atas, dua baris itu tidak lagi menjumlah tepat ke yang ditagih.
-            _buildFareRow("Ongkos perjalanan (${distanceKm.toStringAsFixed(1)} km)", tarif.ongkos),
+            _buildFareRow("Ongkos perjalanan (${distanceKm.toStringAsFixed(1).replaceAll('.', ',')} km)", tarif.ongkos),
             // Ditampilkan terpisah, bukan dilebur ke ongkos: penumpang berhak
             // tahu mana yang untuk driver dan mana yang untuk aplikasi.
             if (tarif.biayaJasa > 0) _buildFareRow("Biaya jasa aplikasi", tarif.biayaJasa),
@@ -1586,54 +1731,88 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text("Total", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+              const Text("Total bayar", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
               Text(
-                tarif == null
-                    ? "-"
-                    : "Rp ${tarif.total.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}",
-                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppTheme.primaryBlue),
+                tarif == null ? "-" : rupiah(tarif.total),
+                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20, color: AppTheme.primaryBlue),
               ),
             ],
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 18),
 
-          // Payment Selector Row
+          // Dua kartu yang kelihatan bisa dipilih. Dulu satu tulisan kecil
+          // berpanah bawah yang diam-diam berganti Tunai↔BohPay saat diketuk —
+          // tidak ada yang tahu itu bisa diganti.
+          const Text("Bayar pakai apa?", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          const SizedBox(height: 8),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              InkWell(
-                onTap: () {
-                  setState(() {
-                    _paymentMethod = _paymentMethod == "PayAntar" ? "Tunai" : "PayAntar";
-                  });
-                },
-                child: Row(
-                  children: [
-                    Icon(
-                      _paymentMethod == "PayAntar" ? Icons.wallet : Icons.payments,
-                      color: AppTheme.primaryBlue,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(_paymentMethod, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                    const Icon(Icons.keyboard_arrow_down, size: 16, color: Colors.grey),
-                  ],
+              Expanded(child: _pilihanBayar(isDark, "Tunai", Icons.payments_outlined, "Bayar ke driver")),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _pilihanBayar(
+                  isDark,
+                  "BohPay",
+                  Icons.account_balance_wallet_outlined,
+                  _saldo == null ? "Potong saldo" : "Saldo ${rupiah(_saldo!)}",
                 ),
               ),
             ],
           ),
+          if (saldoKurang)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                "Saldo BohPay belum cukup. Pilih Tunai, atau isi saldo dulu dari beranda.",
+                style: TextStyle(fontSize: 12, color: AppTheme.errorColor),
+              ),
+            ),
           const SizedBox(height: 16),
 
           ElevatedButton(
-            onPressed: _bookRide,
+            onPressed: saldoKurang ? null : _bookRide,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.primaryBlue,
-              minimumSize: const Size(double.infinity, 50),
+              minimumSize: const Size(double.infinity, 52),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             ),
-            child: const Text("Pesan Sekarang"),
+            // Total ikut di tombol: yang ditekan sama dengan yang dibayar.
+            child: Text(tarif == null ? "Pesan $_selectedService" : "Pesan $_selectedService · ${rupiah(tarif.total)}"),
           ),
         ],
+      ),
+      ),
+    );
+  }
+
+  /// Satu kartu cara bayar. Yang terpilih bergaris biru tebal.
+  Widget _pilihanBayar(bool isDark, String metode, IconData ikon, String keterangan) {
+    final dipilih = _paymentMethod == metode;
+    return InkWell(
+      onTap: () => setState(() => _paymentMethod = metode),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: dipilih ? AppTheme.primaryBlue.withValues(alpha: isDark ? 0.18 : 0.06) : null,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: dipilih ? AppTheme.primaryBlue : Colors.grey.withValues(alpha: 0.3), width: dipilih ? 2 : 1),
+        ),
+        child: Row(
+          children: [
+            Icon(ikon, size: 20, color: dipilih ? AppTheme.primaryBlue : AppTheme.teksRedup(context)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(metode, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  Text(keterangan, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context))),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1644,16 +1823,18 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         Icon(icon, color: color, size: 14),
         const SizedBox(width: 8),
         Expanded(
-          child: RichText(
+          // Text.rich, bukan RichText: RichText tidak mewarisi gaya bawaan
+          // tema, jadi hurufnya jatuh ke font sistem, bukan Inter.
+          child: Text.rich(
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            text: TextSpan(
-              style: TextStyle(fontSize: 12, color: Theme.of(context).brightness == Brightness.dark ? Colors.white : Colors.black),
+            TextSpan(
               children: [
-                TextSpan(text: "$label: ", style: const TextStyle(color: Colors.grey)),
+                TextSpan(text: "$label: ", style: TextStyle(color: AppTheme.teksRedup(context))),
                 TextSpan(text: text, style: const TextStyle(fontWeight: FontWeight.bold)),
               ],
             ),
+            style: const TextStyle(fontSize: 12),
           ),
         ),
       ],
@@ -1666,181 +1847,261 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-          Text(
-            "Rp ${cost.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}",
-            style: const TextStyle(fontSize: 12),
-          ),
+          Text(label, style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12)),
+          Text(rupiah(cost), style: const TextStyle(fontSize: 12)),
         ],
       ),
     );
   }
 
-  Widget _buildRadarSearchPanel(ThemeData theme, bool isDark) {
-    return Container(
-      padding: const EdgeInsets.all(24),
-      margin: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
+  BoxDecoration _hiasPanel(bool isDark) => BoxDecoration(
         color: isDark ? AppTheme.cardObsidianDark : Colors.white,
         borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 16,
-          )
-        ],
-      ),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.10), blurRadius: 20, offset: const Offset(0, 6))],
+      );
+
+  Widget _buildRadarSearchPanel(ThemeData theme, bool isDark) {
+    final kabar = kabarPesanan(_selectedService, 'searching');
+    final warna = AppTheme.warnaLayanan(_selectedService);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+      margin: const EdgeInsets.all(16),
+      decoration: _hiasPanel(isDark),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Stack(
-            alignment: Alignment.center,
-            children: [
-              AnimatedBuilder(
-                animation: _radarController,
-                builder: (context, child) {
-                  return Container(
-                    width: 90 * (1 + _radarController.value),
-                    height: 90 * (1 + _radarController.value),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: AppTheme.primaryBlue.withOpacity(0.15 * (1 - _radarController.value)),
-                    ),
-                  );
-                },
-              ),
-              Container(
-                width: 70,
-                height: 70,
-                decoration: const BoxDecoration(
-                  color: AppTheme.primaryBlue,
-                  shape: BoxShape.circle,
+          // Kotak setinggi tetap: lingkaran radar membesar dua kali lipat, dan
+          // tanpa kotak ini seluruh panel ikut naik-turun setiap denyut.
+          SizedBox(
+            height: 116,
+            child: Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
+              children: [
+                AnimatedBuilder(
+                  animation: _radarController,
+                  builder: (context, child) {
+                    return Container(
+                      width: 64 * (1 + _radarController.value),
+                      height: 64 * (1 + _radarController.value),
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: warna.withValues(alpha: 0.22 * (1 - _radarController.value)),
+                      ),
+                    );
+                  },
                 ),
-                alignment: Alignment.center,
-                child: const Text(
-                  'b',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 40,
-                    fontWeight: FontWeight.w900,
-                    fontFamily: 'Inter',
+                Container(
+                  width: 64,
+                  height: 64,
+                  decoration: BoxDecoration(
+                    color: warna,
+                    shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(color: warna.withValues(alpha: 0.35), blurRadius: 14, offset: const Offset(0, 5))],
                   ),
+                  child: Icon(ikonLayanan(_selectedService), color: Colors.white, size: 30),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-          const SizedBox(height: 24),
-          const Text(
-            "Mencari driver...",
-            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+          Text(
+            kabar.judul,
+            style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 17),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           // Tanpa "Estimasi waktu: 2 - 5 menit" — tidak ada yang menghitungnya.
           Text(
-            "Kami sedang mencari driver terdekat untuk kamu",
-            style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12),
+            kabar.keterangan,
+            style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12.5, height: 1.4),
             textAlign: TextAlign.center,
           ),
-          if (_makanan) ...[
-            const SizedBox(height: 16),
-            _ringkasanMakanan(),
-          ],
-          const Divider(height: 32),
+          const SizedBox(height: 16),
+          _ringkasanBayar(isDark),
+          const SizedBox(height: 8),
           // Dulu tombol ini hanya mengembalikan layar ke formulir dan
           // menghentikan polling — pesanannya tetap hidup di server, tetap
           // ditawarkan ke driver, dan penumpang tidak tahu apa-apa.
-          OutlinedButton(
+          TextButton(
             onPressed: _batalkanPesanan,
-            style: OutlinedButton.styleFrom(
-              side: const BorderSide(color: AppTheme.primaryBlue),
-              foregroundColor: AppTheme.primaryBlue,
+            style: TextButton.styleFrom(
+              foregroundColor: AppTheme.errorColor,
               minimumSize: const Size(double.infinity, 44),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             ),
-            child: const Text("Batalkan Pesanan"),
+            child: const Text("Batalkan pesanan", style: TextStyle(fontWeight: FontWeight.w600)),
           )
         ],
       ),
     );
   }
 
+  /// Driver sudah dekat titik berikutnya: titik jemput (atau warung) sebelum
+  /// dijemput, tujuan sesudahnya. Hanya untuk kata-kata di layar — status
+  /// pesanannya tetap milik server.
+  bool get _driverDekat {
+    final d = _driverLatLng;
+    final titik = _orderStatus == 'picked_up' ? _destinationLatLng : _currentLatLng;
+    if (d == null || titik == null) return false;
+    return Geolocator.distanceBetween(d.latitude, d.longitude, titik.latitude, titik.longitude) <= jarakDekatMeter;
+  }
+
+  /// Plat ditulis besar seperti pelat nomor putih: itu yang dicocokkan
+  /// penumpang dengan motor yang datang.
+  Widget _platNomor() => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: AppTheme.bgObsidianDark, width: 1.5),
+        ),
+        child: Text(
+          _driverPlat.toUpperCase(),
+          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 0.8, color: AppTheme.bgObsidianDark),
+        ),
+      );
+
   Widget _buildDriverComingPanel(ThemeData theme, bool isDark) {
+    final dekat = _driverDekat;
+    final kabar = kabarPesanan(_selectedService, _orderStatus, dekat: dekat, warung: _merchantName);
+    final warna = AppTheme.warnaStatus(_orderStatus);
+    // Dari rute jalan sungguhan, bukan angka tetap; kosong selama posisi
+    // driver atau rutenya belum terbaca.
+    final eta = teksEstimasi(_ruteDriver, _driverLatLng);
+    final ikonKabar = dekat
+        ? Icons.near_me
+        : _makanan && _orderStatus == 'accepted'
+            ? Icons.storefront
+            : _ikonKendaraan;
+
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       margin: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: isDark ? AppTheme.cardObsidianDark : Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 16,
-          )
-        ],
-      ),
+      decoration: _hiasPanel(isDark),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Driver details header
+          // Kabar utama, paling besar: menjawab "pesananku lagi di mana?".
+          // Warnanya ikut status — biru menuju jemput, nila sedang diantar.
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: warna.withValues(alpha: isDark ? 0.22 : 0.08),
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(color: warna, shape: BoxShape.circle),
+                  child: Icon(ikonKabar, color: Colors.white, size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        kabar.judul,
+                        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, height: 1.25, color: AppTheme.teksBerwarna(context, warna)),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(kabar.keterangan, style: TextStyle(fontSize: 12, height: 1.35, color: AppTheme.teksRedup(context))),
+                      if (eta != null) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: isDark ? AppTheme.bgObsidianDark : Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.schedule, size: 14, color: AppTheme.teksBerwarna(context, warna)),
+                              const SizedBox(width: 4),
+                              Text(
+                                _orderStatus == "picked_up" ? "Tiba di tujuan $eta" : "Tiba $eta",
+                                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: AppTheme.teksBerwarna(context, warna)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Driver: nama, bintang, kendaraan, dan plat yang besar.
           Row(
             children: [
               CircleAvatar(
-                radius: 24,
-                backgroundColor: AppTheme.primaryBlue.withOpacity(0.12),
+                radius: 22,
+                backgroundColor: AppTheme.primaryBlue.withValues(alpha: 0.12),
                 child: Text(
                   _driverName.isNotEmpty ? _driverName[0].toUpperCase() : 'D',
                   style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryBlue),
                 ),
               ),
-              const SizedBox(width: 16),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // Nama dapat satu baris penuh; bintang turun ke baris
+                    // kendaraan supaya nama tidak terpotong oleh plat.
                     Text(
-                      _driverName,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                      _driverName.isEmpty ? 'Driver' : _driverName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                     ),
                     // Dulu "Honda Beat • KB 1234 XX" dan "4.9 (120)" tertulis
                     // mati untuk semua driver — penumpang bisa menunggu motor
                     // yang salah.
-                    if (_driverKendaraan.isNotEmpty)
-                      Text(
-                        _driverKendaraan,
-                        style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12, fontWeight: FontWeight.w600),
+                    if (_driverUlasan > 0 || _driverKendaraan.isNotEmpty)
+                      Row(
+                        children: [
+                          if (_driverUlasan > 0) ...[
+                            Icon(Icons.star_rounded, color: Colors.amber.shade700, size: 15),
+                            Text(
+                              "${_driverRating.toStringAsFixed(1).replaceAll('.', ',')}${_driverKendaraan.isNotEmpty ? ' · ' : ''}",
+                              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: AppTheme.teksRedup(context)),
+                            ),
+                          ],
+                          Flexible(
+                            child: Text(
+                              _driverKendaraan,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12, fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
                       ),
                   ],
                 ),
               ),
-              if (_driverUlasan > 0)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: Colors.amber.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.star, color: Colors.amber.shade700, size: 14),
-                      const SizedBox(width: 4),
-                      Text(
-                        "${_driverRating.toStringAsFixed(1).replaceAll('.', ',')} ($_driverUlasan)",
-                        style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.amber.shade800),
-                      ),
-                    ],
-                  ),
-                )
+              if (_driverPlat.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                _platNomor(),
+              ],
             ],
           ),
-          const SizedBox(height: 16),
-          
-          // Action Buttons: Chat & Telepon
+          const SizedBox(height: 14),
+
+          // Action Buttons: Chat & Telepon. Chat yang utama: bisa dibaca
+          // sambil jalan dan tidak perlu pulsa.
           Row(
             children: [
               Expanded(
-                child: OutlinedButton.icon(
+                child: ElevatedButton.icon(
                   onPressed: () {
                     if (_orderId != null) {
                       Navigator.push(context, MaterialPageRoute(builder: (_) => ChatScreen(
@@ -1854,14 +2115,15 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                     }
                   },
                   icon: const Icon(Icons.chat_bubble_outline, size: 18),
-                  label: const Text("Chat"),
-                  style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: AppTheme.primaryBlue),
-                    foregroundColor: AppTheme.primaryBlue,
+                  label: const Text("Chat driver"),
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(0, 46),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    textStyle: const TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () async {
@@ -1870,80 +2132,34 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                       await launchUrl(uri);
                     } else if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                            content: Text('Tidak dapat melakukan panggilan')),
+                        const SnackBar(content: Text('Nomor driver belum bisa ditelepon. Coba lewat chat, ya.')),
                       );
                     }
                   },
                   icon: const Icon(Icons.phone_outlined, size: 18),
                   label: const Text("Telepon"),
                   style: OutlinedButton.styleFrom(
-                    side: const BorderSide(color: Colors.green),
-                    foregroundColor: Colors.green,
+                    minimumSize: const Size(0, 46),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    side: BorderSide(color: Colors.green.shade600),
+                    foregroundColor: Colors.green.shade700,
+                    textStyle: const TextStyle(fontFamily: 'Inter', fontSize: 14, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
             ],
           ),
-          const Divider(height: 24),
-          
-          // ETA Status
-          Row(
-            children: [
-              Icon(_ikonKendaraan, color: AppTheme.primaryBlue, size: 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _orderStatus == "picked_up"
-                          ? (_makanan
-                              ? "Makanan sedang diantar ke kamu"
-                              : _kirimBarang
-                                  ? "Barang sedang diantar ke tujuan"
-                                  : "Perjalanan sedang berlangsung")
-                          : (_makanan
-                              ? "Driver menuju ${_merchantName.isEmpty ? 'warung' : _merchantName}"
-                              : _kirimBarang
-                                  ? "Driver menuju titik pengambilan barang"
-                                  : "Driver menuju lokasi kamu"),
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                    ),
-                    // Dari rute jalan sungguhan, bukan angka tetap; kosong
-                    // selama posisi driver atau rutenya belum terbaca.
-                    if (teksEstimasi(_ruteDriver, _driverLatLng) case final eta?)
-                      Text(
-                        _orderStatus == "picked_up" ? "Tiba di tujuan $eta" : "Tiba $eta",
-                        style: const TextStyle(color: AppTheme.primaryBlue, fontWeight: FontWeight.w600, fontSize: 12),
-                      ),
-                  ],
-                ),
-              )
-            ],
-          ),
+          const SizedBox(height: 14),
+          _ringkasanBayar(isDark),
           const SizedBox(height: 16),
-          if (_makanan) ...[
-            _ringkasanMakanan(),
-            const SizedBox(height: 16),
-          ],
 
-          // Timeline status tracker
-          const Text("Status Pesanan", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-          const SizedBox(height: 12),
-          // Tahapan mengikuti status pesanan yang sesungguhnya. Sebelumnya
-          // keempatnya berjam mati "10:20"–"10:23" dan tiga di antaranya selalu
-          // tercentang, berapa pun lama penumpang menunggu.
-          _buildTimelineItem("Pesanan dibuat", true),
-          _buildTimelineItem("Driver ditemukan", _orderStatus == "accepted" || _orderStatus == "picked_up" || _orderStatus == "completed"),
-          _buildTimelineItem(
-            _makanan ? "Makanan diambil dari warung" : _kirimBarang ? "Barang diambil" : "Penumpang dijemput",
-            _orderStatus == "picked_up" || _orderStatus == "completed",
-          ),
-          _buildTimelineItem(
-            _makanan ? "Makanan diserahkan" : _kirimBarang ? "Barang diserahkan" : "Perjalanan selesai",
-            _orderStatus == "completed",
-          ),
+          // Tahapan mengikuti status pesanan yang sesungguhnya. Dulu keempatnya
+          // berjam mati "10:20"–"10:23" dan tiga di antaranya selalu tercentang.
+          // Jam per tahap tetap tidak ditulis: backend hanya menyimpan
+          // updated_at terakhir, bukan jam tiap tahapan.
+          const Text("Status pesanan", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          const SizedBox(height: 10),
+          TimelinePesanan(layanan: _selectedService, status: _orderStatus),
           // Tombol "Simulasi Selesai (Dev)" dihapus: hanya driver yang boleh
           // menutup pesanan, dan backend memang menolak permintaan dari
           // penumpang — jadi tombol itu tidak pernah bisa berhasil.
@@ -1951,14 +2167,14 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           // Hanya sampai sebelum dijemput. Sesudah penumpang naik, drivernya
           // sudah bekerja, dan backend memang menolak pembatalannya.
           if (_orderStatus == "accepted") ...[
-            const Divider(height: 28),
+            const SizedBox(height: 6),
             TextButton(
               onPressed: _batalkanPesanan,
               style: TextButton.styleFrom(
                 foregroundColor: AppTheme.errorColor,
                 minimumSize: const Size(double.infinity, 40),
               ),
-              child: const Text("Batalkan pesanan"),
+              child: const Text("Batalkan pesanan", style: TextStyle(fontWeight: FontWeight.w600)),
             ),
           ],
         ],
@@ -1966,48 +2182,24 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     );
   }
 
-  // Parameter waktu dilepas: backend hanya menyimpan updated_at terakhir, bukan
-  // jam tiap tahapan, jadi tidak ada angka jujur yang bisa ditampilkan di sini.
-  Widget _buildTimelineItem(String text, bool isDone) {
-    return Row(
-      children: [
-        Icon(
-          isDone ? Icons.check_circle : Icons.radio_button_unchecked,
-          color: isDone ? Colors.green : Colors.grey,
-          size: 16,
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            // null = warna teks tema. Dulu Colors.black, yang hilang di atas
-            // kartu mode gelap.
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: isDone ? FontWeight.bold : FontWeight.normal,
-              color: isDone ? null : AppTheme.teksRedup(context),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// Isi pesanan makanan dan uang yang harus disiapkan, terlihat sepanjang
-  /// menunggu. Driver menalangi makanan ke warung, jadi totalnya termasuk
-  /// makanan, ongkir, dan biaya jasa.
-  Widget _ringkasanMakanan() {
+  /// Isi pesanan (BohFood) dan uang yang harus disiapkan, terlihat sepanjang
+  /// menunggu — dulu hanya untuk makanan; penumpang BohRide baru tahu jumlah
+  /// tunainya di layar selesai. Pada BohFood driver menalangi makanan ke
+  /// warung, jadi totalnya termasuk makanan, ongkir, dan biaya jasa.
+  Widget _ringkasanBayar(bool isDark) {
     final total = _fare + _biayaJasa + _foodTotal;
+    final warna = AppTheme.teksBerwarna(context, AppTheme.warnaLayanan(_selectedService));
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.orange.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(12),
+        color: AppTheme.warnaLayanan(_selectedService).withValues(alpha: isDark ? 0.16 : 0.07),
+        borderRadius: BorderRadius.circular(14),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (_makanan)
           for (final it in _itemsMakanan)
             Padding(
               padding: const EdgeInsets.only(bottom: 4),
@@ -2024,18 +2216,20 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                 style: const TextStyle(fontSize: 12),
               ),
             ),
-          if (_itemsMakanan.isNotEmpty) const Divider(height: 14),
+          if (_makanan && _itemsMakanan.isNotEmpty) const Divider(height: 14),
           Row(
             children: [
-              Icon(_bayarTunai ? Icons.payments_outlined : Icons.account_balance_wallet_outlined, size: 16, color: Colors.orange.shade800),
-              const SizedBox(width: 6),
+              Icon(_bayarTunai ? Icons.payments_outlined : Icons.account_balance_wallet_outlined, size: 18, color: warna),
+              const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  _bayarTunai ? 'Siapkan tunai untuk driver' : 'Dipotong dari saldo PayAntar',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                  _bayarTunai ? 'Siapkan uang tunai untuk driver' : 'Dipotong dari saldo BohPay',
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
                 ),
               ),
-              Text(rupiah(total), style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14, color: Colors.orange.shade900)),
+              // Pesanan berjalan yang baru dibuka belum membawa angka selama
+              // sekejap; "Rp 0" di situ menyesatkan.
+              if (total > 0) Text(rupiah(total), style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: warna)),
             ],
           ),
         ],
@@ -2044,131 +2238,172 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   }
 
   Widget _buildSuccessScreen(ThemeData theme, bool isDark) {
+    final kabar = kabarPesanan(_selectedService, 'completed');
+    // Rincian yang menjumlah tepat ke total. Dulu baris makanan hanya menyebut
+    // makanan + ongkir, sehingga biaya jasa hilang dan angkanya tidak cocok.
+    final rincian = [
+      if (_foodTotal > 0) 'Makanan ${rupiah(_foodTotal)}',
+      '${_foodTotal > 0 ? 'Ongkir' : 'Ongkos'} ${rupiah(_fare)}',
+      if (_biayaJasa > 0) 'Biaya jasa ${rupiah(_biayaJasa)}',
+    ].join(' · ');
+    const labelBintang = ['', 'Kecewa', 'Kurang', 'Biasa saja', 'Bagus', 'Mantap!'];
+
     return Scaffold(
       body: SafeArea(
         child: SingleChildScrollView(
           physics: const BouncingScrollPhysics(),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 30),
+          padding: const EdgeInsets.fromLTRB(24, 32, 24, 24),
           child: Column(
             children: [
-              const SizedBox(height: 40),
+              const SizedBox(height: 16),
               Container(
-                padding: const EdgeInsets.all(28),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.08),
+                  color: const Color(0xFF10B981).withValues(alpha: 0.12),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
-                  Icons.check_circle_outline,
-                  color: Colors.green,
-                  size: 80,
+                child: Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: const BoxDecoration(color: Color(0xFF10B981), shape: BoxShape.circle),
+                  child: const Icon(Icons.check_rounded, color: Colors.white, size: 52),
                 ),
               ),
-              const SizedBox(height: 28),
-              const Text(
-                "Pesanan kamu telah selesai",
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              const SizedBox(height: 24),
+              Text(
+                kabar.judul,
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 8),
-              const Text(
-                "Terima kasih telah menggunakan bohAntar",
-                style: TextStyle(color: Colors.grey, fontSize: 14),
+              const SizedBox(height: 6),
+              Text(
+                kabar.keterangan,
+                style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 14, height: 1.4),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 32),
-              
-              // Total payment box
+              const SizedBox(height: 24),
+
+              // Total dan cara bayarnya. Pesanan tunai diingatkan sekali lagi:
+              // driver menekan selesai, uangnya belum tentu sudah berpindah.
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  color: isDark ? AppTheme.cardObsidianDark : Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: Colors.grey.shade200),
+                  color: isDark ? AppTheme.cardObsidianDark : Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
                 ),
                 child: Column(
                   children: [
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text("Total Pembayaran", style: TextStyle(color: Colors.grey, fontSize: 13)),
+                        Text("Total bayar", style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 13)),
                         Text(
-                          "Rp ${(_fare + _biayaJasa + _foodTotal).toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}",
-                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: AppTheme.primaryBlue),
+                          rupiah(_fare + _biayaJasa + _foodTotal),
+                          style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20, color: AppTheme.primaryBlue),
                         ),
                       ],
                     ),
-                    // Makanan: pemesan berhak tahu berapa yang untuk warung dan
-                    // berapa untuk ongkir, bukan cuma satu angka.
-                    if (_foodTotal > 0)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Align(
-                          alignment: Alignment.centerRight,
+                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(rincian, style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 11)),
+                    ),
+                    const Divider(height: 22),
+                    Row(
+                      children: [
+                        Icon(
+                          _bayarTunai ? Icons.payments_outlined : Icons.account_balance_wallet_outlined,
+                          size: 18,
+                          color: AppTheme.teksBerwarna(context, _bayarTunai ? AppTheme.warnaStatus('pending') : AppTheme.warnaStatus('completed')),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
                           child: Text(
-                            "Makanan Rp ${_foodTotal.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}"
-                            " · Ongkir Rp ${_fare.toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}",
-                            style: const TextStyle(color: Colors.grey, fontSize: 11),
+                            _bayarTunai ? 'Bayar tunai ke driver, ya' : 'Sudah dipotong dari saldo BohPay',
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                           ),
                         ),
-                      ),
+                      ],
+                    ),
                   ],
                 ),
               ),
-              const SizedBox(height: 32),
-              
+
               // Bukti serah-terima dari driver, kalau ada.
               if (_receivedBy.isNotEmpty || _deliveryPhotoUrl.isNotEmpty) ...[
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text("Bukti serah terima", style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: AppTheme.teksRedup(context))),
+                ),
+                const SizedBox(height: 6),
                 if (_receivedBy.isNotEmpty)
-                  Text("Diterima oleh $_receivedBy", style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text("Diterima oleh $_receivedBy", style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                  ),
                 if (_deliveryPhotoUrl.isNotEmpty) ...[
                   const SizedBox(height: 8),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(12),
-                    child: Image.network('${ApiService().baseUrl}$_deliveryPhotoUrl', height: 160, fit: BoxFit.cover),
+                    child: LayoutBuilder(
+                      builder: (context, batas) => Image.network(
+                        '${ApiService().baseUrl}$_deliveryPhotoUrl',
+                        height: 160,
+                        fit: BoxFit.cover,
+                        cacheWidth: lebarDekode(context, batas.copyWith(maxHeight: 160)),
+                      ),
+                    ),
                   ),
                 ],
-                const SizedBox(height: 16),
               ],
+              const SizedBox(height: 28),
 
               // Interactive 5 star ratings
-              const Text(
-                "Beri penilaian untuk driver",
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+              Text(
+                _driverName.isEmpty ? "Gimana pengalamanmu?" : "Gimana pengalamanmu bareng $_driverName?",
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                textAlign: TextAlign.center,
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 6),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: List.generate(5, (index) {
                   final starIndex = index + 1;
                   return IconButton(
+                    tooltip: '$starIndex bintang',
                     onPressed: () {
                       setState(() {
                         _ratingStars = starIndex;
                       });
                     },
                     icon: Icon(
-                      starIndex <= _ratingStars ? Icons.star : Icons.star_border,
-                      color: Colors.amber,
-                      size: 36,
+                      starIndex <= _ratingStars ? Icons.star_rounded : Icons.star_outline_rounded,
+                      color: Colors.amber.shade600,
+                      size: 40,
                     ),
                   );
                 }),
               ),
-              const SizedBox(height: 20),
-              
+              // Kata di bawah bintang: angka saja tidak bilang apa artinya.
+              Text(
+                labelBintang[_ratingStars],
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Colors.amber.shade800),
+              ),
+              const SizedBox(height: 16),
+
               // Review input
               TextFormField(
                 controller: _reviewController,
                 maxLines: 3,
+                textCapitalization: TextCapitalization.sentences,
                 decoration: const InputDecoration(
-                  hintText: "Tulis ulasan (opsional)",
+                  hintText: "Ceritakan pengalamanmu (opsional)",
                   contentPadding: EdgeInsets.all(12),
                 ),
               ),
-              const SizedBox(height: 32),
-              
+              const SizedBox(height: 24),
+
               ElevatedButton(
                 onPressed: _kirimPenilaian,
                 style: ElevatedButton.styleFrom(
@@ -2176,7 +2411,12 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                   minimumSize: const Size(double.infinity, 50),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 ),
-                child: const Text("Kirim Penilaian"),
+                child: const Text("Kirim penilaian"),
+              ),
+              // Dulu satu-satunya jalan keluar adalah mengirim bintang 5 bawaan.
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text("Lewati", style: TextStyle(color: AppTheme.teksRedup(context))),
               ),
             ],
           ),

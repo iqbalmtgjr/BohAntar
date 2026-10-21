@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:mobile/models/food.dart';
 import 'package:mobile/theme.dart';
@@ -7,23 +9,38 @@ import 'package:mobile/theme.dart';
 class GambarJaringan extends StatelessWidget {
   final String url;
   final IconData pengganti;
-  const GambarJaringan({super.key, required this.url, this.pengganti = Icons.restaurant});
+  final Color warna; // warna layanan untuk latar pengganti
+  const GambarJaringan({super.key, required this.url, this.pengganti = Icons.restaurant, this.warna = AppTheme.warnaFood});
 
   @override
   Widget build(BuildContext context) {
     final kosong = Container(
-      color: AppTheme.primaryBlue.withOpacity(0.08),
+      color: warna.withValues(alpha: 0.08),
       alignment: Alignment.center,
-      child: Icon(pengganti, size: 36, color: AppTheme.primaryBlue.withOpacity(0.5)),
+      child: Icon(pengganti, size: 36, color: warna.withValues(alpha: 0.45)),
     );
     if (url.trim().isEmpty) return kosong;
-    return Image.network(
-      urlGambar(url),
-      fit: BoxFit.cover,
-      errorBuilder: (_, __, ___) => kosong,
-      loadingBuilder: (_, anak, progres) => progres == null ? anak : kosong,
+    return LayoutBuilder(
+      builder: (context, batas) => Image.network(
+        urlGambar(url),
+        fit: BoxFit.cover,
+        cacheWidth: lebarDekode(context, batas),
+        errorBuilder: (_, __, ___) => kosong,
+        loadingBuilder: (_, anak, progres) => progres == null ? anak : kosong,
+      ),
     );
   }
+}
+
+/// Lebar piksel untuk mendekode foto yang mengisi (BoxFit.cover) kotak
+/// [batas]: foto HP 4000×3000 didekode utuh memakan ±48 MB memori, padahal
+/// kartunya cuma ±500 px — daftar menu jadi tersendat dan HP kentang bisa
+/// menutup aplikasinya. Lebarnya cukup untuk menutup kotak oleh foto 4:3,
+/// 1:1, maupun 3:4. Null kalau lebar kotaknya tak terbatas.
+int? lebarDekode(BuildContext context, BoxConstraints batas) {
+  if (!batas.maxWidth.isFinite) return null;
+  final tinggi = batas.maxHeight.isFinite ? batas.maxHeight : 0.0;
+  return (max(batas.maxWidth, tinggi * 4 / 3) * MediaQuery.devicePixelRatioOf(context)).round();
 }
 
 /// Lencana kecil: "Buka", "1,2 km", "Habis".

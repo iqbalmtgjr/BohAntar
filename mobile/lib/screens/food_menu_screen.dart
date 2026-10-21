@@ -9,9 +9,12 @@ import 'package:mobile/widgets/food_widgets.dart';
 /// memperlihatkan isinya dan satu ketukan membawa ke konfirmasi.
 class FoodMenuScreen extends StatefulWidget {
   final Warung warung;
+  /// Menu yang diketuk di etalase BohFood: lembar pesannya langsung dibuka
+  /// begitu menu warung termuat.
+  final String? menuAwal;
   final String riderName;
   final String riderPhone;
-  const FoodMenuScreen({super.key, required this.warung, required this.riderName, required this.riderPhone});
+  const FoodMenuScreen({super.key, required this.warung, this.menuAwal, required this.riderName, required this.riderPhone});
 
   @override
   State<FoodMenuScreen> createState() => _FoodMenuScreenState();
@@ -23,6 +26,7 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
   String? _galat;
   String _kategori = 'Semua';
   final _cari = TextEditingController();
+  late bool _menuAwalBelumDibuka = widget.menuAwal != null;
   late final Keranjang _keranjang = Keranjang(widget.warung);
 
   @override
@@ -49,10 +53,14 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
         _menu = daftar.map((j) => MenuMakanan.dariJson(Map<String, dynamic>.from(j as Map))).toList();
         _memuat = false;
       });
+      // Sekali saja: tarik-untuk-muat-ulang tidak membuka lembarnya lagi.
+      final awal = _menuAwalBelumDibuka ? _menu.where((m) => m.id == widget.menuAwal).firstOrNull : null;
+      _menuAwalBelumDibuka = false;
+      if (awal != null && widget.warung.buka && awal.tersedia) _lembarPesan(awal);
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _galat = e.toString().replaceAll('Exception: ', '');
+        _galat = pesanGalat(e);
         _memuat = false;
       });
     }
@@ -75,6 +83,12 @@ class _FoodMenuScreenState extends State<FoodMenuScreen> {
       setState(() => _keranjang.tambah(m));
       return;
     }
+    await _lembarPesan(m);
+  }
+
+  /// Lembar foto + varian + jumlah. Menu tanpa varian juga bisa memakainya —
+  /// dari etalase, pemesan perlu melihat menunya dulu sebelum masuk keranjang.
+  Future<void> _lembarPesan(MenuMakanan m) async {
     final pilihan = await showModalBottomSheet<BarisKeranjang>(
       context: context,
       isScrollControlled: true,
@@ -378,7 +392,7 @@ class _BarisMenu extends StatelessWidget {
                             foregroundColor: AppTheme.primaryBlue,
                             side: BorderSide(color: bisaPesan ? AppTheme.primaryBlue : Colors.grey.shade400),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                            textStyle: const TextStyle(fontFamily: 'Inter', fontSize: 12, fontWeight: FontWeight.bold),
                           ),
                           child: const Text('Tambah'),
                         )
@@ -565,7 +579,18 @@ class _LembarVarianState extends State<_LembarVarian> {
               shrinkWrap: true,
               padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
               children: [
+                if (m.gambar.isNotEmpty) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(14),
+                    child: AspectRatio(aspectRatio: 16 / 9, child: GambarJaringan(url: m.gambar, pengganti: Icons.fastfood_outlined)),
+                  ),
+                  const SizedBox(height: 14),
+                ],
                 Text(m.nama, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+                if (m.deskripsi.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(m.deskripsi, style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 13, height: 1.35)),
+                ],
                 const SizedBox(height: 4),
                 Text(m.teksHarga, style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 13)),
                 for (final g in m.grup) ...[
