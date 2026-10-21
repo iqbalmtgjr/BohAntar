@@ -33,9 +33,10 @@ export default function ApplicationsPage() {
 
   const approve = async (app) => {
     // Menyetujui pengaju yang nomornya sudah punya akun akan MENIMPA peran
-    // lamanya: penumpang yang jadi driver berhenti bisa memesan, tanpa
-    // pemberitahuan apa pun ke dia. Admin berhak tahu sebelum menekan tombol.
-    if (app.existing_role && app.existing_role !== "driver") {
+    // lamanya: mitra warung/rental yang jadi driver kehilangan dashboard
+    // mitranya. Penumpang dilewatkan — akun driver tetap bisa beralih ke mode
+    // penumpang dari aplikasi. Admin berhak tahu sebelum menekan tombol.
+    if (app.existing_role && app.existing_role !== "driver" && app.existing_role !== "rider") {
       const lanjut = window.confirm(
         `Nomor ${app.phone_number} sudah punya akun dengan peran "${app.existing_role}". ` +
         "Menyetujui akan mengubah perannya jadi driver, dan dia tidak bisa lagi memesan sebagai penumpang. Lanjutkan?"

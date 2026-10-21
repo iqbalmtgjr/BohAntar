@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, useInView, useScroll, useTransform, AnimatePresence, useMotionValue, useSpring } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
-import bgImage from '../assets/bg.jpg';
+import bgImage from '../assets/bg.webp';
 import logoImg from '../assets/logo.png';
 import { BASE } from '../api';
 import {
@@ -9,7 +9,7 @@ import {
     ArrowRight, Download, ExternalLink, ChevronDown, Clock, Sparkles, Smartphone,
     CheckCircle2, Menu, X, Wallet, Percent, Calculator, Users, CreditCard,
     Navigation, Zap, Globe, HeartHandshake, Play, ChevronRight, ArrowUpRight,
-    Send, MousePointerClick, ShoppingBag, Grid, Home, FileText, HelpCircle, User
+    Send, MousePointerClick, Grid, Home, FileText, HelpCircle, User
 } from 'lucide-react';
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -806,7 +806,7 @@ export default function LandingPage({ onSelectPortal }) {
                                             { key: 'car', name: 'BohCar', icon: Car, bg: 'bg-emerald-500' },
                                             { key: 'food', name: 'BohFood', icon: UtensilsCrossed, bg: 'bg-rose-500' },
                                             { key: 'send', name: 'BohSend', icon: Package, bg: 'bg-cyan-500' },
-                                            { key: 'rental', name: 'BohMart', icon: ShoppingBag, bg: 'bg-amber-500' },
+                                            { key: 'rental', name: 'BohRental', icon: KeyRound, bg: 'bg-amber-500' },
                                             { key: 'rental', name: 'Lainnya', icon: Grid, bg: 'bg-slate-600' }
                                         ].map((item, idx) => {
                                             const Icon = item.icon;

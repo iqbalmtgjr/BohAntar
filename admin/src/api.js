@@ -49,6 +49,32 @@ const json = (path, opts) => authFetch(`${BASE}${path}`, opts).then(r => r.json(
 export const fileURL = (path) => (path ? BASE.replace(/\/api$/, "") + path : "");
 const post = (path, data) => json(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
 
+// Foto dari HP bisa 3–5 MB dan 4000 px, padahal paling lebar tampil selebar
+// layar HP. Dikecilkan di browser (kanvas) sebelum dikirim: unggahnya cepat,
+// dan aplikasi pemesan tidak mengunduh megabita untuk satu kartu menu. PDF,
+// HEIC, dan gambar yang sudah kecil dikirim apa adanya; gagal = kirim aslinya.
+const SISI_MAKS = 1600;
+export async function kecilkanGambar(file) {
+  if (!/^image\/(jpeg|png|webp)$/.test(file?.type || "")) return file;
+  try {
+    const bmp = await createImageBitmap(file, { imageOrientation: "from-image" }); // ikut putaran EXIF foto HP
+    const skala = Math.min(1, SISI_MAKS / Math.max(bmp.width, bmp.height));
+    if (skala === 1 && file.size <= 500 * 1024) return file;
+    const kanvas = document.createElement("canvas");
+    kanvas.width = Math.round(bmp.width * skala);
+    kanvas.height = Math.round(bmp.height * skala);
+    const ctx = kanvas.getContext("2d");
+    ctx.fillStyle = "#fff"; // PNG transparan jadi berlatar putih, bukan hitam
+    ctx.fillRect(0, 0, kanvas.width, kanvas.height);
+    ctx.drawImage(bmp, 0, 0, kanvas.width, kanvas.height);
+    const blob = await new Promise((r) => kanvas.toBlob(r, "image/jpeg", 0.85));
+    if (!blob || blob.size >= file.size) return file;
+    return new File([blob], file.name.replace(/\.[^.]*$/, "") + ".jpg", { type: "image/jpeg" });
+  } catch {
+    return file;
+  }
+}
+
 export const api = {
   getUsers: (role, page = 1, limit = 10) => json(`/admin/users?role=${role || ""}&page=${page}&limit=${limit}`),
   getUserDetail: (phone) => json(`/admin/users/${phone.replace("+", "")}`),
@@ -74,12 +100,18 @@ export const api = {
   // kolom contoh di halaman tarif tidak pernah menghitung versinya sendiri.
   contohTarif: (data) => post(`/admin/tarif/contoh`, data),
   getPemakaianPeta: () => json(`/admin/peta/pemakaian`),
+  // Banner beranda aplikasi. Id ada = ubah, kosong = banner baru.
+  getBanner: () => json(`/admin/banner`),
+  simpanBanner: (b) => b.id
+    ? json(`/admin/banner/${b.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) })
+    : post(`/admin/banner`, b),
+  hapusBanner: (id) => json(`/admin/banner/${id}`, { method: "DELETE" }),
   getApplications: (status) => json(`/admin/applications${status ? "?status=" + status : ""}`),
   registerDriver: (data) => post(`/admin/drivers/register`, data),
   // Content-Type sengaja tidak diset supaya browser menulis boundary multipart-nya sendiri.
-  uploadFile: (file) => {
+  uploadFile: async (file) => {
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", await kecilkanGambar(file));
     return json(`/upload`, { method: "POST", body: fd });
   },
   approveDriver: (id) => json(`/admin/drivers/${id}/approve`, { method: "POST" }),

@@ -1,48 +1,53 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, lazy, Suspense } from "react";
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import "./index.css";
 import "./portal-mobile.css";
 import { BASE, authFetch, getToken, setToken, clearToken, loginRouteFor } from "./api";
 
-import LoginPage from "./pages/LoginPage";
+// Halaman depan dimuat langsung; halaman lain dipecah jadi berkas sendiri dan
+// baru diunduh saat dibuka. Tanpa ini pengunjung halaman depan ikut mengunduh
+// seluruh panel admin — grafik (recharts), peta (leaflet), dan semua halamannya.
 import LandingPage from "./pages/LandingPage";
-import PortalMitraPage from "./pages/PortalMitraPage";
-import AuthCallbackPage from "./pages/AuthCallbackPage";
-import PartnerRegisterPage from "./pages/PartnerRegisterPage";
-import PartnerApplicationsPage from "./pages/PartnerApplicationsPage";
-import ApprovedPartnersPage from "./pages/ApprovedPartnersPage";
-import AccountPage from "./pages/AccountPage";
-
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const PortalMitraPage = lazy(() => import("./pages/PortalMitraPage"));
+const AuthCallbackPage = lazy(() => import("./pages/AuthCallbackPage"));
+const PartnerRegisterPage = lazy(() => import("./pages/PartnerRegisterPage"));
+const PartnerApplicationsPage = lazy(() => import("./pages/PartnerApplicationsPage"));
+const ApprovedPartnersPage = lazy(() => import("./pages/ApprovedPartnersPage"));
+const AccountPage = lazy(() => import("./pages/AccountPage"));
 
 // Admin pages
-import DashboardPage from "./pages/DashboardPage";
-import UsersPage from "./pages/UsersPage";
-import OrdersPage from "./pages/OrdersPage";
-import AnalyticsPage from "./pages/AnalyticsPage";
-import TarifPage from "./pages/TarifPage";
-import PetaPage from "./pages/PetaPage";
-import KomisiPage from "./pages/KomisiPage";
-import PencairanPage from "./pages/PencairanPage";
-import DriverRegistPage from "./pages/DriverRegistPage";
-import ApplicationsPage from "./pages/ApplicationsPage";
-import PaymentReportRental from "./pages/PaymentReportRental";
+const DashboardPage = lazy(() => import("./pages/DashboardPage"));
+const UsersPage = lazy(() => import("./pages/UsersPage"));
+const OrdersPage = lazy(() => import("./pages/OrdersPage"));
+const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
+const TarifPage = lazy(() => import("./pages/TarifPage"));
+const PetaPage = lazy(() => import("./pages/PetaPage"));
+const BannerPage = lazy(() => import("./pages/BannerPage"));
+const KomisiPage = lazy(() => import("./pages/KomisiPage"));
+const PencairanPage = lazy(() => import("./pages/PencairanPage"));
+const DriverRegistPage = lazy(() => import("./pages/DriverRegistPage"));
+const ApplicationsPage = lazy(() => import("./pages/ApplicationsPage"));
+const PaymentReportRental = lazy(() => import("./pages/PaymentReportRental"));
 import Sidebar from "./components/Sidebar";
 import PortalTopbar from "./components/PortalTopbar";
 
 // Rental pages
-import RentalDashboard from "./pages/bohrental/RentalDashboard";
-import CarManagement from "./pages/bohrental/CarManagement";
-import RentalCalendar from "./pages/bohrental/RentalCalendar";
-import ServiceManagement from "./pages/bohrental/ServiceManagement";
-import RentalOrders from "./pages/bohrental/RentalOrders";
-import RentalReports from "./pages/bohrental/RentalReports";
-import Subscription from "./pages/bohrental/Subscription";
+const RentalDashboard = lazy(() => import("./pages/bohrental/RentalDashboard"));
+const CarManagement = lazy(() => import("./pages/bohrental/CarManagement"));
+const RentalCalendar = lazy(() => import("./pages/bohrental/RentalCalendar"));
+const ServiceManagement = lazy(() => import("./pages/bohrental/ServiceManagement"));
+const RentalOrders = lazy(() => import("./pages/bohrental/RentalOrders"));
+const RentalReports = lazy(() => import("./pages/bohrental/RentalReports"));
+const Subscription = lazy(() => import("./pages/bohrental/Subscription"));
 import SidebarRentalPartner from "./components/SidebarRentalPartner";
 
 // Food pages
-import FoodDashboard from "./pages/bohfood/FoodDashboard";
-import MenuManagement from "./pages/bohfood/MenuManagement";
+const FoodDashboard = lazy(() => import("./pages/bohfood/FoodDashboard"));
+const MenuManagement = lazy(() => import("./pages/bohfood/MenuManagement"));
 import SidebarFoodMerchant from "./components/SidebarFoodMerchant";
+
+const memuat = <p style={{ padding: 24, opacity: 0.6 }}>Memuat…</p>;
 
 function Layout({ children, portalType, onLogout, userPhone }) {
   // Select which sidebar to show based on portalType
@@ -136,16 +141,18 @@ export default function App() {
   if (!auth) {
     return (
       <HashRouter>
-        <Routes>
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/portal-mitra" element={<PortalMitraPage />} />
-          <Route path="/login-resto" element={<LoginPage onLogin={login} role="food" />} />
-          <Route path="/login-rental" element={<LoginPage onLogin={login} role="rental" />} />
-          <Route path="/super-admin-login" element={<LoginPage onLogin={login} role="admin" />} />
-          <Route path="/auth/callback" element={<AuthCallbackPage onLogin={login} />} />
-          <Route path="/register-partner" element={<PartnerRegisterPage />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <Suspense fallback={memuat}>
+          <Routes>
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/portal-mitra" element={<PortalMitraPage />} />
+            <Route path="/login-resto" element={<LoginPage onLogin={login} role="food" />} />
+            <Route path="/login-rental" element={<LoginPage onLogin={login} role="rental" />} />
+            <Route path="/super-admin-login" element={<LoginPage onLogin={login} role="admin" />} />
+            <Route path="/auth/callback" element={<AuthCallbackPage onLogin={login} />} />
+            <Route path="/register-partner" element={<PartnerRegisterPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </HashRouter>
     );
   }
@@ -197,6 +204,7 @@ export default function App() {
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/tarif" element={<TarifPage />} />
         <Route path="/peta" element={<PetaPage />} />
+        <Route path="/banner" element={<BannerPage />} />
         <Route path="/komisi" element={<KomisiPage />} />
         <Route path="/pencairan" element={<PencairanPage />} />
         <Route path="/driver-register" element={<DriverRegistPage />} />
@@ -212,7 +220,7 @@ export default function App() {
   return (
     <HashRouter>
       <Layout portalType={portalType} onLogout={logout} userPhone={userPhone}>
-        {renderRoutes()}
+        <Suspense fallback={memuat}>{renderRoutes()}</Suspense>
       </Layout>
     </HashRouter>
   );
