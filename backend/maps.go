@@ -441,7 +441,8 @@ func mapsPlaceHandler(w http.ResponseWriter, r *http.Request) {
 	hasil, err := kirimPermintaan(req)
 	if err != nil {
 		catatPlaces(func(p *pemakaianPlaces) { p.GagalGoogle++ })
-		writeJSONResponse(w, 502, map[string]string{"error": err.Error()})
+		log.Printf("layanan peta gagal: %v", err)
+		writeJSONResponse(w, 502, map[string]string{"error": "Layanan peta sedang gangguan. Coba lagi sebentar."})
 		return
 	}
 
@@ -485,7 +486,8 @@ func mapsReverseHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	hasil, err := kirimPermintaan(req)
 	if err != nil {
-		writeJSONResponse(w, 502, map[string]string{"error": err.Error()})
+		log.Printf("layanan peta gagal: %v", err)
+		writeJSONResponse(w, 502, map[string]string{"error": "Layanan peta sedang gangguan. Coba lagi sebentar."})
 		return
 	}
 
@@ -557,7 +559,8 @@ func mapsRouteHandler(w http.ResponseWriter, r *http.Request) {
 
 	hasil, err := kirimPermintaan(req)
 	if err != nil {
-		writeJSONResponse(w, 502, map[string]string{"error": err.Error()})
+		log.Printf("layanan peta gagal: %v", err)
+		writeJSONResponse(w, 502, map[string]string{"error": "Layanan peta sedang gangguan. Coba lagi sebentar."})
 		return
 	}
 

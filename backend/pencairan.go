@@ -219,7 +219,7 @@ func adminProsesPencairanHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	bagian := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/admin/pencairan/"), "/"), "/")
 	if len(bagian) != 2 || (bagian[1] != "selesai" && bagian[1] != "tolak") {
-		writeJSONResponse(w, 404, map[string]string{"error": "Not found"})
+		writeJSONResponse(w, 404, map[string]string{"error": "Tidak ditemukan"})
 		return
 	}
 	id, aksi := bagian[0], bagian[1]

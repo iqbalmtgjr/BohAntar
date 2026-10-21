@@ -3,10 +3,13 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 // ==================== BOHFOOD ====================
@@ -254,6 +257,25 @@ func siapkanPesananMakanan(input *CreateOrderInput) (FoodMerchant, []OrderItem, 
 	return m, items, total, "", 0
 }
 
+// warungPemesan adalah satu warung seperti yang dilihat pemesan di posisinya.
+type warungPemesan struct {
+	ID      string  `json:"id"`
+	Nama    string  `json:"restaurant_name"`
+	Alamat  string  `json:"address"`
+	Gambar  string  `json:"image_url"`
+	Buka    bool    `json:"is_open"`
+	Lat     float64 `json:"lat"`
+	Lng     float64 `json:"lng"`
+	JarakKM float64 `json:"jarak_km"` // -1 kalau pemesan tidak mengirim posisinya
+	// Ongkir kalau diantar ke posisi pemesan sekarang. Rumus dan jaraknya
+	// sama dengan /api/tarif/estimasi, jadi angkanya sama dengan yang nanti
+	// ditagih. 0 kalau posisinya tidak diketahui.
+	Ongkir    float64 `json:"ongkir"`
+	InfoBuka  string  `json:"info_buka"`  // selama tutup, mis. "Buka lagi besok 07.00"
+	CocokMenu string  `json:"cocok_menu"` // menu yang cocok dengan pencarian ?q=
+	kasvo     string
+}
+
 // foodMerchantsHandler: daftar warung untuk pemesan. Warung yang belum
 // mengatur lokasinya tidak ikut — ongkirnya tidak bisa dihitung dan driver tidak
 // tahu harus ke mana. Yang tutup tetap tampil (ditandai), supaya pelanggan tahu
@@ -270,33 +292,20 @@ func foodMerchantsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	type warung struct {
-		ID      string  `json:"id"`
-		Nama    string  `json:"restaurant_name"`
-		Alamat  string  `json:"address"`
-		Gambar  string  `json:"image_url"`
-		Buka    bool    `json:"is_open"`
-		Lat     float64 `json:"lat"`
-		Lng     float64 `json:"lng"`
-		JarakKM float64 `json:"jarak_km"` // -1 kalau pemesan tidak mengirim posisinya
-		// Ongkir kalau diantar ke posisi pemesan sekarang. Rumus dan jaraknya
-		// sama dengan /api/tarif/estimasi, jadi angkanya sama dengan yang nanti
-		// ditagih. 0 kalau posisinya tidak diketahui.
-		Ongkir    float64 `json:"ongkir"`
-		InfoBuka  string  `json:"info_buka"`  // selama tutup, mis. "Buka lagi besok 07.00"
-		CocokMenu string  `json:"cocok_menu"` // menu yang cocok dengan pencarian ?q=
-		kasvo     string
-	}
 	lat, _ := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
 	lng, _ := strconv.ParseFloat(r.URL.Query().Get("lng"), 64)
 	adaPosisi := koordinatValid(lat, lng)
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	if len([]rune(q)) > 60 {
+		q = string([]rune(q)[:60])
+	}
+	modeMenu := r.URL.Query().Get("menu") == "1"
 	tarif := ambilTarif("BohFood")
 
-	daftar := make([]warung, 0)
+	daftar := make([]warungPemesan, 0)
 	var uuids []string
 	for rows.Next() {
-		var x warung
+		var x warungPemesan
 		if err := rows.Scan(&x.ID, &x.Nama, &x.Alamat, &x.Gambar, &x.Buka, &x.Lat, &x.Lng, &x.kasvo); err != nil {
 			continue
 		}
@@ -321,6 +330,28 @@ func foodMerchantsHandler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+	// Etalase layar depan BohFood: menu, bukan warung, dimuat per halaman
+	// sambil digulir. Aplikasi lama tidak memintanya.
+	if modeMenu {
+		page, limit, diminta := bacaHalaman(r, 50)
+		if !diminta {
+			page, limit = 1, 10
+		}
+		menus, adaLagi := halamanEtalase(daftar, q, page, limit)
+		// Hanya warung yang menunya ada di halaman ini; aplikasi mengumpulkannya.
+		dipakai := map[string]bool{}
+		for _, m := range menus {
+			dipakai[m.MerchantID] = true
+		}
+		warungHalaman := make([]warungPemesan, 0, len(dipakai))
+		for _, x := range daftar {
+			if dipakai[x.ID] {
+				warungHalaman = append(warungHalaman, x)
+			}
+		}
+		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "merchants": warungHalaman, "menus": menus, "ada_lagi": adaLagi})
+		return
 	}
 	// Pencarian mencocokkan nama warung, alamat, dan nama menu: "soto" harus
 	// menemukan warung yang menjual soto walau namanya "Warung Bu Ani".
@@ -362,6 +393,133 @@ func foodMerchantsHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "merchants": daftar})
 }
 
+// menuEtalase adalah satu menu di etalase BohFood plus porsi yang terjual 30
+// hari terakhir.
+type menuEtalase struct {
+	FoodMenu
+	Terjual int `json:"terjual"`
+}
+
+// halamanEtalase memotong etalase jadi satu halaman: menu dari warung yang buka
+// dulu, lalu yang paling laris, yang terdekat, lalu menurut nama. Urutannya
+// harus tetap antarpermintaan, kalau tidak halaman berikutnya bisa mengulang
+// atau melewatkan menu. q mencocokkan nama menu, kategorinya, dan nama warung.
+func halamanEtalase(daftar []warungPemesan, q string, page, limit int) ([]menuEtalase, bool) {
+	byID := make(map[string]warungPemesan, len(daftar))
+	toko := make([]FoodMerchant, len(daftar))
+	for i, x := range daftar {
+		byID[x.ID] = x
+		toko[i] = FoodMerchant{ID: x.ID, IsOpen: true, KasvoTokoUUID: x.kasvo}
+	}
+	var menus []menuEtalase // salinan: hasil tersimpan dipakai bersama, jangan diurutkan di tempat
+	for _, m := range etalaseTersimpan(toko) {
+		x, ada := byID[m.MerchantID] // warung yang baru dihapus selagi etalase masih tersimpan
+		if ada && (q == "" || strings.Contains(strings.ToLower(m.Name+" "+m.Category+" "+x.Nama), q)) {
+			menus = append(menus, m)
+		}
+	}
+	sort.Slice(menus, func(i, j int) bool {
+		a, b := menus[i], menus[j]
+		wa, wb := byID[a.MerchantID], byID[b.MerchantID]
+		switch {
+		case wa.Buka != wb.Buka:
+			return wa.Buka
+		case a.Terjual != b.Terjual:
+			return a.Terjual > b.Terjual
+		case wa.JarakKM != wb.JarakKM:
+			return wa.JarakKM < wb.JarakKM
+		case a.Name != b.Name:
+			return a.Name < b.Name
+		case a.MerchantID != b.MerchantID:
+			return a.MerchantID < b.MerchantID
+		}
+		return a.ID < b.ID
+	})
+	awal := (page - 1) * limit
+	if awal >= len(menus) {
+		return []menuEtalase{}, false
+	}
+	akhir := min(awal+limit, len(menus))
+	return menus[awal:akhir], akhir < len(menus)
+}
+
+// etalaseSimpan menyimpan etalase sebentar. Tiap halaman yang digulir
+// memanggil ulang handler; tanpa ini setiap halaman mengulang panggilan ke
+// semua toko Kasvo plus menyisir pesanan 30 hari. Isinya sama untuk semua
+// pemesan (jarak dan ongkir dihitung per permintaan), jadi aman dibagi.
+// Harga tetap dibaca ulang saat pesanan dibuat, jadi menu yang basi semenit
+// tidak pernah membuat tagihan salah — paling-paling "X sedang habis".
+var etalaseSimpan struct {
+	sync.Mutex
+	kapan time.Time
+	menus []menuEtalase
+}
+
+func etalaseTersimpan(toko []FoodMerchant) []menuEtalase {
+	etalaseSimpan.Lock()
+	defer etalaseSimpan.Unlock() // yang datang bersamaan menunggu satu pembacaan, tidak ikut membaca
+	if time.Since(etalaseSimpan.kapan) > time.Minute {
+		etalaseSimpan.menus = etalaseMenu(toko)
+		etalaseSimpan.kapan = time.Now()
+	}
+	return etalaseSimpan.menus
+}
+
+// etalaseMenu mengumpulkan menu yang tersedia dari semua warung (satu panggilan
+// Kasvo per toko, berbarengan). Warung yang menunya gagal dibaca dilewati,
+// tidak menggagalkan yang lain.
+func etalaseMenu(warung []FoodMerchant) []menuEtalase {
+	per := make([][]FoodMenu, len(warung))
+	var wg sync.WaitGroup
+	for i, m := range warung {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			menus, _, err := menuWarung(m)
+			if err != nil {
+				log.Printf("etalase: menu warung %s gagal dibaca: %v", m.ID, err)
+				return
+			}
+			per[i] = menus
+		}()
+	}
+	wg.Wait()
+	terjual := porsiTerjual()
+	hasil := []menuEtalase{}
+	for _, menus := range per {
+		for _, mn := range menus {
+			if mn.IsAvailable {
+				hasil = append(hasil, menuEtalase{mn, terjual[mn.MerchantID+"|"+mn.ID]})
+			}
+		}
+	}
+	return hasil
+}
+
+// porsiTerjual menjumlah porsi tiap menu dari pesanan BohFood 30 hari terakhir
+// yang tidak batal: "merchant_id|menu_id" → porsi.
+func porsiTerjual() map[string]int {
+	hasil := map[string]int{}
+	rows, err := db.Query(`SELECT COALESCE(merchant_id, ''), items_json FROM orders
+		WHERE service = 'BohFood' AND status NOT IN ('cancelled', 'expired') AND items_json <> ''
+		  AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`)
+	if err != nil {
+		log.Printf("etalase: porsi terjual gagal dibaca: %v", err)
+		return hasil
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var merchant, items string
+		if rows.Scan(&merchant, &items) != nil {
+			continue
+		}
+		for _, it := range uraiItems(items) {
+			hasil[merchant+"|"+it.MenuID] += it.Qty
+		}
+	}
+	return hasil
+}
+
 // foodOrdersHandler: pesanan yang masuk ke warung milik pemanggil, terbaru
 // dulu. Warung tidak mengubah status apa pun — driverlah yang mengambil dan
 // mengantar — jadi ini jendela, bukan tombol.
@@ -372,7 +530,7 @@ func foodOrdersHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var merchantID string
 	if err := db.QueryRow("SELECT id FROM food_merchants WHERE owner_phone = ?", callerPhone(r)).Scan(&merchantID); err != nil {
-		writeJSONResponse(w, 404, map[string]string{"error": "Merchant not found"})
+		writeJSONResponse(w, 404, map[string]string{"error": "Warung tidak ditemukan"})
 		return
 	}
 	rows, err := db.Query(`

@@ -265,6 +265,13 @@ type RentalBooking struct {
 	CreatedAt     string  `json:"created_at"`
 	UpdatedAt     string  `json:"updated_at"`
 	Notes         string  `json:"notes"` // catatan mitra, wajib saat pesanan ditolak
+	// Kendaraan dan mitranya, untuk "Sewa saya" di aplikasi. Read-only.
+	CarName     string `json:"car_name"`
+	PlateNumber string `json:"plate_number"`
+	ImageURL    string `json:"image_url"`
+	VehicleType string `json:"vehicle_type"`
+	OwnerPhone  string `json:"owner_phone"`
+	OwnerName   string `json:"owner_name"`
 }
 
 type RentalCarSchedule struct {
@@ -402,6 +409,10 @@ func noDirListing(next http.Handler) http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		// Berkas unggahan disajikan dari domain yang sama dengan dashboard (token
+		// admin ada di localStorage-nya): browser tidak boleh menebak-nebak
+		// berkas gambar sebagai HTML.
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -455,6 +466,8 @@ func main() {
 	mux.HandleFunc("/api/tarif/estimasi", requireAuth(tarifEstimasiHandler))
 	// Tanpa token: kalkulator halaman depan. Hanya mengirim total, bukan komisi.
 	mux.HandleFunc("/api/tarif/publik", tarifPublikHandler)
+	// Tanpa token: banner beranda aplikasi, isinya memang untuk dipajang.
+	mux.HandleFunc("/api/banner", bannerPublikHandler)
 	// Halaman publik: Google Play menuntut URL kebijakan privasi dan URL
 	// permintaan hapus akun yang bisa dibuka tanpa memasang aplikasi.
 	// Didaftarkan di dua jalur dengan sengaja. Reverse proxy di depan hanya
@@ -473,6 +486,8 @@ func main() {
 	mux.HandleFunc("/api/admin/tarif", admin(adminTarifHandler))
 	mux.HandleFunc("/api/admin/tarif/contoh", admin(adminTarifContohHandler))
 	mux.HandleFunc("/api/admin/peta/pemakaian", admin(adminPemakaianPetaHandler))
+	mux.HandleFunc("/api/admin/banner", admin(adminBannerHandler))
+	mux.HandleFunc("/api/admin/banner/", admin(adminBannerHandler))
 	mux.HandleFunc("/api/admin/komisi", admin(adminKomisiHandler))
 	mux.HandleFunc("/api/admin/setoran", admin(adminSetoranHandler))
 	mux.HandleFunc("/api/admin/setoran/qr/", admin(adminSetoranQRHandler))
@@ -498,6 +513,7 @@ func main() {
 	mux.HandleFunc("/api/partner/register", partnerRegisterHandler)
 	mux.HandleFunc("/ws/chat/", chatWebSocketHandler)
 	mux.HandleFunc("/api/chat/", chatHistoryHandler)
+	mux.HandleFunc("/api/chats", daftarChatHandler)
 
 	// bohFood & bohRental Endpoints
 	// Modul mitra: wajib token, dan tiap handler memeriksa kepemilikan barisnya.
@@ -514,6 +530,7 @@ func main() {
 	mux.HandleFunc("/api/integrasi/kasvo/kurir/", kasvoKurirBatalHandler)
 	// Modul rental juga menuntut langganan aktif; halaman langganan sendiri tetap terbuka.
 	rental := func(h http.HandlerFunc) http.HandlerFunc { return requireAuth(requireActiveSubscription(h)) }
+	mux.HandleFunc("/api/rental/katalog", requireAuth(katalogRentalHandler)) // untuk penyewa di aplikasi
 	mux.HandleFunc("/api/rental/cars", rental(rentalCarsHandler))
 	mux.HandleFunc("/api/rental/cars/", rental(rentalCarDetailHandler))
 	mux.HandleFunc("/api/rental/bookings", rental(rentalBookingsHandler))
@@ -1108,6 +1125,10 @@ func initDB() {
 	migrasiSkema("ALTER TABLE users ADD COLUMN driver_loc_at DATETIME NULL")
 	// Token perangkat untuk notifikasi push. Satu per pemasangan aplikasi.
 	migrasiSkema("ALTER TABLE users ADD COLUMN fcm_token VARCHAR(255) DEFAULT ''")
+	// Lencana merah tab Chat. Bawaannya 1 supaya percakapan lama tidak
+	// mendadak menumpuk jadi "belum dibaca" saat kolom ini lahir; pesan baru
+	// ditulis dbSaveChatMessage dengan nilainya sendiri.
+	migrasiSkema("ALTER TABLE chat_messages ADD COLUMN dibaca TINYINT(1) NOT NULL DEFAULT 1")
 
 	// Indeks dan batasan nilai dipisahkan dari CREATE TABLE karena tabelnya
 	// sudah telanjur ada di produksi: `CREATE TABLE IF NOT EXISTS` tidak
@@ -1153,6 +1174,7 @@ func initDB() {
 	}
 
 	seedTarif()
+	siapkanBanner()
 
 	var count int
 	db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
@@ -1641,7 +1663,7 @@ func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, e
 		return nil, 0, err
 	}
 
-	q := "SELECT id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(biaya_jasa, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ''), driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling, COALESCE(receiver_name, ''), COALESCE(receiver_phone, ''), COALESCE(pickup_photo_url, ''), COALESCE(delivery_photo_url, ''), COALESCE(received_by, ''), COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0), COALESCE(kasvo_pesanan_id, 0), COALESCE(kasvo_pengantaran_id, 0) FROM orders WHERE 1=1"
+	q := "SELECT " + kolomPesanan + " FROM orders WHERE 1=1"
 	var args []interface{}
 	if driver != "" {
 		q += " AND driver_phone = ?"
@@ -1674,7 +1696,13 @@ func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, e
 		return nil, 0, err
 	}
 	defer rows.Close()
+	return scanPesanan(rows), total, nil
+}
 
+// kolomPesanan berpasangan dengan scanPesanan: urutannya harus sama persis.
+const kolomPesanan = "id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(biaya_jasa, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ''), driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling, COALESCE(receiver_name, ''), COALESCE(receiver_phone, ''), COALESCE(pickup_photo_url, ''), COALESCE(delivery_photo_url, ''), COALESCE(received_by, ''), COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0), COALESCE(kasvo_pesanan_id, 0), COALESCE(kasvo_pengantaran_id, 0)"
+
+func scanPesanan(rows *sql.Rows) []Order {
 	var result []Order
 	for rows.Next() {
 		var o Order
@@ -1701,7 +1729,41 @@ func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, e
 			result = append(result, o)
 		}
 	}
-	return result, total, nil
+	return result
+}
+
+// dbRiwayatPesanan: satu halaman pesanan yang dipesan ATAU diantar phone,
+// terbaru dulu. Satu baris lebih dibaca supaya tahu masih ada halaman
+// berikutnya tanpa COUNT(*). id ikut mengurutkan supaya pesanan yang lahir di
+// detik yang sama tidak tampil dua kali atau terlewat di batas halaman.
+func dbRiwayatPesanan(phone string, page, limit int) ([]Order, bool, error) {
+	rows, err := db.Query("SELECT "+kolomPesanan+" FROM orders WHERE rider_phone = ? OR driver_phone = ? ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+		phone, phone, limit+1, (page-1)*limit)
+	if err != nil {
+		log.Printf("PERINGATAN: kueri riwayat pesanan gagal: %v", err)
+		return nil, false, err
+	}
+	defer rows.Close()
+	hasil := scanPesanan(rows)
+	if len(hasil) > limit {
+		return hasil[:limit], true, nil
+	}
+	return hasil, false, nil
+}
+
+// bacaHalaman membaca ?page= dan ?limit= untuk daftar yang dimuat sedikit demi
+// sedikit di aplikasi. diminta=false kalau tanpa ?limit (aplikasi lama yang
+// masih mengharapkan daftar utuh). limit dibatasi maks supaya satu permintaan
+// tidak bisa menarik seisi tabel; page dibatasi supaya OFFSET tidak dipakai
+// untuk memaksa basis data menyisir jutaan baris.
+func bacaHalaman(r *http.Request, maks int) (page, limit int, diminta bool) {
+	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+	if err != nil {
+		return 0, 0, false
+	}
+	limit = min(max(limit, 1), maks)
+	page, _ = strconv.Atoi(r.URL.Query().Get("page"))
+	return min(max(page, 1), 1000), limit, true
 }
 
 func dbGetPendingOrders() ([]Order, error) {
@@ -1932,9 +1994,9 @@ func dbGetChatMessages(orderID string) ([]ChatMessage, error) {
 	return result, nil
 }
 
-func dbSaveChatMessage(m ChatMessage) error {
-	_, err := db.Exec("INSERT INTO chat_messages (id, order_id, sender_phone, sender_name, sender_role, content, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		m.ID, m.OrderID, m.SenderPhone, m.SenderName, m.SenderRole, m.Content, waktuKeDB(m.Timestamp))
+func dbSaveChatMessage(m ChatMessage, dibaca bool) error {
+	_, err := db.Exec("INSERT INTO chat_messages (id, order_id, sender_phone, sender_name, sender_role, content, timestamp, dibaca) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		m.ID, m.OrderID, m.SenderPhone, m.SenderName, m.SenderRole, m.Content, waktuKeDB(m.Timestamp), dibaca)
 	return err
 }
 
@@ -2022,6 +2084,14 @@ func writeJSONResponse(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
+}
+
+// galatServer: kegagalan di sisi server. Rinciannya (pesan MySQL, nama tabel
+// dan kolom) hanya ke log — pemakai tidak bisa berbuat apa-apa dengannya, dan
+// isinya membocorkan susunan basis data ke siapa pun yang memancingnya.
+func galatServer(w http.ResponseWriter, r *http.Request, err error) {
+	log.Printf("galat server %s %s: %v", r.Method, r.URL.Path, err)
+	writeJSONResponse(w, 500, map[string]string{"error": "Terjadi gangguan di server. Coba lagi sebentar."})
 }
 
 // ==================== AUTH HANDLERS ====================
@@ -2194,7 +2264,8 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 	// Identitas hanya boleh berasal dari token Google yang sudah diverifikasi.
 	email, name, err := verifyGoogleIDToken(r.Context(), input.IDToken, input.Nonce)
 	if err != nil {
-		writeJSONResponse(w, 401, map[string]string{"error": err.Error()})
+		log.Printf("masuk Google ditolak: %v", err)
+		writeJSONResponse(w, 401, map[string]string{"error": "Masuk dengan Google gagal. Coba lagi, atau masuk dengan email dan password."})
 		return
 	}
 
@@ -2324,7 +2395,8 @@ func resetPasswordGoogleHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	email, _, err := verifyGoogleIDToken(r.Context(), input.IDToken, input.Nonce)
 	if err != nil {
-		writeJSONResponse(w, 401, map[string]string{"error": err.Error()})
+		log.Printf("reset password Google ditolak: %v", err)
+		writeJSONResponse(w, 401, map[string]string{"error": "Akun Google tidak bisa diperiksa. Coba lagi sebentar."})
 		return
 	}
 	u, _, found := dbFindUserByEmail(email)
@@ -2445,6 +2517,14 @@ func profileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]interface{}{"status": "success", "user": u, "business_name": businessNameOf(phone)}
+	// Penumpang yang disetujui jadi driver masih memegang token "rider" sampai
+	// tujuh hari: aplikasinya membuka layar driver, tapi tiap rute driver
+	// menjawab 403. Token yang perannya tertinggal dari database diganti di sini.
+	if _, peranToken, _ := parseBearer(r); peranToken != u.Role && alasanDriverBelumBolehMasuk(phone, u.Role) == "" {
+		if t, err := issueToken(phone, u.Role); err == nil {
+			resp["token"] = t
+		}
+	}
 	if u.Role == "driver" {
 		// Ikon posisi driver di petanya sendiri: motor atau mobil.
 		resp["kendaraan"] = kendaraanDriver(phone)
@@ -2614,7 +2694,7 @@ func buatInvoiceQRIS(xenditKey, externalID, email string, nominal float64) (invo
 		"external_id":     externalID,
 		"amount":          total,
 		"fees":            []map[string]interface{}{{"type": "Biaya layanan QRIS", "value": total - nominal}},
-		"description":     "Top up saldo PayAntar",
+		"description":     "Isi saldo BohPay",
 		"currency":        "IDR",
 		"payment_methods": []string{"QRIS"},
 		// QR yang sudah basi lebih baik hilang daripada dibayar berjam-jam
@@ -2704,6 +2784,22 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
+		// Aplikasi sejak 1.0.0+4 memuat riwayat per halaman: berandanya menarik
+		// halaman pertama tiap beberapa detik, jadi daftar utuh berarti seluruh
+		// riwayat diunduh ulang terus-menerus.
+		if page, limit, diminta := bacaHalaman(r, 50); diminta {
+			orders, adaLagi, err := dbRiwayatPesanan(phone, page, limit)
+			if err != nil {
+				writeJSONResponse(w, 500, map[string]string{"error": "Gagal membaca riwayat pesanan"})
+				return
+			}
+			if orders == nil {
+				orders = []Order{}
+			}
+			writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "orders": orders, "ada_lagi": adaLagi})
+			return
+		}
+		// ponytail: daftar utuh hanya untuk APK lama; buang setelah MIN_APP_BUILD >= 4.
 		result, _, _ := dbGetOrders("", phone, "", 0, 0)
 		driverOrders, _, _ := dbGetOrders(phone, "", "", 0, 0)
 		result = append(result, driverOrders...)
@@ -2782,9 +2878,9 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if u.Balance-tertahan < fare+biayaJasa+foodTotal {
-			pesan := "Saldo PayAntar tidak cukup. Pilih pembayaran tunai atau isi saldo dulu."
+			pesan := "Saldo BohPay tidak cukup. Pilih bayar tunai atau isi saldo dulu, ya."
 			if tertahan > 0 {
-				pesan = fmt.Sprintf("Saldo PayAntar tidak cukup: Rp%.0f sudah dipakai pesanan lain yang belum selesai. Pilih pembayaran tunai atau isi saldo dulu.", tertahan)
+				pesan = fmt.Sprintf("Saldo BohPay tidak cukup: Rp%.0f sedang dipakai pesanan lain yang belum selesai. Pilih bayar tunai atau isi saldo dulu, ya.", tertahan)
 			}
 			writeJSONResponse(w, 402, map[string]string{"error": pesan})
 			return
@@ -2888,7 +2984,7 @@ func getActiveOrdersHandler(w http.ResponseWriter, r *http.Request) {
 func orderRouterHandler(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(parts) < 3 {
-		writeJSONResponse(w, 404, map[string]string{"error": "Not found"})
+		writeJSONResponse(w, 404, map[string]string{"error": "Tidak ditemukan"})
 		return
 	}
 	action := parts[len(parts)-1]
@@ -2959,6 +3055,12 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		writeJSONResponse(w, 404, map[string]string{"error": "Pesanan tidak ditemukan"})
 		return
 	}
+	// Akun driver bisa memesan dari mode penumpang; pesanannya sendiri jangan
+	// sampai diambil saat dia beralih lagi ke mode driver.
+	if o.RiderPhone == driver.PhoneNumber {
+		writeJSONResponse(w, 403, map[string]string{"error": "Ini pesananmu sendiri, tidak bisa kamu ambil."})
+		return
+	}
 	if !cocokKendaraan(o.Service, kendaraanDriver(driver.PhoneNumber)) {
 		writeJSONResponse(w, 403, map[string]string{"error": "Pesanan " + o.Service + " butuh kendaraan lain dari yang terdaftar di akun Anda"})
 		return
@@ -2972,13 +3074,17 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	o.DriverPhone = driver.PhoneNumber
 	o.DriverName = driver.Name
 	o.UpdatedAt = now
-	tujuanDriver := "titik jemput Anda"
+	// Kalimat yang sama dengan layar pelacakan di aplikasi
+	// (mobile/lib/status_pesanan.dart), supaya push dan layar tidak berbeda nada.
+	isiDiterima := driver.Name + " menuju ke tempatmu. Pastikan kamu ada di titik jemput, ya."
 	if pesananMakanan(o) {
-		tujuanDriver = o.MerchantName
+		isiDiterima = driver.Name + " lagi ke " + o.MerchantName + " untuk membelikan pesananmu."
 		// Dapur toko Kasvo mulai memasak selagi driver di jalan.
 		go sinkronKasvo()
+	} else if kirimBarang(o) {
+		isiDiterima = driver.Name + " menuju lokasi ambil paket. Siapkan paketnya, ya."
 	}
-	notifikasiKe(o.RiderPhone, "Driver ditemukan", driver.Name+" sedang menuju "+tujuanDriver+".", map[string]string{
+	notifikasiKe(o.RiderPhone, "Dapat driver!", isiDiterima, map[string]string{
 		"tipe":     "pesanan_diterima",
 		"order_id": o.ID,
 	})
@@ -3160,7 +3266,7 @@ func releaseOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		return
 	}
 
-	notifikasiKe(o.RiderPhone, "Mencari driver lain", "Driver sebelumnya berhalangan. Pesanan Anda dicarikan driver lain.", map[string]string{
+	notifikasiKe(o.RiderPhone, "Lagi cari driver lain", "Driver sebelumnya berhalangan. Tunggu sebentar ya, pesananmu dicarikan driver lain.", map[string]string{
 		"tipe":     "dicari_ulang",
 		"order_id": o.ID,
 	})
@@ -3305,14 +3411,14 @@ func pickupOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	o.PickupPhotoURL = bukti.PhotoURL
 	o.UpdatedAt = time.Now().Format(time.RFC3339)
 	dbSaveOrder(o)
-	judul, isi := "Perjalanan dimulai", "Driver sudah menjemput. Selamat jalan!"
+	judul, isi := "Driver sedang antar kamu", "Selamat jalan! Pantau perjalananmu di aplikasi."
 	if o.KasvoPengantaranID > 0 {
 		go sinkronKasvo() // pelanggan toko Kasvo melihat "dalam perjalanan"
 		judul, isi = "Pesanan dibawa kurir", "Kurir sudah mengambil pesanan untuk "+o.ReceiverName+" dan sedang mengantarnya."
 	} else if pesananMakanan(o) {
-		judul, isi = "Makanan diambil", "Driver sudah mengambil pesanan Anda dari "+o.MerchantName+" dan sedang mengantarnya."
+		judul, isi = "Pesananmu lagi diantar", "Driver sudah membawa pesananmu dari "+o.MerchantName+"."
 	} else if kirimBarang(o) {
-		judul, isi = "Barang diambil", "Driver sudah mengambil barang Anda dan sedang mengantarnya."
+		judul, isi = "Paketmu lagi diantar", "Driver sudah mengambil paketmu dan menuju penerima."
 	}
 	notifikasiKe(o.RiderPhone, judul, isi, map[string]string{
 		"tipe":     "dijemput",
@@ -3396,14 +3502,14 @@ func completeOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan transaksi"})
 		return
 	}
-	pesanBayar := "Terima kasih sudah memakai bohAntar."
+	pesanBayar := "Terima kasih sudah pakai bohAntar."
 	if o.PaymentMethod != "wallet" {
 		// Ongkir, biaya jasa, dan (makanan) uang yang ditalangi driver. Biaya
 		// jasa dulu tertinggal di sini, sehingga penumpang membayar kurang dan
 		// selisihnya dipotong dari saldo driver (lihat bagiPembayaran).
-		pesanBayar = fmt.Sprintf("Bayar tunai Rp%.0f ke driver.", o.Fare+o.BiayaJasa+o.FoodTotal)
+		pesanBayar = fmt.Sprintf("Jangan lupa bayar tunai Rp%.0f ke driver, ya.", o.Fare+o.BiayaJasa+o.FoodTotal)
 	}
-	judul := "Perjalanan selesai"
+	judul := "Sudah sampai, terima kasih!"
 	if o.KasvoPengantaranID > 0 {
 		// Akun pemesannya toko; yang membayar ongkir penerima, bukan toko.
 		judul = "Pesanan pelanggan sampai"
@@ -3413,9 +3519,9 @@ func completeOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		}
 		pesanBayar = "Diterima " + penerima + ". Ongkir dibayar tunai oleh penerima ke kurir."
 	} else if pesananMakanan(o) {
-		judul = "Makanan diserahkan"
+		judul = "Pesananmu sudah sampai, selamat makan!"
 	} else if kirimBarang(o) {
-		judul = "Barang diserahkan"
+		judul = "Paket sudah diterima"
 		if o.ReceivedBy != "" {
 			pesanBayar = "Diterima oleh " + o.ReceivedBy + ". " + pesanBayar
 		}
@@ -3530,7 +3636,7 @@ func adminUsersHandler(w http.ResponseWriter, r *http.Request) {
 
 	result, total, err := dbGetUsers(roleFilter, page, limit)
 	if err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+		galatServer(w, r, err)
 		return
 	}
 
@@ -3632,7 +3738,7 @@ func adminUserDetailHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := dbSaveUser(u); err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		// Password hanya diganti bila field-nya benar-benar dikirim dan tidak kosong.
@@ -3675,7 +3781,7 @@ func adminOrdersHandler(w http.ResponseWriter, r *http.Request) {
 
 	result, total, err := dbGetOrders(df, rf, sf, page, limit)
 	if err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+		galatServer(w, r, err)
 		return
 	}
 
@@ -3704,7 +3810,7 @@ func adminAnalyticsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	data, err := dbGetAnalyticsData()
 	if err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+		galatServer(w, r, err)
 		return
 	}
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "analytics": data})
@@ -4167,7 +4273,9 @@ func adminDriverApplicationsHandler(w http.ResponseWriter, r *http.Request) {
 	result, _ := dbGetApplications(sf)
 
 	// Menyetujui pengaju yang nomornya sudah punya akun akan MENIMPA peran
-	// lamanya — penumpang yang jadi driver berhenti bisa memesan. Admin harus
+	// lamanya — mitra warung atau rental yang jadi driver kehilangan
+	// dashboard mitranya. Penumpang tidak rugi: akun driver tetap bisa beralih
+	// ke mode penumpang dari tab Akun di aplikasi. Admin harus
 	// tahu itu sebelum menekan setujui, bukan sesudahnya, jadi peran yang ada
 	// sekarang ikut dikirim.
 	//
@@ -4306,7 +4414,7 @@ func adminPartnerApplicationsHandler(w http.ResponseWriter, r *http.Request) {
 	sf := r.URL.Query().Get("status")
 	result, err := dbGetPartnerApplications(tf, sf)
 	if err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+		galatServer(w, r, err)
 		return
 	}
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "total": len(result), "applications": result})
@@ -4423,6 +4531,79 @@ func chatHistoryHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "order_id": orderID, "messages": msgs})
 }
 
+// RingkasanChat satu baris di tab Chat aplikasi: satu pesanan, pesan
+// terakhirnya, dan berapa pesan lawan bicara yang belum dibaca.
+type RingkasanChat struct {
+	OrderID       string `json:"order_id"`
+	Service       string `json:"service"`
+	Status        string `json:"status"`
+	LawanNama     string `json:"lawan_nama"`
+	LawanPeran    string `json:"lawan_peran"` // "driver" | "penumpang"
+	LawanPhone    string `json:"lawan_phone"`
+	PesanTerakhir string `json:"pesan_terakhir"`
+	DariSaya      bool   `json:"dari_saya"`
+	Waktu         string `json:"waktu"`
+	BelumDibaca   int    `json:"belum_dibaca"`
+}
+
+// GET /api/chats — semua percakapan pemakai, terbaru di atas, beserta total
+// belum dibaca untuk lencana merah di ikon Chat.
+func daftarChatHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
+		return
+	}
+	phone, ok := extractPhone(r)
+	if !ok {
+		writeJSONResponse(w, 401, map[string]string{"error": "Token otorisasi diperlukan"})
+		return
+	}
+	// ponytail: 50 percakapan terbaru; pesan belum dibaca di percakapan yang
+	// lebih tua tidak terhitung di lencana. Tambah halaman kalau ada yang
+	// sungguh menyimpan chat sebanyak itu.
+	rows, err := db.Query(`
+		SELECT order_id, service, status, rider_phone, rider_name, driver_phone, driver_name,
+			sender_phone, content, timestamp, belum
+		FROM (
+			SELECT c.order_id, o.service, o.status,
+				COALESCE(o.rider_phone, '') AS rider_phone, COALESCE(o.rider_name, '') AS rider_name,
+				COALESCE(o.driver_phone, '') AS driver_phone, COALESCE(o.driver_name, '') AS driver_name,
+				c.sender_phone, c.content, c.timestamp,
+				ROW_NUMBER() OVER (PARTITION BY c.order_id ORDER BY c.timestamp DESC, c.id DESC) AS urut,
+				COUNT(CASE WHEN c.sender_phone <> ? AND c.dibaca = 0 THEN 1 END) OVER (PARTITION BY c.order_id) AS belum
+			FROM chat_messages c JOIN orders o ON o.id = c.order_id
+			WHERE o.rider_phone = ? OR o.driver_phone = ?
+		) t
+		WHERE urut = 1
+		ORDER BY timestamp DESC
+		LIMIT 50`, phone, phone, phone)
+	if err != nil {
+		log.Printf("Daftar chat %s gagal dibaca: %v", phone, err)
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal memuat chat"})
+		return
+	}
+	defer rows.Close()
+	daftar := []RingkasanChat{}
+	total := 0
+	for rows.Next() {
+		var c RingkasanChat
+		var riderPhone, riderName, driverPhone, driverName, pengirim string
+		if err := rows.Scan(&c.OrderID, &c.Service, &c.Status, &riderPhone, &riderName, &driverPhone, &driverName,
+			&pengirim, &c.PesanTerakhir, &c.Waktu, &c.BelumDibaca); err != nil {
+			continue
+		}
+		c.DariSaya = pengirim == phone
+		if phone == riderPhone {
+			c.LawanPeran, c.LawanPhone, c.LawanNama = "driver", driverPhone, driverName
+		} else {
+			c.LawanPeran, c.LawanPhone, c.LawanNama = "penumpang", riderPhone, riderName
+		}
+		total += c.BelumDibaca
+		daftar = append(daftar, c)
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "chats": daftar, "belum_dibaca": total})
+}
+
 func chatWebSocketHandler(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(parts) < 3 {
@@ -4469,6 +4650,12 @@ func chatWebSocketHandler(w http.ResponseWriter, r *http.Request) {
 	wsConnections[orderID] = append(wsConnections[orderID], client)
 	wsMutex.Unlock()
 
+	// Membuka layar chat = membaca semua pesan lawan bicara. Admin yang
+	// mengintip tidak ikut menghapus lencana milik peserta.
+	if sPhone == o.RiderPhone || sPhone == o.DriverPhone {
+		db.Exec("UPDATE chat_messages SET dibaca = 1 WHERE order_id = ? AND sender_phone <> ? AND dibaca = 0", orderID, sPhone)
+	}
+
 	history, _ := dbGetChatMessages(orderID)
 	if history != nil {
 		hj, _ := json.Marshal(map[string]interface{}{"type": "history", "messages": history})
@@ -4484,7 +4671,7 @@ func chatWebSocketHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		msg := ChatMessage{ID: newID("msg"), OrderID: orderID, SenderPhone: sPhone, SenderName: sName, SenderRole: sRole, Content: inc["content"], Timestamp: time.Now().Format(time.RFC3339)}
-		dbSaveChatMessage(msg)
+		dbSaveChatMessage(msg, lawanDiRuang(o, sPhone))
 		mj, _ := json.Marshal(map[string]interface{}{"type": "message", "message": msg})
 		broadcastToRoom(orderID, mj)
 		notifikasiChat(orderID, sPhone, sName, msg.Content)
@@ -4549,6 +4736,20 @@ func teleponDiRuang(orderID string) map[string]bool {
 	return hadir
 }
 
+// lawanDiRuang: pesan yang dikirim saat lawan bicaranya sedang membuka layar
+// chat yang sama langsung terbaca, jadi tidak boleh menyalakan lencana merah.
+// Hanya peserta pesanan yang dihitung: admin yang sedang mengintip bukan lawan
+// bicara, dan tanpa saringan ini pesannya tercatat terbaca padahal belum.
+func lawanDiRuang(o Order, pengirim string) bool {
+	hadir := teleponDiRuang(o.ID)
+	for _, p := range []string{o.RiderPhone, o.DriverPhone} {
+		if p != "" && p != pengirim && hadir[p] {
+			return true
+		}
+	}
+	return false
+}
+
 func broadcastToRoom(orderID string, msg []byte) {
 	wsMutex.RLock()
 	clients := append([]*wsClient(nil), wsConnections[orderID]...)
@@ -4581,14 +4782,14 @@ func foodMerchantHandler(w http.ResponseWriter, r *http.Request) {
 		var m FoodMerchant
 		err := db.QueryRow("SELECT id, owner_phone, restaurant_name, address, COALESCE(image_url, ''), is_open, created_at, lat, lng, COALESCE(kasvo_toko_uuid, '') FROM food_merchants WHERE owner_phone = ?", phone).Scan(&m.ID, &m.OwnerPhone, &m.RestaurantName, &m.Address, &m.ImageURL, &m.IsOpen, &m.CreatedAt, &m.Lat, &m.Lng, &m.KasvoTokoUUID)
 		if err != nil {
-			writeJSONResponse(w, 404, map[string]string{"error": "Merchant not found"})
+			writeJSONResponse(w, 404, map[string]string{"error": "Warung tidak ditemukan"})
 			return
 		}
 		writeJSONResponse(w, 200, m)
 	} else if r.Method == http.MethodPost {
 		var m FoodMerchant
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-			writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 			return
 		}
 		if m.ID == "" {
@@ -4642,7 +4843,7 @@ func foodMenusHandler(w http.ResponseWriter, r *http.Request) {
 	} else if r.Method == http.MethodPost {
 		var m FoodMenu
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
-			writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 			return
 		}
 		// Menu baru harus masuk ke merchant milik pemanggil; menu lama harus miliknya.
@@ -4666,7 +4867,7 @@ func foodMenusHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		_, err := db.Exec("INSERT INTO food_menus (id, merchant_id, name, description, price, category, image_url, is_available) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), description = VALUES(description), price = VALUES(price), category = VALUES(category), image_url = VALUES(image_url), is_available = VALUES(is_available)", m.ID, m.MerchantID, m.Name, m.Description, m.Price, m.Category, m.ImageURL, m.IsAvailable)
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, m)
@@ -4690,7 +4891,7 @@ func foodMenuDetailHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete {
 		_, err := db.Exec("DELETE FROM food_menus WHERE id = ?", menuID)
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, map[string]string{"status": "success", "message": "Menu deleted"})
@@ -4717,7 +4918,7 @@ func rentalCarsHandler(w http.ResponseWriter, r *http.Request) {
 			rows, err = db.Query(cols+" WHERE owner_phone = ?", callerPhone(r))
 		}
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		defer rows.Close()
@@ -4732,7 +4933,7 @@ func rentalCarsHandler(w http.ResponseWriter, r *http.Request) {
 	} else if r.Method == http.MethodPost {
 		var c RentalCar
 		if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
-			writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 			return
 		}
 		if c.ID == "" {
@@ -4775,7 +4976,7 @@ func rentalCarsHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, c)
@@ -4799,14 +5000,14 @@ func rentalCarDetailHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete {
 		_, err := db.Exec("DELETE FROM rental_cars WHERE id = ?", carID)
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, map[string]string{"status": "success", "message": "Car deleted"})
 	} else if r.Method == http.MethodPut {
 		var car RentalCar
 		if err := json.NewDecoder(r.Body).Decode(&car); err != nil {
-			writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 			return
 		}
 		car.PlateNumber = strings.TrimSpace(car.PlateNumber)
@@ -4825,7 +5026,7 @@ func rentalCarDetailHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, map[string]string{"status": "success", "message": "Car updated"})
@@ -4925,7 +5126,7 @@ func rentalSettingsHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		var input RentalSettings
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 			return
 		}
 		switch input.LateFeeMode {
@@ -4956,7 +5157,7 @@ func rentalSettingsHandler(w http.ResponseWriter, r *http.Request) {
 		if _, err := db.Exec(`INSERT INTO rental_settings (owner_phone, late_fee_mode, late_fee_value, late_fee_grace_minutes, updated_at) VALUES (?, ?, ?, ?, ?)
 			ON DUPLICATE KEY UPDATE late_fee_mode = VALUES(late_fee_mode), late_fee_value = VALUES(late_fee_value), late_fee_grace_minutes = VALUES(late_fee_grace_minutes), updated_at = VALUES(updated_at)`,
 			input.OwnerPhone, input.LateFeeMode, input.LateFeeVal, input.GraceMinutes, waktuKeDB(input.UpdatedAt)); err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, input)
@@ -4969,7 +5170,9 @@ func rentalBookingsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		// LEFT JOIN users: nama penyewa ikut dikirim supaya halaman Pesanan Masuk
 		// tidak cuma menampilkan nomor HP. Akun yang sudah dihapus jadi string kosong.
-		const joined = "SELECT b.id, b.car_id, b.customer_phone, COALESCE(u.name, ''), b.start_time, b.end_time, b.total_price, COALESCE(b.late_fee, 0), b.status, b.created_at, b.updated_at, COALESCE(b.notes, '') FROM rental_bookings b JOIN rental_cars c ON b.car_id = c.id LEFT JOIN users u ON b.customer_phone = u.phone_number"
+		const joined = "SELECT b.id, b.car_id, b.customer_phone, COALESCE(u.name, ''), b.start_time, b.end_time, b.total_price, COALESCE(b.late_fee, 0), b.status, b.created_at, b.updated_at, COALESCE(b.notes, ''), " +
+			"CONCAT(c.brand, ' ', c.model), c.plate_number, COALESCE(c.image_url, ''), COALESCE(c.vehicle_type, 'car'), c.owner_phone, " + sqlNamaMitra +
+			" FROM rental_bookings b JOIN rental_cars c ON b.car_id = c.id LEFT JOIN users u ON b.customer_phone = u.phone_number LEFT JOIN users o ON o.phone_number = c.owner_phone"
 		var rows *sql.Rows
 		var err error
 		if isAdmin(r) {
@@ -4980,7 +5183,7 @@ func rentalBookingsHandler(w http.ResponseWriter, r *http.Request) {
 			rows, err = db.Query(joined+" WHERE c.owner_phone = ? OR b.customer_phone = ?", me, me)
 		}
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		defer rows.Close()
@@ -4988,7 +5191,8 @@ func rentalBookingsHandler(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var b RentalBooking
 			var st, et time.Time
-			if err := rows.Scan(&b.ID, &b.CarID, &b.CustomerPhone, &b.CustomerName, &st, &et, &b.TotalPrice, &b.LateFee, &b.Status, &b.CreatedAt, &b.UpdatedAt, &b.Notes); err == nil {
+			if err := rows.Scan(&b.ID, &b.CarID, &b.CustomerPhone, &b.CustomerName, &st, &et, &b.TotalPrice, &b.LateFee, &b.Status, &b.CreatedAt, &b.UpdatedAt, &b.Notes,
+				&b.CarName, &b.PlateNumber, &b.ImageURL, &b.VehicleType, &b.OwnerPhone, &b.OwnerName); err == nil {
 				b.StartTime = st.Format("2006-01-02 15:04:05")
 				b.EndTime = et.Format("2006-01-02 15:04:05")
 				bookings = append(bookings, b)
@@ -4998,7 +5202,7 @@ func rentalBookingsHandler(w http.ResponseWriter, r *http.Request) {
 	} else if r.Method == http.MethodPost {
 		var b RentalBooking
 		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
-			writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 			return
 		}
 		// ID dan pelanggan ditentukan server, bukan client.
@@ -5016,7 +5220,7 @@ func rentalBookingsHandler(w http.ResponseWriter, r *http.Request) {
 		// Pessimistic Locking & Conflict Avoidance
 		tx, err := db.Begin()
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		defer tx.Rollback()
@@ -5026,7 +5230,7 @@ func rentalBookingsHandler(w http.ResponseWriter, r *http.Request) {
 		var carStatus string
 		err = tx.QueryRow("SELECT price_per_day, status FROM rental_cars WHERE id = ? FOR UPDATE", b.CarID).Scan(&pricePerDay, &carStatus)
 		if err != nil {
-			writeJSONResponse(w, 404, map[string]string{"error": "Car not found"})
+			writeJSONResponse(w, 404, map[string]string{"error": "Kendaraan ini sudah tidak tersedia"})
 			return
 		}
 		if carStatus != "active" {
@@ -5069,7 +5273,7 @@ func rentalBookingsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := tx.Commit(); err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, b)
@@ -5133,7 +5337,7 @@ func rentalBookingDetailHandler(w http.ResponseWriter, r *http.Request) {
 			Notes  string `json:"notes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 			return
 		}
 		if !validBookingStatus[input.Status] {
@@ -5171,7 +5375,7 @@ func rentalBookingDetailHandler(w http.ResponseWriter, r *http.Request) {
 			args = []interface{}{input.Status, input.Notes, time.Now(), bookingID}
 		}
 		if _, err := db.Exec(query, args...); err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 
@@ -5186,9 +5390,14 @@ func rentalBookingDetailHandler(w http.ResponseWriter, r *http.Request) {
 				WHERE b.id = ?`, bookingID).Scan(&pricePerDay, &end); err == nil {
 				fee = lateFee(ownerPhone, pricePerDay, end, time.Now())
 				if _, err := db.Exec("UPDATE rental_bookings SET late_fee = ? WHERE id = ?", fee, bookingID); err != nil {
-					writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+					galatServer(w, r, err)
 					return
 				}
+			}
+		}
+		if isOwner && customerPhone != me {
+			if judul, isi := kabarSewa(input.Status, input.Notes); judul != "" {
+				notifikasiKe(customerPhone, judul, isi, map[string]string{"tipe": "sewa"})
 			}
 		}
 		writeJSONResponse(w, 200, map[string]any{"status": "success", "message": "Booking status updated", "late_fee": fee})
@@ -5216,7 +5425,7 @@ func rentalSchedulesHandler(w http.ResponseWriter, r *http.Request) {
 			rows, err = db.Query(cols+" WHERE c.owner_phone = ?", callerPhone(r))
 		}
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		defer rows.Close()
@@ -5234,7 +5443,7 @@ func rentalSchedulesHandler(w http.ResponseWriter, r *http.Request) {
 	} else if r.Method == http.MethodPost {
 		var s RentalCarSchedule
 		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
-			writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 			return
 		}
 		if s.ID == "" {
@@ -5258,7 +5467,7 @@ func rentalSchedulesHandler(w http.ResponseWriter, r *http.Request) {
 		// dari aplikasi, sewa yang telat dikembalikan tetap mengunci armadanya.
 		tx, err := db.Begin()
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		defer tx.Rollback()
@@ -5285,12 +5494,12 @@ func rentalSchedulesHandler(w http.ResponseWriter, r *http.Request) {
 
 		_, err = tx.Exec("INSERT INTO rental_car_schedules (id, car_id, start_time, end_time, reason, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)", s.ID, s.CarID, s.StartTime, s.EndTime, s.Reason, s.Status, waktuKeDB(s.CreatedAt))
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 
 		if err := tx.Commit(); err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, s)
@@ -5314,7 +5523,7 @@ func rentalScheduleDetailHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodDelete {
 		_, err := db.Exec("DELETE FROM rental_car_schedules WHERE id = ?", scheduleID)
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, map[string]string{"status": "success", "message": "Schedule blocked period deleted"})
@@ -5327,7 +5536,7 @@ func rentalScheduleDetailHandler(w http.ResponseWriter, r *http.Request) {
 			Status    string `json:"status"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 			return
 		}
 
@@ -5348,13 +5557,13 @@ func rentalScheduleDetailHandler(w http.ResponseWriter, r *http.Request) {
 				if err := db.QueryRow(`SELECT c.owner_phone, c.price_per_day, s.end_time
 					FROM rental_car_schedules s JOIN rental_cars c ON s.car_id = c.id
 					WHERE s.id = ?`, scheduleID).Scan(&owner, &pricePerDay, &end); err != nil {
-					writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+					galatServer(w, r, err)
 					return
 				}
 				fee = lateFee(owner, pricePerDay, end, time.Now())
 			}
 			if _, err := db.Exec("UPDATE rental_car_schedules SET status = ?, late_fee = ? WHERE id = ?", input.Status, fee, scheduleID); err != nil {
-				writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+				galatServer(w, r, err)
 				return
 			}
 			writeJSONResponse(w, 200, map[string]any{"status": "success", "message": "Status jadwal diperbarui", "late_fee": fee})
@@ -5384,7 +5593,7 @@ func rentalScheduleDetailHandler(w http.ResponseWriter, r *http.Request) {
 		_, err = db.Exec("UPDATE rental_car_schedules SET car_id = ?, start_time = ?, end_time = ?, reason = ? WHERE id = ?",
 			input.CarID, input.StartTime, input.EndTime, input.Reason, scheduleID)
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, map[string]string{"status": "success", "message": "Schedule updated successfully"})
@@ -5502,7 +5711,7 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var input LoginInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+		writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 		return
 	}
 	ip := alamatPemanggil(r)
@@ -5572,7 +5781,7 @@ func subscriptionStatusHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !exists {
-		writeJSONResponse(w, 404, map[string]string{"error": "Subscription not found"})
+		writeJSONResponse(w, 404, map[string]string{"error": "Langganan tidak ditemukan"})
 		return
 	}
 
@@ -5708,7 +5917,7 @@ func subscriptionInvoicesHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	invoices, err := dbGetSubscriptionInvoices(phone)
 	if err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+		galatServer(w, r, err)
 		return
 	}
 	writeJSONResponse(w, 200, invoices)
@@ -5909,7 +6118,7 @@ func adminReportsSubscriptionsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	invoices, err := dbGetSubscriptionInvoices("")
 	if err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+		galatServer(w, r, err)
 		return
 	}
 	writeJSONResponse(w, 200, invoices)
@@ -6029,7 +6238,7 @@ func rentalServicesHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		rows, err := db.Query("SELECT id, owner_phone, name, price, created_at FROM rental_services WHERE owner_phone = ? ORDER BY name", callerPhone(r))
 		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		defer rows.Close()
@@ -6044,7 +6253,7 @@ func rentalServicesHandler(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		var s RentalService
 		if err := json.NewDecoder(r.Body).Decode(&s); err != nil {
-			writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 			return
 		}
 		s.Name = sanitizeServiceName(s.Name)
@@ -6060,7 +6269,7 @@ func rentalServicesHandler(w http.ResponseWriter, r *http.Request) {
 		s.ID = newID("service")
 		s.CreatedAt = time.Now().Format(time.RFC3339)
 		if _, err := db.Exec("INSERT INTO rental_services (id, owner_phone, name, price, created_at) VALUES (?, ?, ?, ?, ?)", s.ID, s.OwnerPhone, s.Name, s.Price, waktuKeDB(s.CreatedAt)); err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, s)
@@ -6085,7 +6294,7 @@ func rentalServiceDetailHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodDelete:
 		if _, err := db.Exec("DELETE FROM rental_services WHERE id = ?", serviceID); err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, map[string]string{"status": "success", "message": "Service deleted"})
@@ -6095,7 +6304,7 @@ func rentalServiceDetailHandler(w http.ResponseWriter, r *http.Request) {
 			Price float64 `json:"price"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-			writeJSONResponse(w, 400, map[string]string{"error": "Invalid request body"})
+			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
 			return
 		}
 		input.Name = sanitizeServiceName(input.Name)
@@ -6108,7 +6317,7 @@ func rentalServiceDetailHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if _, err := db.Exec("UPDATE rental_services SET name = ?, price = ? WHERE id = ?", input.Name, input.Price, serviceID); err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": err.Error()})
+			galatServer(w, r, err)
 			return
 		}
 		writeJSONResponse(w, 200, map[string]string{"status": "success", "message": "Service updated"})

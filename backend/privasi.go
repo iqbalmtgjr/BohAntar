@@ -58,7 +58,7 @@ var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
   <li><strong>Identitas akun</strong> — nama, alamat email, dan nomor handphone yang Anda isi saat mendaftar, atau yang diberikan Google kalau Anda masuk lewat akun Google.</li>
   <li><strong>Lokasi</strong> — titik jemput dan tujuan yang Anda pilih saat memesan. Untuk driver, posisi GPS dikirim selama Anda menyalakan status online, termasuk saat layar terkunci; selama itu notifikasi <em>bohAntar aktif</em> tampil di HP Anda.</li>
   <li><strong>Riwayat pesanan</strong> — alamat, jarak, ongkos, metode pembayaran, dan waktu setiap pesanan. Untuk kirim barang juga nama dan nomor penerima, serta foto barang saat diambil dan diserahkan.</li>
-  <li><strong>Saldo dan transaksi</strong> — saldo dompet PayAntar, top up, pembayaran tagihan QR di warung, dan setoran komisi driver.</li>
+  <li><strong>Saldo dan transaksi</strong> — saldo dompet BohPay, top up, pembayaran tagihan QR di warung, dan setoran komisi driver.</li>
   <li><strong>Rekening bank</strong> — bagi driver dan mitra yang mencairkan saldo: nama bank, nomor rekening, dan nama pemiliknya.</li>
   <li><strong>Percakapan</strong> — pesan antara penumpang dan driver selama satu pesanan berlangsung.</li>
   <li><strong>Dokumen driver</strong> — bagi calon driver: nomor dan foto KTP, SIM, dan STNK, serta data kendaraan, dipakai hanya untuk memverifikasi kelayakan berkendara.</li>
@@ -92,7 +92,7 @@ var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
   <p><strong>Dari dalam aplikasi:</strong> buka tab <strong>Akun</strong> → <strong>Hapus akun</strong>, lalu konfirmasi.</p>
   <p><strong>Tanpa aplikasi:</strong> kirim email ke <code>{{.Kontak}}</code> dari alamat email yang terdaftar, dengan subjek <em>Hapus Akun</em>. Permintaan diproses dalam 7 hari kerja.</p>
 </div>
-<p><strong>Yang ikut terhapus:</strong> nama, email, nomor handphone, alamat tersimpan, pesan yang Anda kirim, nomor dan foto KTP/SIM/STNK, data pengajuan mitra, warung atau kendaraan rental beserta menunya, dan sisa saldo PayAntar penumpang.</p>
+<p><strong>Yang ikut terhapus:</strong> nama, email, nomor handphone, alamat tersimpan, pesan yang Anda kirim, nomor dan foto KTP/SIM/STNK, data pengajuan mitra, warung atau kendaraan rental beserta menunya, dan sisa saldo BohPay penumpang.</p>
 <p><strong>Yang tetap disimpan:</strong> catatan pesanan tanpa nama, nomor, alamat, dan foto Anda — hanya tanggal, layanan, dan nominalnya — serta catatan transaksi keuangan, karena keduanya diperlukan untuk pembukuan usaha.</p>
 <p>Akun tidak bisa dihapus selagi ada pesanan yang sedang berjalan, bila masih ada komisi yang belum disetor, atau — bagi driver dan mitra — bila masih ada saldo yang belum dicairkan atau pengajuan pencairan yang belum diproses. Cairkan saldo Anda lebih dulu supaya tidak hangus.</p>
 
