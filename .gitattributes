@@ -1,0 +1,3 @@
+# Skrip bash wajib LF: dengan core.autocrlf=true Git menulisnya CRLF saat
+# checkout, lalu bash gagal ($'\r': command not found) — termasuk di VPS.
+*.sh text eol=lf
