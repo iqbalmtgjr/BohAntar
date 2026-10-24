@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;width:1080px;height:1920px;overflow:hidden}
+  body{background:linear-gradient(160deg,#0B5CD5 0%,#3B8BFF 100%);font-family:"Segoe UI",Arial,sans-serif;position:relative}
+  .o{position:absolute;border-radius:50%;background:rgba(255,255,255,.08)}
+  h1{position:absolute;top:120px;left:80px;right:80px;margin:0;color:#fff;text-align:center;font-size:66px;line-height:1.18;font-weight:800;letter-spacing:-.5px}
+  .hp{position:absolute;left:50%;top:420px;transform:translateX(-50%);height:1440px;border:16px solid #0f172a;border-radius:64px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.35);background:#0f172a}
+  .hp img{display:block;height:100%}
+</style></head>
+<body>
+<div class="o" style="width:620px;height:620px;right:-200px;top:-180px"></div>
+<div class="o" style="width:520px;height:520px;left:-220px;bottom:180px"></div>
+<h1 id="j"></h1>
+<div class="hp"><img id="g"></div>
+<script>
+  const p = new URLSearchParams(location.search);
+  document.getElementById('j').textContent = p.get('j');
+  document.getElementById('g').src = p.get('g');
+</script>
+</body></html>
