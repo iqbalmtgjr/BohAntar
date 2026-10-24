@@ -1098,8 +1098,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             SizedBox(height: 8),
             Text('• Nama, email, dan nomor HP\n'
                 '• Alamat tersimpan\n'
-                '• Isi percakapan dengan driver\n'
-                '• Sisa saldo BohPay-mu',
+                '• Isi percakapan dengan driver',
                 style: TextStyle(fontSize: 13, height: 1.6)),
             SizedBox(height: 12),
             Text('Riwayat pesanan tetap disimpan tanpa namamu, karena '
@@ -1233,19 +1232,6 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           ),
         ],
       ),
-      floatingActionButton: SizedBox(
-        width: 58,
-        height: 58,
-        child: FloatingActionButton(
-          onPressed: _pindaiBayar,
-          tooltip: 'Bayar pakai QR',
-          backgroundColor: AppTheme.primaryBlue,
-          elevation: 4,
-          shape: const CircleBorder(),
-          child: const Icon(Icons.qr_code_scanner, color: Colors.white, size: 26),
-        ),
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
       bottomNavigationBar: _buildRiderBottomNavBar(isDark),
     );
   }
@@ -1273,9 +1259,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
-  // Bar bawah memakai BottomAppBar, bukan BottomNavigationBar, karena tombol
-  // bundar di tengah butuh takik (notch) dan satu slot kosong di antara menu.
-  // Indeks tabnya tetap 0–3 seperti sebelumnya; slot tengah bukan tab.
+  // Tombol QR "Bayar" di tengah (dan takiknya) dibuang 24 Okt 2026 bersama
+  // saldo penumpang. Indeks tabnya tetap 0–3.
   Widget _buildRiderBottomNavBar(bool isDark) {
     return BottomAppBar(
       // Tanpa latar sendiri: warna halaman yang terlihat, jadi bar bawah menyatu
@@ -1284,27 +1269,12 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       color: Colors.transparent,
       surfaceTintColor: Colors.transparent,
       elevation: 0,
-      shape: const CircularNotchedRectangle(),
-      notchMargin: 8,
       height: 66,
       padding: EdgeInsets.zero,
       child: Row(
         children: [
           _itemNavRider(0, Icons.home_outlined, Icons.home, 'Beranda', isDark),
           _itemNavRider(1, Icons.receipt_long_outlined, Icons.receipt_long, 'Aktivitas', isDark),
-          // Ruang untuk tombol bundar di tengah, dengan labelnya: ikon QR saja
-          // tidak bilang tombol itu untuk membayar. Jarak bawahnya disamakan
-          // dengan label menu lain (garis penanda 3 + 2,5 px di bawahnya).
-          SizedBox(
-            width: 64,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                Text('Bayar', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w500, color: AppTheme.teksRedup(context))),
-                const SizedBox(height: 15),
-              ],
-            ),
-          ),
           ValueListenableBuilder(
             valueListenable: daftarChat,
             builder: (_, daftar, _) => _itemNavRider(2, Icons.chat_bubble_outline, Icons.chat_bubble, 'Chat', isDark,
@@ -1371,11 +1341,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     }
   }
 
-  // Blok banner + kartu BohPay ala Gojek: spanduk selebar layar, kartu BohPay
-  // menumpang di tepi bawahnya sejauh _bannerTertutup.
-  static const double _tinggiBanner = 200;
-  static const double _tinggiKartuBohPay = 74;
-  static const double _bannerTertutup = 34;
+  // Spanduk selebar layar ala Gojek. Kartu BohPay yang dulu menumpang di tepi
+  // bawahnya dibuang 24 Okt 2026: penumpang tidak lagi punya saldo (bohAntar
+  // tidak boleh menampung uang pelanggan), jadi tingginya dipotong 34 itu.
+  static const double _tinggiBanner = 166;
 
   // Banner beranda dari dashboard; banner bawaan selama server belum menjawab.
   List<Map<String, dynamic>> _banner = bannerBawaan;
@@ -1385,28 +1354,16 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       onRefresh: () => Future.wait([_fetchUserProfile(), _fetchRiderActiveOrder(), _muatBanner()]),
       child: SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-      // Bawah 56: separuh atas tombol QR di tengah menumpang di atas isi
-      // halaman, jadi kartu terakhir butuh ruang supaya tidak tertutup.
-      padding: const EdgeInsets.only(top: 4, bottom: 56),
+      padding: const EdgeInsets.only(top: 4, bottom: 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Tata letak mengikuti beranda Gojek (permintaan user 18 Okt 2026):
-          // kolom cari, spanduk selebar layar dengan kartu BohPay menumpang di
-          // tepi bawahnya, lalu grid layanan empat kolom. Logo dan lonceng di
+          // kolom cari, spanduk selebar layar, lalu grid layanan empat kolom. Logo dan lonceng di
           // app bar sengaja tidak diubah.
           Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: _kolomCari(isDark)),
           const SizedBox(height: 14),
-          Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: _tinggiKartuBohPay - _bannerTertutup),
-                child: BannerBeranda(banner: _banner, tinggi: _tinggiBanner, tertutup: _bannerTertutup, saatTekan: _bukaBanner),
-              ),
-              Positioned(left: 16, right: 16, bottom: 0, child: _kartuBohPay(isDark)),
-            ],
-          ),
+          BannerBeranda(banner: _banner, tinggi: _tinggiBanner, saatTekan: _bukaBanner),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
@@ -1464,80 +1421,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
-  // Seperti kartu GoPay: saldo di kiri, tiga aksi di kanan.
-  Widget _kartuBohPay(bool isDark) {
-    Widget aksi(IconData ikon, String label, VoidCallback saatTekan) => InkWell(
-          onTap: saatTekan,
-          borderRadius: BorderRadius.circular(12),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 32,
-                  height: 32,
-                  decoration: BoxDecoration(color: AppTheme.primaryBlue, borderRadius: BorderRadius.circular(11)),
-                  child: Icon(ikon, color: Colors.white, size: 19),
-                ),
-                const SizedBox(height: 4),
-                Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600)),
-              ],
-            ),
-          ),
-        );
-    // Tinggi minimum, bukan dipatok: dengan huruf diperbesar (pengaturan
-    // aksesibilitas HP) tulisan tombolnya butuh ruang lebih, dan kartu yang
-    // dipatok meluberkan isinya. Yang tumbuh cukup menutup banner sedikit lagi.
-    return Container(
-      constraints: const BoxConstraints(minHeight: _tinggiKartuBohPay),
-      padding: const EdgeInsets.fromLTRB(14, 8, 6, 8),
-      decoration: BoxDecoration(
-        color: isDark ? AppTheme.cardObsidianDark : Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: isDark ? 0.35 : 0.10), blurRadius: 18, offset: const Offset(0, 6))],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              // min: tinggi kartu tidak lagi dipatok, jadi kolom ini tidak
-              // boleh meminta tinggi tak terbatas.
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.account_balance_wallet_rounded, size: 16, color: AppTheme.primaryBlue),
-                    const SizedBox(width: 5),
-                    Text(
-                      'BohPay',
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: AppTheme.teksBerwarna(context, AppTheme.primaryDarkBlue)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(_rupiah(_walletBalance), style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w900, letterSpacing: -0.3)),
-                ),
-              ],
-            ),
-          ),
-          aksi(Icons.qr_code_scanner_rounded, 'Bayar', _pindaiBayar),
-          aksi(Icons.add_rounded, 'Isi Saldo', _showTopUpDialog),
-          aksi(Icons.receipt_long_rounded, 'Riwayat', () => setState(() => _currentTabIndex = 1)),
-        ],
-      ),
-    );
-  }
-
   Future<void> _muatBanner() async {
     try {
       final daftar = await ApiService().getBanner();
-      // Kosong = tidak ada yang aktif: banner bawaan tetap, supaya kartu BohPay
-      // tidak menggantung tanpa spanduk di belakangnya.
+      // Kosong = tidak ada yang aktif: banner bawaan tetap, supaya beranda
+      // tidak berlubang.
       if (mounted && daftar.isNotEmpty) setState(() => _banner = daftar);
     } catch (e) {
       debugPrint('Banner gagal dimuat: $e');
@@ -1672,7 +1560,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   }
 
   /// "Lainnya" dulu cuma memunculkan "Membuka seluruh menu layanan..." lalu
-  /// tidak membuka apa pun. Sekarang daftar semua layanan plus dua jalan pintas.
+  /// tidak membuka apa pun. Sekarang daftar semua layanan.
   void _bukaSemuaLayanan() {
     showModalBottomSheet(
       context: context,
@@ -1690,12 +1578,6 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Image.asset(asetLayanan(layanan)!, fit: BoxFit.contain),
-            );
-        Widget kotakIkon(IconData ikon) => Container(
-              width: 46,
-              height: 46,
-              decoration: BoxDecoration(color: AppTheme.primaryBlue, borderRadius: BorderRadius.circular(14)),
-              child: Icon(ikon, color: Colors.white, size: 22),
             );
         return SafeArea(
           child: SingleChildScrollView(
@@ -1718,27 +1600,6 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       _bukaLayanan(l);
                     },
                   ),
-                const Divider(height: 24),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: kotakIkon(Icons.qr_code_scanner_rounded),
-                  title: const Text('Bayar pakai QR', style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: const Text('Bayar tagihan warung dengan saldo BohPay'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _pindaiBayar();
-                  },
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: kotakIkon(Icons.add_rounded),
-                  title: const Text('Isi saldo BohPay', style: TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: const Text('Lewat QRIS dari bank atau e-wallet apa pun'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _showTopUpDialog();
-                  },
-                ),
               ],
             ),
           ),
@@ -2130,13 +1991,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   }
 
   // Jawaban mengikuti cara kerja aplikasi yang sekarang — ubah bersama kalau
-  // alurnya berubah (mis. tombol QR pindah, biaya QRIS berubah).
+  // alurnya berubah.
   static const _faq = [
-    (
-      'Bagaimana cara isi saldo BohPay?',
-      'Di beranda, ketuk "Isi Saldo" pada kartu BohPay, masukkan nominal (minimal Rp10.000), lalu bayar lewat QRIS '
-          'dari aplikasi bank atau e-wallet apa pun. Saldo masuk otomatis setelah lunas. Ada biaya QRIS kecil (sekitar 0,8%) yang ikut ditagih.',
-    ),
     (
       'Ongkos tidak muncul saat memesan?',
       'Ongkos baru dihitung setelah titik jemput dan tujuan pasti. Pilih tujuan dari daftar saran, atau ketuk titiknya di peta. '
@@ -2151,11 +2007,6 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       'Status selesai, tapi paket belum sampai?',
       'Buka pesanannya di tab Aktivitas untuk melihat nama penerima dan foto bukti serah terima dari driver. '
           'Kalau tetap ada masalah, chat CS lewat tombol di atas dan sebutkan waktu pesanannya.',
-    ),
-    (
-      'Bagaimana cara bayar pakai QR di warung?',
-      'Ketuk tombol QR "Bayar" di tengah bawah, arahkan kamera ke QR tagihan di kasir, cek nama warung dan nominalnya, '
-          'lalu ketuk "Bayar sekarang". Saldo BohPay langsung terpotong.',
     ),
     (
       'Mau daftar jadi driver?',
@@ -2253,7 +2104,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             ],
           ),
           const SizedBox(height: 24),
-          
+
+          // Kartu saldo hanya di mode driver: itu saldo komisi, syarat menarik
+          // order. Penumpang tidak punya saldo sejak 24 Okt 2026.
+          if (widget.role != 'rider') ...[
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
@@ -2269,10 +2123,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Satu nama di mana-mana: BohPay (keputusan user 18 Okt
-                    // 2026; sebelumnya campur "bohPay" dan "PayAntar").
                     Text(
-                      widget.role == 'rider' ? "Saldo BohPay" : "Saldo",
+                      "Saldo",
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppTheme.primaryBlue),
                     ),
                     const SizedBox(height: 4),
@@ -2299,6 +2151,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             ),
           ),
           const SizedBox(height: 24),
+          ],
 
           if (_peranAkun == 'driver')
             _buildAkunMenuItem(
@@ -2327,7 +2180,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             // adalah Tunai.
             _buildAkunMenuItem(Icons.payment, "Metode pembayaran", () {
               ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Bayar tunai ke driver atau pakai saldo BohPay — pilih saat memesan.")),
+                const SnackBar(content: Text("Bayar tunai ke driver saat pesanan sampai.")),
               );
             }, isDark),
             _buildAkunMenuItem(Icons.card_giftcard, "Promo saya", () {
@@ -3482,95 +3335,6 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         backgroundColor: Colors.green,
       ),
     );
-  }
-
-  /// Pindai QR tagihan warung, lalu bayar dari saldo.
-  ///
-  /// Isi QR cuma id tagihan, jadi nominal dan nama warungnya dibaca ulang dari
-  /// server sebelum ditampilkan: QR yang diedit orang tidak bisa memunculkan
-  /// angka palsu di layar konfirmasi, dan tidak ada uang yang berpindah sebelum
-  /// tombol bayar ditekan.
-  Future<void> _pindaiBayar() async {
-    final hasil = await Navigator.push<Map<String, dynamic>>(
-      context,
-      MaterialPageRoute(
-        builder: (_) => PindaiQRScreen(
-          judul: 'Bayar dengan QR',
-          petunjuk: 'Arahkan ke QR tagihan di kasir',
-          onKode: (isi) async {
-            final detail = await ApiService().lihatTagihan(isi);
-            final t = (detail['tagihan'] as Map<String, dynamic>?) ?? {};
-            if (t['paid_at'] != null) {
-              throw Exception('Tagihan ini sudah pernah dibayar.');
-            }
-            final nominal = (t['amount'] as num?)?.toDouble() ?? 0;
-            // Saldo disegarkan dulu supaya tombol bayar tidak mati gara-gara
-            // angka lama — top up yang baru masuk belum tentu terbaca layar ini.
-            await _fetchUserProfile();
-            final setuju = await _konfirmasiBayar(
-              (t['penerima_nama'] ?? 'Warung').toString(),
-              nominal,
-            );
-            if (!setuju) return null;
-            return ApiService().bayarTagihan(isi);
-          },
-        ),
-      ),
-    );
-    if (hasil == null || !mounted) return;
-    // Saldo dibaca ulang dari server, bukan dikurangi sendiri di sini: angka
-    // yang benar hanya ada di database.
-    await _fetchUserProfile();
-    if (!mounted) return;
-    final jumlah = (hasil['amount'] as num?)?.toDouble() ?? 0;
-    final penerima = (hasil['penerima_nama'] ?? 'warung').toString();
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Berhasil bayar ${_rupiah(jumlah)} ke $penerima.'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  /// Layar konfirmasi sebelum saldo berpindah. Tombolnya mati kalau saldonya
-  /// kurang — pesan server memang menolak, tapi menahannya di sini membuat
-  /// alasannya terbaca sebelum pelanggan menunggu di depan kasir.
-  Future<bool> _konfirmasiBayar(String penerima, double nominal) async {
-    if (!mounted) return false;
-    final cukup = _walletBalance >= nominal;
-    final setuju = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Bayar tagihan'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(penerima, style: const TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            Text(_rupiah(nominal), style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 10),
-            Text(
-              cukup
-                  ? 'Saldo BohPay-mu ${_rupiah(_walletBalance)}'
-                  : 'Saldo BohPay-mu ${_rupiah(_walletBalance)} — belum cukup. Isi saldo dulu, ya.',
-              style: TextStyle(
-                fontSize: 12,
-                color: cukup ? Colors.grey : AppTheme.errorColor,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
-          ElevatedButton(
-            onPressed: cukup ? () => Navigator.pop(ctx, true) : null,
-            child: const Text('Bayar sekarang'),
-          ),
-        ],
-      ),
-    );
-    return setuju ?? false;
   }
 
   Widget _buildRiwayatTile(dynamic o, bool isDark) {

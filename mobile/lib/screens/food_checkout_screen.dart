@@ -27,7 +27,6 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   EstimasiTarif? _estimasi;
   String _alamatTujuan = '';
   bool _mencariLokasi = true;
-  String _metode = 'Tunai'; // "Tunai" | "BohPay"
   final _catatan = TextEditingController();
   // Patokan untuk driver, ditempel ke alamat antar. Titik GPS dan nama jalan
   // sering tidak cukup untuk menemukan rumah di gang.
@@ -36,9 +35,6 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   // Hitungan ongkir gagal: tanpa penanda ini barisnya tertulis "sedang
   // dihitung" selamanya dan tombol Pesan mati tanpa jalan keluar.
   bool _estimasiGagal = false;
-  // Null = belum terbaca. Hanya untuk memberi tahu lebih awal; server tetap
-  // yang menolak kalau saldo kurang.
-  double? _saldo;
 
   Warung get _warung => widget.keranjang.warung;
 
@@ -46,7 +42,6 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   void initState() {
     super.initState();
     _pakaiLokasiSaya();
-    _muatSaldo();
   }
 
   @override
@@ -61,14 +56,6 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   void _ubahBaris(BarisKeranjang b, int selisih) {
     setState(() => widget.keranjang.ubah(b, selisih));
     if (widget.keranjang.kosong) Navigator.pop(context);
-  }
-
-  Future<void> _muatSaldo() async {
-    try {
-      final res = await ApiService().getProfile();
-      final saldo = (res['user']?['balance'] as num?)?.toDouble();
-      if (mounted && saldo != null) setState(() => _saldo = saldo);
-    } catch (_) {}
   }
 
   Future<void> _pakaiLokasiSaya() async {
@@ -186,7 +173,8 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
         // Driver membaca alamat tujuan, jadi patokannya ikut di situ.
         dropoff: patokan.isEmpty ? alamat : '$alamat (Patokan: $patokan)',
         service: 'BohFood',
-        paymentMethod: _metode == 'BohPay' ? 'wallet' : 'cash',
+        // Tunai saja sejak 24 Okt 2026, sama dengan layar pesan BohRide.
+        paymentMethod: 'cash',
         pickupLat: _warung.posisi.latitude,
         pickupLng: _warung.posisi.longitude,
         dropoffLat: tujuan.latitude,
@@ -216,10 +204,6 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
     final ongkir = estimasi?.ongkos ?? 0;
     final biayaJasa = estimasi?.biayaJasa ?? 0;
     final total = k.subtotal + ongkir + biayaJasa;
-    final tunai = _metode == 'Tunai';
-    // Saldo belum terbaca dianggap cukup; server yang menolak kalau ternyata
-    // kurang. Saldo yang tertahan pesanan lain tidak terlihat dari sini.
-    final saldoCukup = _saldo == null || _saldo! >= total;
 
     return Scaffold(
       appBar: AppBar(
@@ -228,7 +212,10 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
         elevation: 0,
       ),
       body: RefreshIndicator(
-        onRefresh: _muatSaldo,
+        // Dulu menyegarkan saldo BohPay; kini menghitung ulang ongkir.
+        onRefresh: () async {
+          if (_tujuan case final t?) await _ambilEstimasi(t);
+        },
         child: ListView(
         physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
@@ -324,36 +311,6 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
           ),
 
           _bagian(
-            'Bayar pakai apa?',
-            Column(
-              children: [
-                _KartuMetode(
-                  ikon: Icons.payments_outlined,
-                  judul: 'Tunai',
-                  keterangan: 'Bayar ke driver saat makanan tiba',
-                  dipilih: tunai,
-                  isDark: isDark,
-                  saatTekan: () => setState(() => _metode = 'Tunai'),
-                ),
-                const SizedBox(height: 8),
-                _KartuMetode(
-                  ikon: Icons.account_balance_wallet_outlined,
-                  judul: 'BohPay',
-                  keterangan: _saldo == null
-                      ? 'Dipotong dari saldo setelah makanan diterima'
-                      : saldoCukup
-                          ? 'Saldo ${rupiah(_saldo!)} · dipotong setelah makanan diterima'
-                          : 'Saldo ${rupiah(_saldo!)} tidak cukup. Pilih Tunai atau isi saldo dari beranda.',
-                  peringatan: !saldoCukup,
-                  dipilih: !tunai,
-                  isDark: isDark,
-                  saatTekan: () => setState(() => _metode = 'BohPay'),
-                ),
-              ],
-            ),
-          ),
-
-          _bagian(
             'Rincian pembayaran',
             _kartu(
               isDark,
@@ -392,9 +349,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
-                          tunai
-                              ? 'Driver membayar dulu ke warung. Kamu bayar total ini ke driver saat makanan tiba.'
-                              : 'Driver membayar dulu ke warung. Saldo BohPay-mu dipotong setelah makanan diterima.',
+                          'Driver membayar dulu ke warung. Kamu bayar total ini tunai ke driver saat makanan tiba.',
                           style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)),
                         ),
                       ),
@@ -415,7 +370,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
             // Ongkirnya belum diketahui selama estimasi belum datang, dan
             // tombolnya menyebut total — jadi jangan biarkan ditekan sebelum
             // angka yang tertulis di situ benar.
-            onPressed: estimasi == null || _mengirim || _mencariLokasi || (!tunai && !saldoCukup) ? null : _pesan,
+            onPressed: estimasi == null || _mengirim || _mencariLokasi ? null : _pesan,
             child: _mengirim
                 ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
                 : Text('Pesan sekarang · ${rupiah(total)}'),
@@ -463,49 +418,6 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
           ],
         ),
       );
-}
-
-class _KartuMetode extends StatelessWidget {
-  final IconData ikon;
-  final String judul;
-  final String keterangan;
-  final bool dipilih;
-  final bool peringatan; // keterangan ditulis merah: metode ini tidak bisa dipakai sekarang
-  final bool isDark;
-  final VoidCallback saatTekan;
-  const _KartuMetode({required this.ikon, required this.judul, required this.keterangan, required this.dipilih, required this.isDark, required this.saatTekan, this.peringatan = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: saatTekan,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: isDark ? AppTheme.cardObsidianDark : Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: dipilih ? AppTheme.primaryBlue : Colors.grey.withOpacity(0.2), width: dipilih ? 2 : 1),
-        ),
-        child: Row(
-          children: [
-            Icon(ikon, color: dipilih ? AppTheme.primaryBlue : Colors.grey, size: 22),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(judul, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  Text(keterangan, style: TextStyle(color: peringatan ? AppTheme.errorColor : AppTheme.teksRedup(context), fontSize: 11)),
-                ],
-              ),
-            ),
-            Icon(dipilih ? Icons.radio_button_checked : Icons.radio_button_off, color: dipilih ? AppTheme.primaryBlue : Colors.grey, size: 20),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 /// Peta dengan pin di tengah: geser petanya, bukan pinnya. Lebih mudah dikenai

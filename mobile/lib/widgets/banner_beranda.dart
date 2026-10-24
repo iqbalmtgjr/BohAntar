@@ -4,8 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:mobile/models/food.dart' show urlGambar;
 import 'package:mobile/status_pesanan.dart' show asetLayanan;
 
-/// Spanduk geser selebar layar di belakang kartu BohPay, seperti beranda
-/// Gojek. Isinya diatur super admin (dashboard → Banner Beranda).
+/// Spanduk geser selebar layar, seperti beranda Gojek. Isinya diatur super admin (dashboard → Banner Beranda).
 ///
 /// Banner tanpa gambar digambar di sini dari judul, keterangan, dan warna;
 /// banner bergambar dipasang apa adanya.
@@ -22,8 +21,7 @@ const bannerWarna = <String, List<Color>>{
   'gelap': [Color(0xFF0F172A), Color(0xFF334155)],
 };
 
-/// Dipakai selama server belum menjawab, gagal, atau tidak punya banner aktif,
-/// supaya kartu BohPay tidak pernah menggantung tanpa spanduk di belakangnya.
+/// Dipakai selama server belum menjawab, gagal, atau tidak punya banner aktif.
 /// Isinya sama dengan banner bawaan yang ditanam backend (banner.go).
 const bannerBawaan = <Map<String, dynamic>>[
   {
@@ -40,12 +38,9 @@ const bannerBawaan = <Map<String, dynamic>>[
 class BannerBeranda extends StatefulWidget {
   final List<Map<String, dynamic>> banner;
   final double tinggi;
-
-  /// Bagian bawah yang tertutup kartu BohPay; isi banner dijaga di atasnya.
-  final double tertutup;
   final void Function(Map<String, dynamic>) saatTekan;
 
-  const BannerBeranda({super.key, required this.banner, required this.tinggi, required this.tertutup, required this.saatTekan});
+  const BannerBeranda({super.key, required this.banner, required this.tinggi, required this.saatTekan});
 
   @override
   State<BannerBeranda> createState() => _BannerBerandaState();
@@ -106,7 +101,7 @@ class _BannerBerandaState extends State<BannerBeranda> {
             Positioned(
               left: 0,
               right: 0,
-              bottom: widget.tertutup + 8,
+              bottom: 8,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -174,14 +169,14 @@ class _BannerBerandaState extends State<BannerBeranda> {
               Positioned(
                 right: 10,
                 top: 12,
-                bottom: widget.tertutup + 2,
+                bottom: 2,
                 child: AspectRatio(aspectRatio: 1, child: Image.asset(aset, fit: BoxFit.contain)),
               ),
             Positioned(
               left: 20,
               top: 16,
               right: aset != null ? ukuran.maxWidth * 0.40 : 20,
-              bottom: widget.tertutup + 6,
+              bottom: 6,
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,

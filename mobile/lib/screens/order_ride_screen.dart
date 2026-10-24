@@ -56,9 +56,6 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   final _formKey = GlobalKey<FormState>();
 
   late String _selectedService;
-  // Tunai jadi bawaan: saldo pengguna baru nol dan top up belum tersedia, jadi
-  // memilih BohPay duluan berarti pesanan pertama siapa pun pasti ditolak.
-  String _paymentMethod = "Tunai"; // "BohPay" or "Tunai"
   double _fare = 0.0;
   double _biayaJasa = 0.0;
   // Taksiran dari server. Null berarti belum pernah berhasil diambil untuk
@@ -94,9 +91,6 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   String _driverPlat = "";
   double _driverRating = 0;
   int _driverUlasan = 0;
-  // Saldo BohPay untuk kartu cara bayar. Null = belum terbaca, dianggap
-  // cukup; server tetap yang menolak kalau ternyata kurang.
-  double? _saldo;
 
   bool get _kirimBarang => _selectedService == "BohAntar" || _selectedService == "BohSend" || _selectedService == "BohFood";
   bool get _makanan => _selectedService == "BohFood";
@@ -175,7 +169,6 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       // Pesanan berjalan membawa titik jemputnya sendiri; pesanan baru
       // dimulai dari posisi penumpang.
       _lokasiAwal();
-      _muatSaldo();
     }
     if (widget.initialTempat case final tempat?) {
       _destinationController.text = tempat.name;
@@ -224,14 +217,6 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     _driverPlat = (d['plat'] ?? '').toString();
     _driverRating = (d['rating'] as num?)?.toDouble() ?? 0;
     _driverUlasan = (d['jumlah_ulasan'] as num?)?.toInt() ?? 0;
-  }
-
-  Future<void> _muatSaldo() async {
-    try {
-      final res = await ApiService().getProfile();
-      final saldo = (res['user']?['balance'] as num?)?.toDouble();
-      if (mounted && saldo != null) setState(() => _saldo = saldo);
-    } catch (_) {}
   }
 
   /// Membuka kembali pesanan yang sedang berjalan, bukan formulir kosong.
@@ -811,7 +796,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     setState(() {
       _orderStatus = "searching";
       // Kotak "siapkan uang" di layar pelacakan membaca ini.
-      _bayarTunai = _paymentMethod != "BohPay";
+      _bayarTunai = true;
     });
     _radarController.repeat();
 
@@ -820,7 +805,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         pickup: _pickupController.text,
         dropoff: _destinationController.text,
         service: _selectedService,
-        paymentMethod: _paymentMethod == "BohPay" ? "wallet" : "cash",
+        // Penumpang hanya bayar tunai sejak 24 Okt 2026: bohAntar tidak boleh
+        // menampung uang pelanggan (kasus ojol Sintang di Polda Kalbar).
+        paymentMethod: "cash",
         pickupLat: _currentLatLng.latitude,
         pickupLng: _currentLatLng.longitude,
         dropoffLat: tujuan.latitude,
@@ -1626,9 +1613,6 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     final tarif = _estimasi;
     final distanceKm = tarif?.km ?? 0;
 
-    final pakaiSaldo = _paymentMethod == "BohPay";
-    final saldoKurang = pakaiSaldo && tarif != null && _saldo != null && _saldo! < tarif.total;
-
     return Container(
       padding: const EdgeInsets.all(20),
       margin: const EdgeInsets.all(16),
@@ -1740,37 +1724,17 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           ),
           const SizedBox(height: 18),
 
-          // Dua kartu yang kelihatan bisa dipilih. Dulu satu tulisan kecil
-          // berpanah bawah yang diam-diam berganti Tunai↔BohPay saat diketuk —
-          // tidak ada yang tahu itu bisa diganti.
-          const Text("Bayar pakai apa?", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-          const SizedBox(height: 8),
           Row(
             children: [
-              Expanded(child: _pilihanBayar(isDark, "Tunai", Icons.payments_outlined, "Bayar ke driver")),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _pilihanBayar(
-                  isDark,
-                  "BohPay",
-                  Icons.account_balance_wallet_outlined,
-                  _saldo == null ? "Potong saldo" : "Saldo ${rupiah(_saldo!)}",
-                ),
-              ),
+              const Icon(Icons.payments_outlined, size: 18, color: AppTheme.primaryBlue),
+              const SizedBox(width: 8),
+              Text("Bayar tunai ke driver", style: TextStyle(fontSize: 13, color: AppTheme.teksRedup(context))),
             ],
           ),
-          if (saldoKurang)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text(
-                "Saldo BohPay belum cukup. Pilih Tunai, atau isi saldo dulu dari beranda.",
-                style: TextStyle(fontSize: 12, color: AppTheme.errorColor),
-              ),
-            ),
           const SizedBox(height: 16),
 
           ElevatedButton(
-            onPressed: saldoKurang ? null : _bookRide,
+            onPressed: _bookRide,
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.primaryBlue,
               minimumSize: const Size(double.infinity, 52),
@@ -1781,38 +1745,6 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           ),
         ],
       ),
-      ),
-    );
-  }
-
-  /// Satu kartu cara bayar. Yang terpilih bergaris biru tebal.
-  Widget _pilihanBayar(bool isDark, String metode, IconData ikon, String keterangan) {
-    final dipilih = _paymentMethod == metode;
-    return InkWell(
-      onTap: () => setState(() => _paymentMethod = metode),
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: dipilih ? AppTheme.primaryBlue.withValues(alpha: isDark ? 0.18 : 0.06) : null,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: dipilih ? AppTheme.primaryBlue : Colors.grey.withValues(alpha: 0.3), width: dipilih ? 2 : 1),
-        ),
-        child: Row(
-          children: [
-            Icon(ikon, size: 20, color: dipilih ? AppTheme.primaryBlue : AppTheme.teksRedup(context)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(metode, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  Text(keterangan, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context))),
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }
