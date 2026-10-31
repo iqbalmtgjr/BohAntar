@@ -2,8 +2,6 @@ import { useState, useEffect, useRef } from "react";
 import { Store, MapPin, Clock, Salad, Save, Power, ShoppingBag, Wallet, ImagePlus } from "lucide-react";
 import { BASE, authFetch, api, fileURL } from "../../api";
 import { toast } from "../../components/Feedback";
-import TagihQR from "../../components/TagihQR";
-import SaldoMitra from "../../components/SaldoMitra";
 import PetaTitik from "../../components/PetaTitik";
 
 // Foto dari unggahan disimpan sebagai "/uploads/..."; tautan luar apa adanya.
@@ -107,7 +105,6 @@ export default function FoodDashboard({ ownerPhone }) {
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
   const [orders, setOrders] = useState([]);
-  const [versiSaldo, setVersiSaldo] = useState(0);
 
   const fetchMerchantAndMenus = () => {
     authFetch(`${BASE}/food/merchant?owner_phone=${encodeURIComponent(ownerPhone)}`)
@@ -499,9 +496,6 @@ export default function FoodDashboard({ ownerPhone }) {
                   </div>
                 ))}
               </div>
-
-              <SaldoMitra versi={versiSaldo} />
-              <TagihQR saldoMilik="warung" onLunas={() => setVersiSaldo(v => v + 1)} />
 
               {/* Pesanan masuk */}
               <div className="card">

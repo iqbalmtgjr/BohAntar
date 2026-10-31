@@ -88,11 +88,6 @@ export const api = {
   // QR-nya digambar server dan endpointnya butuh token admin, jadi tidak bisa
   // dipasang langsung sebagai src <img>; diambil sebagai blob lalu jadi objectURL.
   qrSetoran: (id) => authFetch(`${BASE}/admin/setoran/qr/${id}`).then(r => r.blob()).then(b => URL.createObjectURL(b)),
-  // Tagihan QR warung: penerimanya diambil backend dari token, jadi nominal
-  // saja yang dikirim. Arah uangnya kebalikan setoran — saldo penumpang turun.
-  buatTagihan: (amount) => post(`/tagihan`, { amount }),
-  cekTagihan: (id) => json(`/tagihan?id=${encodeURIComponent(id)}`),
-  qrTagihan: (id) => authFetch(`${BASE}/tagihan/qr/${id}`).then(r => r.blob()).then(b => URL.createObjectURL(b)),
   getAnalytics: () => json(`/admin/analytics`),
   getTarif: () => json(`/admin/tarif`),
   saveTarif: (data) => json(`/admin/tarif`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
@@ -131,10 +126,8 @@ export const api = {
   getSubscriptionStatus: () => json(`/subscription/status`),
   getRentalBookings: () => json(`/rental/bookings`),
   getProfile: () => json(`/users/profile`),
-  // Pencairan saldo manual: mitra mengajukan, super admin memproses. Saldo
-  // sudah dipotong backend saat pengajuan lahir.
-  getPencairan: () => json(`/pencairan`),
-  ajukanPencairan: (data) => post(`/pencairan`, data),
+  // Pengajuan pencairan ditutup 31 Okt 2026; super admin tinggal menuntaskan
+  // yang sudah menunggu. Saldonya sudah dipotong backend saat pengajuan lahir.
   adminPencairan: (status) => json(`/admin/pencairan?status=${status}`),
   prosesPencairan: (id, aksi, catatan) => post(`/admin/pencairan/${id}/${aksi}`, { catatan }),
   updateProfile: (data) => json(`/users/profile`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),

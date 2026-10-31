@@ -284,7 +284,7 @@ export default function LandingPage({ onSelectPortal }) {
         { q: 'Bagaimana cara mulai menggunakan aplikasi bohAntar?', a: 'Unduh aplikasi bohAntar di Play Store atau App Store, daftar akun dengan nomor HP aktif, dan langsung pilih layanan Ride, Car, Send, Food, atau Rental sesuai kebutuhan.' },
         { q: 'Apakah semua mitra pengemudi dan armada terverifikasi?', a: 'Ya, seluruh mitra driver melewati verifikasi identitas resmi (KTP, SIM aktif, SKCK) serta inspeksi kelayakan kendaraan untuk menjamin keamanan perjalanan.' },
         { q: 'Bagaimana cara bergabung menjadi Mitra Resto atau Rental?', a: 'Klik tombol "Portal Mitra" di navigasi atas atau pilih card portal yang sesuai, lalu lakukan login / pendaftaran mitra baru.' },
-        { q: 'Metode pembayaran apa saja yang didukung?', a: 'Tunai (Cash), Saldo Dompet Digital bohPay, Transfer Bank (Virtual Account), serta QRIS untuk semua bank & e-wallet.' }
+        { q: 'Metode pembayaran apa saja yang didukung?', a: 'Pesanan dibayar tunai langsung ke driver atau mitra. bohAntar tidak menyimpan saldo atau dompet digital pelanggan.' }
     ];
 
     // Animated counters

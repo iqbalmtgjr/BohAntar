@@ -316,39 +316,6 @@ class ApiService {
     return _handleResponse(response);
   }
 
-  /// Riwayat pencairan saldo milik akun ini, terbaru dulu.
-  Future<List<dynamic>> getPencairan() async {
-    final response = await klienHttp.get(
-      Uri.parse('$baseUrl/api/pencairan'),
-      headers: {'Authorization': 'Bearer $_token'},
-    );
-    return (_handleResponse(response)['pencairan'] as List?) ?? [];
-  }
-
-  /// Mengajukan pencairan. Saldo dipotong server saat itu juga; admin
-  /// mentransfer lalu menandai selesai, atau menolak dan saldonya kembali.
-  Future<Map<String, dynamic>> ajukanPencairan({
-    required int amount,
-    required String bank,
-    required String nomorRekening,
-    required String namaPemilik,
-  }) async {
-    final response = await klienHttp.post(
-      Uri.parse('$baseUrl/api/pencairan'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $_token',
-      },
-      body: jsonEncode({
-        'amount': amount,
-        'bank': bank,
-        'nomor_rekening': nomorRekening,
-        'nama_pemilik': namaPemilik,
-      }),
-    );
-    return _handleResponse(response);
-  }
-
   Future<Map<String, dynamic>> topUp(double amount) async {
     if (_token == null) {
       throw Exception(_sesiHabis);

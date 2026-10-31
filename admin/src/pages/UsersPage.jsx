@@ -84,7 +84,9 @@ export default function UsersPage() {
         name: editForm.name,
         email: editForm.email,
         role: editForm.role,
-        balance: parseFloat(editForm.balance),
+        // Saldo hanya dikirim kalau diubah: angkanya diambil saat modal dibuka,
+        // dan komisi pesanan yang selesai sementara itu ikut tertimpa.
+        ...(Number(editForm.balance) !== (editUser.balance || 0) && { balance: parseFloat(editForm.balance) }),
         rating: parseFloat(editForm.rating),
         password: editForm.password
       });
@@ -281,7 +283,7 @@ export default function UsersPage() {
                 </div>
                 <div className="input-group">
                   <label>Saldo (Rp)</label>
-                  <input className="input" type="number" min="0" value={editForm.balance} onChange={e => setEditForm({ ...editForm, balance: e.target.value })} required />
+                  <input className="input" type="number" value={editForm.balance} onChange={e => setEditForm({ ...editForm, balance: e.target.value })} required />
                 </div>
                 <div className="input-group">
                   <label>Rating</label>

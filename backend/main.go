@@ -443,7 +443,17 @@ func main() {
 	mux.HandleFunc("/api/auth/google", googleLoginHandler)
 	mux.HandleFunc("/api/auth/reset-password-google", resetPasswordGoogleHandler)
 	mux.HandleFunc("/api/users/profile", profileHandler)
-	mux.HandleFunc("/api/users/topup", topUpHandler)
+	// Rute yang ditutup tetap menjawab dengan kalimat yang bisa dibaca, bukan
+	// 404: APK lama masih punya tombolnya, dan pesan ini tampil apa adanya.
+	ditutup := func(pesan string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			writeJSONResponse(w, http.StatusGone, map[string]string{"error": pesan})
+		}
+	}
+	// Top up hanya untuk driver: saldonya setoran komisi, syarat menerima
+	// pesanan tunai. Penumpang tidak lagi punya saldo sejak 24 Okt 2026 —
+	// ojol di Sintang dipanggil Polda Kalbar karena menampung uang pelanggan.
+	mux.HandleFunc("/api/users/topup", requireRole("driver")(topUpHandler))
 	mux.HandleFunc("/api/users/addresses", addressesHandler)
 	mux.HandleFunc("/api/orders", createOrderHandler)
 	// Papan orderan berisi nama, alamat, dan koordinat GPS penumpang yang sedang
@@ -492,18 +502,24 @@ func main() {
 	mux.HandleFunc("/api/admin/setoran", admin(adminSetoranHandler))
 	mux.HandleFunc("/api/admin/setoran/qr/", admin(adminSetoranQRHandler))
 	mux.HandleFunc("/api/driver/setoran/klaim", requireRole("driver")(driverKlaimSetoranHandler))
-	// Pencairan saldo manual: diajukan pemilik saldo, diproses admin.
-	mux.HandleFunc("/api/pencairan", requireRole(peranBolehCair...)(pencairanHandler))
+	// Uang hanya boleh MASUK ke bohAntar, tidak keluar lagi (keputusan user
+	// 31 Okt 2026). Tanpa dompet penumpang, saldo driver hanya berisi
+	// setorannya sendiri: top up QRIS lalu cairkan ke rekening siapa pun
+	// menjadikan rekening bohAntar tempat transit uang — pola yang membuat ojol
+	// Sintang diperiksa atas dugaan pencucian uang. Sisa saldo lama dikembalikan
+	// admin secara manual; pengajuan yang sudah menunggu tetap diproses lewat
+	// rute admin di bawah.
+	//
+	// Tagihan QR ditutup karena alasan yang sama: ia memindahkan saldo
+	// penumpang ke mitra, lalu mitra mencairkannya.
+	//
+	// ponytail: pencairanHandler dan handler tagihan dibiarkan (masih dites);
+	// hapus bersama tesnya kalau keputusan ini sudah permanen.
+	mux.HandleFunc("/api/pencairan", ditutup("Pencairan saldo lewat aplikasi sudah ditutup. Hubungi admin bohAntar untuk pengembalian sisa saldo."))
 	mux.HandleFunc("/api/admin/pencairan", admin(adminPencairanHandler))
 	mux.HandleFunc("/api/admin/pencairan/", admin(adminProsesPencairanHandler))
-	// Tagihan QR warung: dibuat warung, dipindai penumpang. Cukup requireAuth —
-	// pembatasan rolenya ada di dalam handler, karena POST hanya untuk warung
-	// sedangkan GET dipakai penumpang yang mau melihat nominalnya dulu.
-	// Mitra rental yang langganannya habis ikut tertahan di sini, sama seperti
-	// fitur rental lain. Peran lain dilewatkan begitu saja oleh pembungkusnya.
-	mux.HandleFunc("/api/tagihan", requireAuth(requireActiveSubscription(tagihanHandler)))
-	mux.HandleFunc("/api/tagihan/qr/", requireAuth(tagihanQRHandler))
-	mux.HandleFunc("/api/tagihan/bayar", requireAuth(bayarTagihanHandler))
+	mux.HandleFunc("/api/tagihan", ditutup("Bayar pakai saldo sudah tidak tersedia. Bayar tunai langsung, ya."))
+	mux.HandleFunc("/api/tagihan/", ditutup("Bayar pakai saldo sudah tidak tersedia. Bayar tunai langsung, ya."))
 	mux.HandleFunc("/api/admin/drivers/", admin(adminDriverApproveHandler))
 	mux.HandleFunc("/api/admin/applications", admin(adminDriverApplicationsHandler))
 	mux.HandleFunc("/api/admin/partner-applications", admin(adminPartnerApplicationsHandler))
@@ -2857,35 +2873,11 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 	// pesanan yang sudah disetujui penumpang pagi tadi.
 	biayaJasa := t.BiayaJasa
 
-	// Metode apa pun selain "wallet" diperlakukan sebagai tunai, termasuk yang
-	// kosong dari aplikasi versi lama. Tunai adalah default yang aman: tidak ada
-	// saldo yang berpindah, jadi salah tebak tidak pernah mengurangi uang orang.
+	// Selalu tunai, apa pun yang dikirim: APK lama masih bisa mengirim "wallet",
+	// dan penumpang tidak lagi punya saldo (24 Okt 2026). Pesanan dompet yang
+	// terlanjur dibuat sebelumnya tetap diselesaikan oleh jalur "wallet" di
+	// completeOrder.
 	metode := "cash"
-	if input.PaymentMethod == "wallet" {
-		metode = "wallet"
-	}
-	// Saldo hanya relevan untuk pembayaran dompet, dan diperiksa di muka supaya
-	// driver tidak menempuh perjalanan yang ternyata tak terbayar di ujung.
-	//
-	// Yang dibandingkan adalah saldo dikurangi tarif pesanan dompet lain yang
-	// belum selesai. Tanpa itu, saldo Rp20.000 lolos untuk tiga pesanan
-	// Rp20.000 sekaligus, dan kegagalannya baru muncul saat driver sudah
-	// mengantar — pesanannya lalu tersangkut karena Selesai ditolak 402.
-	if metode == "wallet" {
-		tertahan, err := dbSaldoTertahan(u.PhoneNumber)
-		if err != nil {
-			writeJSONResponse(w, 500, map[string]string{"error": "Gagal memeriksa saldo"})
-			return
-		}
-		if u.Balance-tertahan < fare+biayaJasa+foodTotal {
-			pesan := "Saldo BohPay tidak cukup. Pilih bayar tunai atau isi saldo dulu, ya."
-			if tertahan > 0 {
-				pesan = fmt.Sprintf("Saldo BohPay tidak cukup: Rp%.0f sedang dipakai pesanan lain yang belum selesai. Pilih bayar tunai atau isi saldo dulu, ya.", tertahan)
-			}
-			writeJSONResponse(w, 402, map[string]string{"error": pesan})
-			return
-		}
-	}
 	oid := newID("order")
 	now := time.Now().Format(time.RFC3339)
 	o := Order{
@@ -3864,11 +3856,12 @@ func hapusAkun(u User) (int, string) {
 	if u.Balance < 0 {
 		return 409, "Masih ada komisi yang belum disetor. Lunasi dulu sebelum menghapus akun."
 	}
-	// Saldo driver dan mitra adalah pendapatan yang bisa dicairkan, jadi tidak
-	// boleh hangus bersama akunnya. Saldo penumpang hasil top up dan memang tidak
-	// bisa dicairkan; dialog hapus akun di aplikasi menyebut saldo itu ikut hilang.
+	// Saldo driver dan mitra tidak boleh hangus bersama akunnya. Pencairan lewat
+	// aplikasi sudah ditutup, jadi admin yang mengembalikannya setelah memeriksa
+	// identitas. Saldo penumpang hasil top up; dialog hapus akun di aplikasi
+	// menyebut saldo itu ikut hilang.
 	if u.Balance > 0 && slices.Contains(peranBolehCair, u.Role) {
-		return 409, fmt.Sprintf("Masih ada saldo Rp%.0f. Cairkan dulu sebelum menghapus akun.", u.Balance)
+		return 409, fmt.Sprintf("Masih ada saldo Rp%.0f. Hubungi admin bohAntar untuk pengembaliannya sebelum menghapus akun.", u.Balance)
 	}
 	// Pengajuan yang menunggu sudah memotong saldo. Kalau ditolak setelah akunnya
 	// hilang, uangnya dikembalikan ke akun yang tidak ada lagi.

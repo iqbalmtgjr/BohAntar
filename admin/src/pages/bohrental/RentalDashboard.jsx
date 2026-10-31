@@ -2,8 +2,6 @@ import { useState, useEffect } from "react";
 import { Car, Calendar, DollarSign, Clock, Wallet, Eye, EyeOff, TrendingUp, ConciergeBell, CalendarDays, BarChart3, CreditCard, ShoppingBag } from "lucide-react";
 import { BASE, authFetch } from "../../api";
 import { buildRows, bucketOf } from "./schedule";
-import TagihQR from "../../components/TagihQR";
-import SaldoMitra from "../../components/SaldoMitra";
 
 /* Ilustrasi dompet: SVG murni supaya tetap tajam di layar HD/retina */
 function WalletArt() {
@@ -63,7 +61,6 @@ function WalletArt() {
 
 export default function RentalDashboard({ ownerPhone }) {
   const [cars, setCars] = useState([]);
-  const [versiSaldo, setVersiSaldo] = useState(0);
   const [bookings, setBookings] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -264,12 +261,6 @@ export default function RentalDashboard({ ownerPhone }) {
             ))}
           </div>
         </div>
-      </div>
-
-      {/* Untuk penyewa yang membayar langsung di tempat, di luar pesanan aplikasi. */}
-      <div style={{ marginBottom: 22, display: "grid", gap: 12 }}>
-        <SaldoMitra versi={versiSaldo} />
-        <TagihQR saldoMilik="usaha Anda" warna="#2563EB" onLunas={() => setVersiSaldo(v => v + 1)} />
       </div>
 
       <div className="stats-grid portal-desktop-only">
