@@ -107,7 +107,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // Tengah peta terakhir. Google tidak punya `camera.center` yang bisa dibaca
   // seketika, jadi dicatat dari onCameraMove.
   LatLng? _pusatPeta;
-  LatLng _currentLatLng = const LatLng(-0.0784, 111.4933); // Default: kota Sintang
+  LatLng _currentLatLng = const LatLng(0.0785, 111.4940); // Default: pusat kota Sintang (Jl. A. Yani)
   // Titik Sintang di atas cuma isian peta sebelum GPS terbaca — kota tempat
   // layanan ini berjalan, bukan Pontianak yang 400 km jauhnya. _gpsTerbaca tetap
   // ada karena isian ini bukan lokasi siapa pun: tanpa penanda itu, penumpang

@@ -3,7 +3,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 // Titik bawaan sebelum warung punya lokasi: pusat kota Sintang.
-const SINTANG = [-0.0784, 111.4933];
+const SINTANG = [0.0785, 111.4940]; // pusat kota, Jl. A. Yani
 
 /* Pemilih titik: pin diam di tengah, petanya yang digeser — pola yang sama
    dengan aplikasi (_PetaPilihTitik) dan lebih mudah di layar sentuh daripada

@@ -88,7 +88,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   GoogleMapController? _driverMapController;
   // Titik awal peta sebelum GPS terbaca. Begitu _mulaiPantauPosisi() jalan,
   // isinya selalu posisi sungguhan.
-  LatLng _driverLatLng = const LatLng(-0.0784, 111.4933); // Default: kota Sintang
+  LatLng _driverLatLng = const LatLng(0.0785, 111.4940); // Default: pusat kota Sintang (Jl. A. Yani)
   // Sebelum GPS terbaca, _driverLatLng cuma titik awal peta. Penanda motor
   // tidak digambar di sana: lebih baik tidak ada daripada menunjuk tempat lain.
   bool _posisiTerbaca = false;

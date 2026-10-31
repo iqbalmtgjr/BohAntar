@@ -34,7 +34,7 @@ class _CariScreenState extends State<CariScreen> {
   List<Warung> _warung = [];
   // Untuk mengurutkan saran tempat & jarak warung. Isian kota Sintang sampai
   // posisi terakhir HP terbaca; izin tidak diminta di sini.
-  LatLng _dekat = const LatLng(-0.0784, 111.4933);
+  LatLng _dekat = const LatLng(0.0785, 111.4940);
   bool _posisiAsli = false;
 
   static const _contoh = ['rsud', 'pasar', 'bakso', 'soto', 'terminal'];

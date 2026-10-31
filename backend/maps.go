@@ -60,15 +60,21 @@ const (
 	// /api/maps/place tidak perlu bertanya ke mana pun untuk menukarnya.
 	awalanIDPhoton = "photon:"
 
-	// Photon tidak bisa membatasi wilayah, hanya mencondongkan. Tanpa saringan
-	// ini "Jalan M.T. Haryono" juga menawarkan yang di Pontianak dan Ketapang,
-	// dan penumpang yang salah ketuk mendapat ongkos ratusan kilometer.
-	radiusCariGratisKM = 100
+	// Wilayah layanan: pencarian alamat hanya menawarkan tempat sejauh ini dari
+	// pusat kota Sintang. Tanpa batas ini "rsud" menawarkan rumah sakit di
+	// seluruh Indonesia, dan penumpang yang salah ketuk mendapat ongkos ratusan
+	// kilometer. 50 km juga batas atas lingkaran Places API (New).
+	radiusLayananKM = 50
 
 	// Layanan gratis berbasis OpenStreetMap minta pemakainya memperkenalkan diri
 	// supaya bisa dihubungi kalau ada yang menyalahgunakan. Jangan dikosongkan.
 	userAgentPeta = "bohAntar/1.0 (https://bohantar.indotechconsulting.com/api/privasi)"
 )
+
+// Pusat kota Sintang (lintang, bujur): Jl. A. Yani, di antara RSUD dan kantor
+// pemerintahan — sama dengan titik bawaan peta di aplikasi dan dashboard.
+// ponytail: satu kota; jadikan daftar wilayah saat buka di kota kedua.
+var pusatLayanan = [2]float64{0.0785, 111.4940}
 
 var mapsClient = &http.Client{Timeout: 12 * time.Second}
 
@@ -226,15 +232,13 @@ func mapsAutocompleteHandler(w http.ResponseWriter, r *http.Request) {
 	if s := r.URL.Query().Get("session"); s != "" {
 		badan["sessionToken"] = s
 	}
-	// Hasil dicondongkan ke sekitar penumpang, bukan dibatasi keras: tujuan di
-	// luar radius tetap boleh muncul, hanya kalah urutan.
-	if lat, lng, ok := bacaKoordinat(r, "lat", "lng"); ok {
-		badan["locationBias"] = map[string]interface{}{
-			"circle": map[string]interface{}{
-				"center": map[string]float64{"latitude": lat, "longitude": lng},
-				"radius": 50000.0,
-			},
-		}
+	// Dibatasi keras, bukan dicondongkan: dengan locationBias "rsud" tetap
+	// menawarkan rumah sakit di Jawa, hanya kalah urutan.
+	badan["locationRestriction"] = map[string]interface{}{
+		"circle": map[string]interface{}{
+			"center": map[string]float64{"latitude": pusatLayanan[0], "longitude": pusatLayanan[1]},
+			"radius": radiusLayananKM * 1000.0,
+		},
 	}
 
 	buf, _ := json.Marshal(badan)
@@ -289,9 +293,14 @@ func mapsAutocompleteHandler(w http.ResponseWriter, r *http.Request) {
 // tidak tahu — dan tidak perlu tahu — penyedia mana yang menjawab.
 func cariTempatGratis(w http.ResponseWriter, r *http.Request, q string) {
 	catatPlaces(func(p *pemakaianPlaces) { p.Photon++ })
-	v := url.Values{"q": {q}, "limit": {"15"}}
-	lat, lng, adaLokasi := bacaKoordinat(r, "lat", "lng")
-	if adaLokasi {
+	// bbox menyaring di sisi Photon; tanpa itu 15 hasilnya bisa semuanya dari
+	// luar Sintang lalu habis dibuang saranPhoton. Di khatulistiwa satu derajat
+	// lintang dan bujur sama-sama ±111 km.
+	d := radiusLayananKM / 111.32
+	v := url.Values{"q": {q}, "limit": {"15"}, "bbox": {fmt.Sprintf("%.4f,%.4f,%.4f,%.4f",
+		pusatLayanan[1]-d, pusatLayanan[0]-d, pusatLayanan[1]+d, pusatLayanan[0]+d)}}
+	// Lokasi penumpang hanya mengurutkan, yang terdekat dulu.
+	if lat, lng, ok := bacaKoordinat(r, "lat", "lng"); ok {
 		v.Set("lat", strconv.FormatFloat(lat, 'f', 6, 64))
 		v.Set("lon", strconv.FormatFloat(lng, 'f', 6, 64))
 	}
@@ -305,15 +314,11 @@ func cariTempatGratis(w http.ResponseWriter, r *http.Request, q string) {
 		writeJSONResponse(w, 502, map[string]string{"error": "Pencarian alamat sedang bermasalah. Geser peta ke titik tujuan."})
 		return
 	}
-	var dekat *[2]float64
-	if adaLokasi {
-		dekat = &[2]float64{lat, lng}
-	}
-	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "suggestions": saranPhoton(hasil, dekat)})
+	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "suggestions": saranPhoton(hasil, &pusatLayanan)})
 }
 
-// saranPhoton mengubah balasan Photon jadi daftar saran: yang terlalu jauh dari
-// penumpang dibuang, dan potongan jalan yang namanya serta kelurahannya sama
+// saranPhoton mengubah balasan Photon jadi daftar saran: yang lebih jauh dari
+// radiusLayananKM dari titik dekat dibuang, dan potongan jalan yang namanya serta kelurahannya sama
 // persis cuma ditampilkan sekali. Paling banyak enam, sama panjangnya dengan
 // daftar Google.
 func saranPhoton(hasil map[string]interface{}, dekat *[2]float64) []map[string]string {
@@ -333,7 +338,7 @@ func saranPhoton(hasil map[string]interface{}, dekat *[2]float64) []map[string]s
 		if !koordinatValid(lat, lng) {
 			continue
 		}
-		if dekat != nil && jarakKM(dekat[0], dekat[1], lat, lng) > radiusCariGratisKM {
+		if dekat != nil && jarakKM(dekat[0], dekat[1], lat, lng) > radiusLayananKM {
 			continue
 		}
 		p, _ := f["properties"].(map[string]interface{})
