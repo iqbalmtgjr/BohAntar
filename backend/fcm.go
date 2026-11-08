@@ -256,7 +256,9 @@ func notifikasiDriverSiaga(o Order) {
 		// Judulnya menyebut isi kiriman: driver yang motornya sudah penuh tidak
 		// perlu membuka aplikasi cuma untuk tahu orderannya lemari es.
 		judul := "Orderan baru!"
-		isi := fmt.Sprintf("%s → %s · Rp%.0f", o.PickupAddress, o.DropoffAddress, o.Fare-o.Komisi)
+		// Diberi label: angka tanpa nama ini dulu jadi angka ketiga yang berbeda
+		// dari kartu orderan dan layar penumpang.
+		isi := fmt.Sprintf("%s → %s · pendapatan Rp%.0f", o.PickupAddress, o.DropoffAddress, o.Fare-o.Komisi)
 		if o.Service == "BohFood" {
 			// Talangan disebut di muka: driver yang uangnya tidak cukup untuk
 			// membayar warung tidak perlu membuka aplikasi.

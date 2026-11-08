@@ -114,7 +114,20 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // yang GPS-nya gagal memesan dari titik ini dan ongkosnya dihitung dari sini.
   bool _gpsTerbaca = false;
   LatLng? _destinationLatLng;
+  // Posisi penanda driver di layar. Selama digeser halus menuju posisi baru,
+  // isinya titik antara; _sasaranDriver posisi terakhir dari server.
   LatLng? _driverLatLng;
+  LatLng? _sasaranDriver;
+  Timer? _animasiDriver;
+  // Kamera berhenti mengikuti driver sebentar setelah penumpang menyentuh peta,
+  // supaya geserannya sendiri tidak direbut balik.
+  DateTime _petaDisentuh = DateTime(0);
+  // Panel pelacakan diciutkan jadi satu bar supaya peta dan driver terlihat.
+  bool _panelKecil = false;
+  // Driver siaga di sekitar titik jemput — ikon saja, titiknya dibulatkan
+  // server — selama memilih tujuan dan mencari driver.
+  List<({double lat, double lng, String kendaraan})> _driverSiaga = const [];
+  Timer? _siagaTimer;
 
   // Autocomplete and Places suggestions
   List<PlaceSuggestion> _suggestions = [];
@@ -190,6 +203,21 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     muatIkonKendaraan().then((_) {
       if (mounted) setState(() {});
     });
+    _muatDriverSiaga();
+    _siagaTimer = Timer.periodic(const Duration(seconds: 15), (_) => _muatDriverSiaga());
+  }
+
+  /// Posisi driver siaga dibaca ulang tiap 15 detik: driver yang diam di
+  /// pangkalan pun hanya melapor tiap 3 menit, jadi lebih sering tidak berguna.
+  /// Setelah driver ditemukan, ikon-ikon ini tidak relevan lagi.
+  Future<void> _muatDriverSiaga() async {
+    if (_orderStatus != 'input' && _orderStatus != 'searching') return;
+    // Di latar belakang tidak ada yang menatap peta (sama seperti polling status).
+    final s = WidgetsBinding.instance.lifecycleState;
+    if (s == AppLifecycleState.paused || s == AppLifecycleState.hidden) return;
+    final titik = _currentLatLng;
+    final hasil = await ApiService().driverSekitar(titik.latitude, titik.longitude, _selectedService);
+    if (mounted) setState(() => _driverSiaga = hasil);
   }
 
   @override
@@ -202,6 +230,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     _receiverPhoneController.dispose();
     _reviewController.dispose();
     _statusTimer?.cancel();
+    _animasiDriver?.cancel();
+    _siagaTimer?.cancel();
     _radarController.dispose();
     _debounceTimer?.cancel();
     _ruteDebounce?.cancel();
@@ -469,6 +499,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         _gpsTerbaca = true;
       });
       _pindahPeta(_currentLatLng, 15.0);
+      _muatDriverSiaga(); // yang pertama tadi memakai titik bawaan peta
 
       // Reverse geocode to get human-readable address
       await _reverseGeocode(_currentLatLng, true);
@@ -688,6 +719,14 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         penandaPeta(titik: tujuan, warna: Colors.red, judul: 'Tujuan'),
       // Penanda driver tetap tampil sampai penumpang diantar, bukan hilang
       // begitu status berpindah dari "accepted" ke "picked_up".
+      if (_orderStatus == "input" || _orderStatus == "searching")
+        for (final (i, d) in _driverSiaga.indexed)
+          penandaMotor(
+            titik: LatLng(d.lat, d.lng),
+            judul: 'Driver siaga',
+            id: 'siaga$i',
+            ikon: d.kendaraan == 'mobil' ? Icons.directions_car : Icons.two_wheeler,
+          ),
       if (driver != null && (_orderStatus == "accepted" || _orderStatus == "picked_up"))
         penandaMotor(titik: driver, judul: _driverName.isEmpty ? 'Driver' : _driverName, ikon: _ikonKendaraan),
     };
@@ -697,25 +736,58 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // 13 yang dulu memotong tujuan jauh di luar layar.
   void _fitMapBounds() {
     final tujuan = _destinationLatLng;
-    final peta = _mapController;
-    if (tujuan == null || peta == null) return;
+    if (tujuan != null) _muatDuaTitik(_currentLatLng, tujuan);
+  }
 
-    final a = _currentLatLng;
+  void _muatDuaTitik(LatLng a, LatLng b, {bool halus = false}) {
+    final peta = _mapController;
+    if (peta == null) return;
     // Google tidak punya maxZoom untuk kotak batas: dua titik yang nyaris
     // berimpit (±100 m) membuatnya zoom sampai batas teratas, jadi dipusatkan
     // saja di zoom 17.
-    if ((a.latitude - tujuan.latitude).abs() < 1e-3 && (a.longitude - tujuan.longitude).abs() < 1e-3) {
-      peta.moveCamera(CameraUpdate.newLatLngZoom(tujuan, 17));
-      return;
+    final gerak = (a.latitude - b.latitude).abs() < 1e-3 && (a.longitude - b.longitude).abs() < 1e-3
+        ? CameraUpdate.newLatLngZoom(b, 17)
+        // LatLngBounds Google menuntut sudut barat daya dan timur laut yang benar.
+        : CameraUpdate.newLatLngBounds(
+            LatLngBounds(
+              southwest: LatLng(min(a.latitude, b.latitude), min(a.longitude, b.longitude)),
+              northeast: LatLng(max(a.latitude, b.latitude), max(a.longitude, b.longitude)),
+            ),
+            60,
+          );
+    halus ? peta.animateCamera(gerak) : peta.moveCamera(gerak);
+  }
+
+  /// Posisi baru driver dari server. Penandanya digeser halus selama ±1,5 detik
+  /// (kira-kira selang polling), bukan melompat; lalu kamera memuat driver dan
+  /// titik berikutnya — titik jemput, sesudah dijemput tujuan. Dulu kamera hanya
+  /// memuat jemput dan tujuan sekali di awal, jadi driver yang datang dari luar
+  /// kotak itu tidak pernah terlihat.
+  void _geserDriver(LatLng baru) {
+    if (baru == _sasaranDriver) return;
+    _sasaranDriver = baru;
+    _animasiDriver?.cancel();
+    final lama = _driverLatLng;
+    if (lama == null) {
+      setState(() => _driverLatLng = baru);
+    } else {
+      // ponytail: 15 setState per posisi baru; ganti ke AnimationController
+      // kalau layar ini mulai terasa berat di HP murah.
+      var langkah = 0;
+      _animasiDriver = Timer.periodic(const Duration(milliseconds: 100), (t) {
+        if (!mounted) return t.cancel();
+        final f = ++langkah / 15;
+        setState(() => _driverLatLng = LatLng(
+              lama.latitude + (baru.latitude - lama.latitude) * f,
+              lama.longitude + (baru.longitude - lama.longitude) * f,
+            ));
+        if (langkah >= 15) t.cancel();
+      });
     }
-    // LatLngBounds Google menuntut sudut barat daya dan timur laut yang benar.
-    peta.moveCamera(CameraUpdate.newLatLngBounds(
-      LatLngBounds(
-        southwest: LatLng(min(a.latitude, tujuan.latitude), min(a.longitude, tujuan.longitude)),
-        northeast: LatLng(max(a.latitude, tujuan.latitude), max(a.longitude, tujuan.longitude)),
-      ),
-      60,
-    ));
+    final berikut = _orderStatus == 'picked_up' ? _destinationLatLng : _currentLatLng;
+    if (berikut != null && DateTime.now().difference(_petaDisentuh).inSeconds >= 20) {
+      _muatDuaTitik(baru, berikut, halus: true);
+    }
   }
 
   Future<void> _fetchRoute() async {
@@ -880,9 +952,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           if (lokasi != null) {
             final lat = (lokasi['lat'] as num?)?.toDouble();
             final lng = (lokasi['lng'] as num?)?.toDouble();
-            if (lat != null && lng != null) {
-              setState(() => _driverLatLng = LatLng(lat, lng));
-            }
+            if (lat != null && lng != null) _geserDriver(LatLng(lat, lng));
           }
 
           if (response['driver'] != null) setState(() => _bacaInfoDriver(response['driver']));
@@ -896,8 +966,24 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             _radarController.stop();
           } else if (status == 'picked_up' && _orderStatus != 'picked_up') {
             setState(() => _orderStatus = 'picked_up');
+          } else if (status == 'pending' && _orderStatus == 'accepted') {
+            // Driver melepas pesanan (hanya bisa sebelum dijemput). Dulu layar
+            // tetap "Driver menuju", lalu saat driver baru menerima, cabang
+            // accepted di atas terlewat — Chat/Telepon masih ke driver lama.
+            _animasiDriver?.cancel();
+            setState(() {
+              _orderStatus = 'searching';
+              _driverName = '';
+              _driverPhone = '';
+              _driverLatLng = null;
+              _sasaranDriver = null;
+              _ruteDriver = null;
+            });
+            _radarController.repeat();
+            _muatDriverSiaga();
           } else if (status == 'completed') {
             timer.cancel();
+            _animasiDriver?.cancel();
             setState(() {
               _orderStatus = 'completed';
               _driverLatLng = null;
@@ -999,8 +1085,22 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           // Selama masih di langkah memilih tujuan, ketuk peta memindahkan
           // tujuan dan tekan lama memindahkan titik jemput.
           Positioned.fill(
-            child: GoogleMap(
+            child: Listener(
+              onPointerDown: (_) => _petaDisentuh = DateTime.now(),
+              child: GoogleMap(
                 initialCameraPosition: CameraPosition(target: _currentLatLng, zoom: 14),
+                // Panel pelacakan menutup bagian bawah peta. Tanpa padding ini
+                // Google memusatkan kamera di tengah layar penuh — tepat di
+                // balik panel — sehingga driver dan pin tersembunyi.
+                // +44 untuk tombol "Lihat peta" di atas panel; bar kecil ±88.
+                // Bar kecil hanya ada saat dilacak: pesanan yang dilepas driver
+                // kembali ke radar setinggi panel penuh.
+                padding: EdgeInsets.only(
+                    bottom: _orderStatus == "input"
+                        ? 0
+                        : _panelKecil && (_orderStatus == "accepted" || _orderStatus == "picked_up")
+                            ? 104
+                            : _tinggiPanel + 60),
                 // Tombol bawaan Google bertabrakan dengan panel di atas peta.
                 zoomControlsEnabled: false,
                 mapToolbarEnabled: false,
@@ -1065,6 +1165,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                     ),
                 },
                 markers: _penandaPeta(),
+              ),
             ),
           ),
 
@@ -1083,7 +1184,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                 if (_orderStatus == "searching") _panelBawah(_buildRadarSearchPanel(theme, isDark)),
                 // Ikut tampil saat picked_up: justru saat barang sudah di tangan
                 // driver, penumpang paling butuh chat, telepon, dan status.
-                if (_orderStatus == "accepted" || _orderStatus == "picked_up") _panelBawah(_buildDriverComingPanel(theme, isDark)),
+                if (_orderStatus == "accepted" || _orderStatus == "picked_up")
+                  _panelKecil ? _barKecil(isDark) : _panelLacakPenuh(theme, isDark),
               ],
             ),
           ),
@@ -1117,11 +1219,110 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
 
   /// Panel pelacakan bisa lebih tinggi dari layar HP kecil (makanan banyak,
   /// timeline, tombol). Dibatasi lalu digulung supaya petanya tetap kelihatan
-  /// dan tidak ada galat luber.
+  /// dan tidak ada galat luber. Dulu batasnya 66% layar: peta tinggal sejalur
+  /// tipis di atas. 42% masih memuat kabar, driver, dan tombol chat/telepon;
+  /// rincian bayar dan tahapan digulung.
+  double get _tinggiPanel => MediaQuery.sizeOf(context).height * 0.42;
+
   Widget _panelBawah(Widget panel) => ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.66),
+        constraints: BoxConstraints(maxHeight: _tinggiPanel),
         child: SingleChildScrollView(child: panel),
       );
+
+  /// Ciutkan/buka panel pelacakan, lalu muat ulang kamera setelah padding peta
+  /// yang baru berlaku — kalau tidak, driver tetap di posisi lama di layar.
+  void _aturPanelKecil(bool kecil) {
+    if (kecil == _panelKecil) return;
+    setState(() => _panelKecil = kecil);
+    final driver = _sasaranDriver;
+    final berikut = _orderStatus == 'picked_up' ? _destinationLatLng : _currentLatLng;
+    if (driver != null && berikut != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _muatDuaTitik(driver, berikut, halus: true));
+    }
+  }
+
+  /// Usap ke bawah menciutkan, ke atas membuka. Di luar daftar yang bisa
+  /// digulung: di dalamnya usapan direbut gulungan panel.
+  void _usapPanel(DragEndDetails d) {
+    final v = d.primaryVelocity ?? 0;
+    if (v.abs() > 150) _aturPanelKecil(v > 0);
+  }
+
+  Widget _panelLacakPenuh(ThemeData theme, bool isDark) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            onVerticalDragEnd: _usapPanel,
+            child: Material(
+              color: isDark ? AppTheme.cardObsidianDark : Colors.white,
+              shape: const StadiumBorder(),
+              elevation: 3,
+              child: InkWell(
+                customBorder: const StadiumBorder(),
+                onTap: () => _aturPanelKecil(true),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.keyboard_arrow_down, size: 20),
+                      SizedBox(width: 4),
+                      Text('Lihat peta', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          // Margin atas panel 16 sudah memberi jarak dari tombol.
+          _panelBawah(_buildDriverComingPanel(theme, isDark)),
+        ],
+      );
+
+  /// Panel yang diciutkan: kabar dan perkiraan tiba saja, sisanya peta.
+  Widget _barKecil(bool isDark) {
+    final kabar = kabarPesanan(_selectedService, _orderStatus, dekat: _driverDekat, warung: _merchantName);
+    final warna = AppTheme.warnaStatus(_orderStatus);
+    final eta = teksEstimasi(_ruteDriver, _driverLatLng);
+    return Semantics(
+      button: true,
+      label: 'Buka rincian pesanan',
+      child: GestureDetector(
+        onTap: () => _aturPanelKecil(false),
+        onVerticalDragEnd: _usapPanel,
+        child: Container(
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+          decoration: _hiasPanel(isDark),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: warna, shape: BoxShape.circle),
+                child: Icon(_driverDekat ? Icons.near_me : _ikonKendaraan, color: Colors.white, size: 18),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(kabar.judul,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14, color: AppTheme.teksBerwarna(context, warna))),
+                    if (eta != null)
+                      Text(_orderStatus == 'picked_up' ? 'Tiba di tujuan $eta' : 'Tiba $eta',
+                          style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
+                  ],
+                ),
+              ),
+              const Icon(Icons.keyboard_arrow_up),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 
   // Ukuran pin tengah. Dengan Center + padding bawah setinggi pinnya, ujung
   // bawah pin jatuh persis di titik tengah peta — tidak ada angka ajaib.

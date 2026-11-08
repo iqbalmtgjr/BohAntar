@@ -31,8 +31,9 @@ Marker penandaPeta({
 /// pin jemput/tujuan supaya sekali lihat tahu mana yang bergerak.
 ///
 /// Gambarnya disiapkan [muatIkonKendaraan]; sebelum siap jatuh ke pin biru.
-Marker penandaMotor({required LatLng titik, required String judul, IconData ikon = Icons.two_wheeler}) => Marker(
-      markerId: MarkerId('kendaraan:$judul'),
+/// [id] membedakan beberapa penanda berjudul sama (driver siaga di sekitar).
+Marker penandaMotor({required LatLng titik, required String judul, IconData ikon = Icons.two_wheeler, String? id}) => Marker(
+      markerId: MarkerId('kendaraan:${id ?? judul}'),
       position: titik,
       icon: _ikonKendaraan[ikon] ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
       anchor: _ikonKendaraan.containsKey(ikon) ? const Offset(0.5, 0.5) : const Offset(0.5, 1),

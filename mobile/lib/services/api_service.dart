@@ -414,6 +414,25 @@ class ApiService {
     return EstimasiTarif.dariJson(_handleResponse(response));
   }
 
+  /// Driver siaga di sekitar titik itu untuk ikon di peta penumpang: hanya
+  /// titik kasar (±110 m) dan jenis kendaraan. Gagal = daftar kosong; ikon ini
+  /// hiasan, bukan alasan memunculkan galat.
+  Future<List<({double lat, double lng, String kendaraan})>> driverSekitar(double lat, double lng, String layanan) async {
+    if (_token == null) return const [];
+    try {
+      final uri = Uri.parse('$baseUrl/api/drivers/sekitar')
+          .replace(queryParameters: {'lat': '$lat', 'lng': '$lng', 'layanan': layanan});
+      final response = await klienHttp.get(uri, headers: {'Authorization': 'Bearer $_token'});
+      final daftar = (_handleResponse(response)['drivers'] as List?) ?? const [];
+      return [
+        for (final d in daftar)
+          (lat: (d['lat'] as num).toDouble(), lng: (d['lng'] as num).toDouble(), kendaraan: (d['kendaraan'] ?? 'motor').toString()),
+      ];
+    } catch (_) {
+      return const [];
+    }
+  }
+
   // Kirim posisi driver. Nomor driver diambil backend dari token, tidak dikirim
   // dari sini — supaya tidak ada yang bisa memalsukan posisi driver lain.
   Future<void> sendDriverLocation(double lat, double lng) async {

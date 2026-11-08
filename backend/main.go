@@ -463,6 +463,7 @@ func main() {
 	mux.HandleFunc("/api/orders/", orderRouterHandler)
 	mux.HandleFunc("/api/driver/location", requireRole("driver")(driverLocationHandler))
 	mux.HandleFunc("/api/driver/offline", requireRole("driver")(driverOfflineHandler))
+	mux.HandleFunc("/api/drivers/sekitar", requireAuth(driverSekitarHandler))
 	mux.HandleFunc("/api/users/delete", requireAuth(hapusAkunSendiri))
 	mux.HandleFunc("/api/users/fcm-token", requireAuth(fcmTokenHandler))
 	// Seluruh rute peta wajib bertoken: tiap panggilan membelanjakan kuota
@@ -4029,6 +4030,70 @@ func driverLocationHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSONResponse(w, 200, map[string]string{"status": "success"})
+}
+
+// driverSekitarHandler: GET /api/drivers/sekitar?lat=&lng=&layanan=
+//
+// Ikon driver siaga di peta penumpang — "ada ojek dekat sini". Yang dikirim
+// hanya titik dan jenis kendaraan, dibulatkan ke 0,001° (±110 m), tanpa nama,
+// nomor, atau plat: posisi persis yang diperbarui terus bisa dipakai siapa pun
+// yang login untuk menguntit driver, sedangkan ikon ini cukup dengan titik kasar.
+//
+// Siaga memakai kriteria siaran orderan (posisi dalam 10 menit, tidak
+// dinonaktifkan admin), dikurangi yang sedang membawa pesanan — mereka tidak
+// bisa diambil, jadi menampilkannya menjanjikan driver yang tidak ada.
+func driverSekitarHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
+		return
+	}
+	lat, lng, ok := bacaKoordinat(r, "lat", "lng")
+	if !ok {
+		writeJSONResponse(w, 400, map[string]string{"error": "Posisi tidak valid"})
+		return
+	}
+	const radiusKM, batas = 5.0, 20
+	dLat := radiusKM / 111.32
+	dLng := dLat / math.Cos(lat*math.Pi/180)
+	rows, err := db.Query(`SELECT u.phone_number, u.driver_lat, u.driver_lng FROM users u
+		WHERE u.role = 'driver' AND u.is_driver_active = 1 AND u.driver_loc_at > ? AND u.phone_number != ?
+		  AND u.driver_lat BETWEEN ? AND ? AND u.driver_lng BETWEEN ? AND ?
+		  AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.driver_phone = u.phone_number AND o.status IN ('accepted', 'picked_up'))
+		LIMIT 100`,
+		time.Now().Add(-10*time.Minute), callerPhone(r), lat-dLat, lat+dLat, lng-dLng, lng+dLng)
+	if err != nil {
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal membaca driver sekitar"})
+		return
+	}
+	type calon struct {
+		phone    string
+		lat, lng float64
+	}
+	var semua []calon
+	for rows.Next() {
+		var c calon
+		if rows.Scan(&c.phone, &c.lat, &c.lng) == nil {
+			semua = append(semua, c)
+		}
+	}
+	rows.Close()
+
+	layanan := r.URL.Query().Get("layanan")
+	bulat := func(x float64) float64 { return math.Round(x*1000) / 1000 }
+	drivers := []map[string]interface{}{}
+	// ponytail: satu kueri kendaraan per calon, sama seperti siaran orderan;
+	// gabungkan ke kueri di atas kalau armadanya ratusan.
+	for _, c := range semua {
+		if len(drivers) >= batas {
+			break
+		}
+		k := kendaraanDriver(c.phone)
+		if jarakKM(lat, lng, c.lat, c.lng) > radiusKM || !cocokKendaraan(layanan, k) {
+			continue
+		}
+		drivers = append(drivers, map[string]interface{}{"lat": bulat(c.lat), "lng": bulat(c.lng), "kendaraan": k})
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "drivers": drivers})
 }
 
 // adminTarifHandler: GET membaca seluruh tarif, PUT menyimpan satu layanan.

@@ -576,10 +576,12 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     });
     // Di luar setState karena keduanya asinkron. Posisi hanya dikirim selagi
     // driver online — offline berarti berhenti dilacak, bukan sekadar berhenti
-    // menerima orderan.
+    // menerima orderan. Kecuali masih ada pesanan berjalan: penumpangnya tetap
+    // menatap peta, dan dulu penanda driver membeku di sana. Pelacakannya
+    // dihentikan polling begitu pesanan itu tutup (_startDriverPolling).
     if (online) {
       _mulaiPantauPosisi();
-    } else {
+    } else if (_acceptedOrder == null) {
       _hentikanPantauPosisi();
       // Server menebak siapa yang siaga dari waktu posisi terakhir, jadi berhenti
       // mengirim posisi saja tidak cukup: tanpa kabar ini, driver yang sudah
@@ -591,6 +593,14 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   void _startDriverPolling() {
     _driverPollTimer?.cancel();
     _driverPollTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
+      // Offline yang ditekan di tengah pesanan baru berlaku setelah pesanannya
+      // selesai, lepas, atau batal — semua jalan keluar itu lewat sini.
+      if (!_isOnline && _acceptedOrder == null) {
+        _stopDriverPolling();
+        _hentikanPantauPosisi();
+        ApiService().setDriverOffline();
+        return;
+      }
       if (_isOnline) _denyutPosisi();
       // Pesanan berjalan dipantau walau driver offline: pembatalannya tetap
       // harus sampai.
@@ -927,7 +937,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   //
   // Memakai stream Geolocator, bukan timer: pembaruan datang saat driver benar-
   // benar berpindah, jadi ojek yang sedang menunggu di pangkalan tidak menguras
-  // baterai maupun kuota. distanceFilter 30 m kira-kira satu blok.
+  // baterai maupun kuota. distanceFilter 15 m: pada 30 km/jam satu posisi tiap
+  // ±2 detik, seirama polling penumpang, sehingga penanda di peta penumpang
+  // bergeser terus alih-alih melompat tiap blok (dulu 30 m).
   //
   // Tetap jalan saat layar terkunci tanpa izin lokasi latar belakang: stream ini
   // dinyalakan selagi aplikasi terbuka dan memakai foreground service bertipe
@@ -944,7 +956,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       // melihat kapan lokasinya sedang dibaca, dan itu memang seharusnya.
       locationSettings: AndroidSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 30,
+        distanceFilter: 15,
         foregroundNotificationConfig: const ForegroundNotificationConfig(
           notificationTitle: 'bohAntar aktif',
           notificationText: 'Berbagi posisi supaya penumpang bisa melihat Anda.',
@@ -1684,9 +1696,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     final service = (order['service'] ?? 'BohRide').toString();
     final status = (order['status'] ?? 'pending').toString();
     // Yang dibayar pemesan: ongkir, biaya jasa, dan (makanan) uang makanan.
-    final total = ((order['fare'] as num?)?.toDouble() ?? 0.0) +
-        ((order['biaya_jasa'] as num?)?.toDouble() ?? 0.0) +
-        ((order['food_total'] as num?)?.toDouble() ?? 0.0);
+    final total = _tagihan(order);
     final waktu = DateTime.tryParse((order['created_at'] ?? '').toString())?.toLocal();
     final berjalan = pesananBerjalan(status);
     final warnaLayanan = AppTheme.warnaLayanan(service);
@@ -3201,6 +3211,49 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
   double _bagianDriver(dynamic o) => ((o['fare'] as num?)?.toDouble() ?? 0) - ((o['komisi'] as num?)?.toDouble() ?? 0);
 
+  /// Yang dibayar pemesan: ongkos + biaya jasa + makanan — angka yang sama
+  /// persis dengan layar penumpang. Dulu driver hanya melihat `fare`, menagih
+  /// kurang Rp1.000, lalu biaya jasanya tetap dipotong dari saldonya. Pesanan
+  /// kurir toko Kasvo menyimpan food_total 0, jadi rumus ini berlaku juga.
+  double _tagihan(dynamic o) =>
+      ((o['fare'] as num?)?.toDouble() ?? 0) +
+      ((o['biaya_jasa'] as num?)?.toDouble() ?? 0) +
+      ((o['food_total'] as num?)?.toDouble() ?? 0);
+
+  static String _caraBayar(Map<String, dynamic> o) => o['payment_method'] == 'wallet' ? 'Lunas lewat saldo' : 'Tagih tunai';
+
+  /// Kartu orderan masuk: angka besar yang ditagih, rinciannya, lalu
+  /// pendapatan driver terpisah — dulu labelnya "Tarif Bersih" padahal angkanya
+  /// belum dipotong komisi, dan notifikasinya menyebut angka ketiga.
+  Widget _barisTagihan(Map<String, dynamic> o) {
+    final ongkos = (o['fare'] as num?)?.toDouble() ?? 0;
+    final jasa = (o['biaya_jasa'] as num?)?.toDouble() ?? 0;
+    final makanan = (o['food_total'] as num?)?.toDouble() ?? 0;
+    final rincian = [
+      if (makanan > 0) 'Makanan ${_rupiah(makanan)}',
+      '${o['service'] == 'BohFood' ? 'Ongkir' : 'Ongkos'} ${_rupiah(ongkos)}',
+      if (jasa > 0) 'biaya jasa ${_rupiah(jasa)}',
+    ].join(' + ');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(_caraBayar(o), style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 14)),
+            Text(_rupiah(_tagihan(o)), style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.primaryBlue, fontSize: 24)),
+          ],
+        ),
+        Text(rincian, style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context))),
+        const SizedBox(height: 4),
+        Text(
+          'Pendapatanmu ${_rupiah(_bagianDriver(o))} (sudah dipotong komisi)',
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppTheme.teksBerwarna(context, Colors.green.shade700)),
+        ),
+      ],
+    );
+  }
+
   bool _hariIni(DateTime t) {
     final kini = DateTime.now();
     return t.year == kini.year && t.month == kini.month && t.day == kini.day;
@@ -3617,9 +3670,16 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     ],
                   ),
                 ),
-                Text(
-                  "Rp ${_acceptedOrder!['fare'].toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}",
-                  style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.primaryBlue, fontSize: 18),
+                // Sama dengan "Siapkan uang tunai" di layar penumpang.
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      _rupiah(_tagihan(_acceptedOrder!)),
+                      style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.primaryBlue, fontSize: 18),
+                    ),
+                    Text(_caraBayar(_acceptedOrder!), style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context))),
+                  ],
                 )
               ],
             ),
@@ -3895,17 +3955,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             ),
             const Divider(height: 32),
             
-            // Fare / Price
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Tarif Bersih (BohPay/Tunai)', style: TextStyle(fontWeight: FontWeight.w500, fontSize: 14)),
-                Text(
-                  "Rp ${_currentIncomingOrder!['fare'].toStringAsFixed(0).replaceAllMapped(RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'), (Match m) => '${m[1]}.')}",
-                  style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.primaryBlue, fontSize: 24),
-                ),
-              ],
-            ),
+            _barisTagihan(_currentIncomingOrder!),
             const SizedBox(height: 16),
 
             // Route Details
