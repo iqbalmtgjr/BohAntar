@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { Search, Bike, User, Trash2, X, Star, Store, KeyRound, Edit, Ban, ShieldCheck } from "lucide-react";
+import { Search, Bike, User, Trash2, X, Star, Store, KeyRound, Edit, Ban, ShieldCheck, Camera } from "lucide-react";
 
 
 import { useNavigate } from "react-router-dom";
-import { api } from "../api";
+import { api, fileURL } from "../api";
 import Topbar from "../components/Topbar";
 import { toast, confirmDialog } from "../components/Feedback";
 
@@ -32,6 +32,7 @@ export default function UsersPage() {
   // Alasan suspend tiap driver nonaktif (per nomor HP), dan form menonaktifkan.
   const [alasanNonaktif, setAlasanNonaktif] = useState({});
   const [suspend, setSuspend] = useState(null); // { user, alasan }
+  const [fotoWajah, setFotoWajah] = useState({}); // selfie driver per nomor HP
   const [menyimpan, setMenyimpan] = useState(false);
   const navigate = useNavigate();
 
@@ -41,6 +42,7 @@ export default function UsersPage() {
       setUsers(d.users || []);
       setLepas(d.lepas_30_hari || {});
       setAlasanNonaktif(d.alasan_nonaktif || {});
+      setFotoWajah(d.foto_wajah || {});
       if (d.pagination) {
         setPage(d.pagination.page);
         setTotalPages(d.pagination.total_pages);
@@ -144,6 +146,25 @@ export default function UsersPage() {
     }
   };
 
+  // Foto wajah driver terkunci setelah terpasang. Membuka kunci = mengosongkan,
+  // lalu driver mengambil selfie baru dari aplikasinya.
+  const bukaKunciFoto = async (u) => {
+    const ok = await confirmDialog({
+      title: "Buka kunci foto wajah?",
+      message: `Foto ${u.name || u.phone_number} dihapus dari kartu penjemputan, lalu driver diminta mengambil selfie baru di aplikasinya.`,
+      confirmText: "Buka kunci",
+    });
+    if (!ok) return;
+    try {
+      const res = await api.updateUser(u.phone_number, { hapus_foto_wajah: true });
+      if (res.status !== "success") throw new Error(res.error || "Gagal membuka kunci foto");
+      toast.success(`${u.name || u.phone_number} bisa mengambil foto wajah baru`);
+      load(filter);
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
   const filtered = users.filter(u =>
     u.name?.toLowerCase().includes(search.toLowerCase()) || 
     u.phone_number?.includes(search) || 
@@ -216,9 +237,15 @@ export default function UsersPage() {
                   <tr key={u.phone_number}>
                     <td data-label="Pengguna">
                       <div className="user-cell">
-                        <div className="user-avatar" style={{ background: ROLE_COLORS[u.role]?.bg || "rgba(148,163,184,0.1)", color: ROLE_COLORS[u.role]?.text || "#94A3B8" }}>
-                          {u.role === "driver" ? <Bike size={14} /> : u.role === "food_merchant" ? <Store size={14} /> : u.role === "rental_partner" ? <KeyRound size={14} /> : <User size={14} />}
-                        </div>
+                        {fotoWajah[u.phone_number] ? (
+                          <a href={fileURL(fotoWajah[u.phone_number])} target="_blank" rel="noreferrer" title="Foto wajah yang dilihat penumpang">
+                            <img className="user-avatar" src={fileURL(fotoWajah[u.phone_number])} alt="" style={{ objectFit: "cover" }} />
+                          </a>
+                        ) : (
+                          <div className="user-avatar" style={{ background: ROLE_COLORS[u.role]?.bg || "rgba(148,163,184,0.1)", color: ROLE_COLORS[u.role]?.text || "#94A3B8" }}>
+                            {u.role === "driver" ? <Bike size={14} /> : u.role === "food_merchant" ? <Store size={14} /> : u.role === "rental_partner" ? <KeyRound size={14} /> : <User size={14} />}
+                          </div>
+                        )}
                         <div><div className="user-name">{u.name}</div><div className="user-sub">{u.badge}</div></div>
                       </div>
                     </td>
@@ -271,6 +298,11 @@ export default function UsersPage() {
                             <ShieldCheck size={13} /> Aktifkan
                           </button>
                         ))}
+                        {fotoWajah[u.phone_number] && (
+                          <button className="btn btn-ghost btn-sm" onClick={() => bukaKunciFoto(u)} title="Driver bisa mengambil selfie baru">
+                            <Camera size={13} /> Buka kunci foto
+                          </button>
+                        )}
                         <button className="btn btn-danger btn-sm" onClick={() => handleDelete(u)}>
                           <Trash2 size={13} /> Hapus
                         </button>

@@ -1,6 +1,9 @@
 
-# Paket unggahan dashboard, dibuat ulang tiap deploy
+# Paket unggahan dashboard, dibuat ulang tiap deploy (rilisweb.sh)
 dist-dashboard.zip
+dist-dashboard.tgz
+# Akun FTP untuk rilis/rilisweb (berisi password); contohnya rilis.env.example
+rilis.env
 
 # Cache build Kotlin, lahir sendiri saat flutter pub get
 mobile/android/.kotlin/

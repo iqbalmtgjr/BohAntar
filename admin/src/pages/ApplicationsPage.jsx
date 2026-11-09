@@ -97,9 +97,22 @@ export default function ApplicationsPage() {
               return (
                 <div key={app.id} className="card" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                    <div>
-                      <div style={{ fontWeight: 800, fontSize: 15 }}>{app.name}</div>
-                      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{app.phone_number}</div>
+                    {/* Selfie dicocokkan dengan foto KTP sebelum disetujui: inilah
+                        wajah yang nanti dilihat penumpang saat dijemput. */}
+                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                      {app.face_photo_url ? (
+                        <a href={fileURL(app.face_photo_url)} target="_blank" rel="noreferrer" title="Foto wajah — cocokkan dengan KTP">
+                          <img src={fileURL(app.face_photo_url)} alt="Foto wajah" style={{ width: 56, height: 56, borderRadius: "50%", objectFit: "cover", border: "2px solid var(--border)" }} />
+                        </a>
+                      ) : (
+                        <div title="Diajukan dari aplikasi versi lama" style={{ width: 56, height: 56, borderRadius: "50%", background: "var(--bg-input)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "var(--text-muted)", textAlign: "center", lineHeight: 1.2 }}>
+                          Tanpa<br />foto
+                        </div>
+                      )}
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: 15 }}>{app.name}</div>
+                        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{app.phone_number}</div>
+                      </div>
                     </div>
                     <span className={`badge ${s.badge}`}><s.icon size={11} />{s.label}</span>
                   </div>

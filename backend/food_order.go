@@ -199,30 +199,15 @@ func dbGetFoodMerchant(id string) (FoodMerchant, bool) {
 // jam bukanya; is_open di sini tetap berlaku sebagai saklar dari sisi bohAntar.
 func menuWarung(m FoodMerchant) ([]FoodMenu, bool, error) {
 	if m.KasvoTokoUUID == "" {
-		menus, err := dbGetFoodMenus(m.ID)
+		menus, err := dbMenuWarung(m.ID, false)
 		return menus, m.IsOpen, err
 	}
 	buka, menus, err := ambilMenuKasvo(m.KasvoTokoUUID)
 	for i := range menus {
 		menus[i].MerchantID = m.ID
+		menus[i].IsActive = true // Kasvo hanya mengirim menu yang aktif & publik
 	}
 	return menus, buka && m.IsOpen, err
-}
-
-func dbGetFoodMenus(merchantID string) ([]FoodMenu, error) {
-	rows, err := db.Query("SELECT id, merchant_id, name, COALESCE(description, ''), price, COALESCE(category, ''), COALESCE(image_url, ''), is_available FROM food_menus WHERE merchant_id = ? ORDER BY category, name", merchantID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	menus := []FoodMenu{}
-	for rows.Next() {
-		var m FoodMenu
-		if err := rows.Scan(&m.ID, &m.MerchantID, &m.Name, &m.Description, &m.Price, &m.Category, &m.ImageURL, &m.IsAvailable); err == nil {
-			menus = append(menus, m)
-		}
-	}
-	return menus, rows.Err()
 }
 
 // siapkanPesananMakanan memuat warung dan menunya, lalu menulis ulang titik
@@ -357,7 +342,7 @@ func foodMerchantsHandler(w http.ResponseWriter, r *http.Request) {
 	// menemukan warung yang menjual soto walau namanya "Warung Bu Ani".
 	if q != "" {
 		menuLokal := map[string]string{}
-		if rs, err := db.Query("SELECT merchant_id, MIN(name) FROM food_menus WHERE name LIKE ? GROUP BY merchant_id", "%"+q+"%"); err == nil {
+		if rs, err := db.Query("SELECT merchant_id, MIN(name) FROM food_menus WHERE name LIKE ? AND is_active = 1 GROUP BY merchant_id", "%"+q+"%"); err == nil {
 			for rs.Next() {
 				var id, nama string
 				if rs.Scan(&id, &nama) == nil {

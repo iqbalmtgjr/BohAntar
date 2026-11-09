@@ -3,14 +3,25 @@
 #
 # Semua konfigurasi ada di run.sh; script ini sengaja tidak memuat variabel apa pun.
 #
-# Setelah mengunggah binary baru, hentikan proses lama sekali:
-#     pkill -f /www/wwwroot/bohantar-backend/bohantar-backend
+# Cron ini hanya penjaga: menyalakan backend kalau mati. Mengganti binary
+# TIDAK lewat pkill lagi (jeda sampai satu menit) — pakai ganti-binary.sh,
+# yang dijalankan otomatis oleh `rilis` di laptop, tanpa jeda layanan.
 
 APP_DIR="/www/wwwroot/bohantar-backend"
 CRON_LOG="$APP_DIR/cron-daemon.log"
 
 exec 2>>"$CRON_LOG"
 echo "[$(date '+%F %T')] cron jalan" >> "$CRON_LOG"
+
+# Binary baru dari `rilis` lewat FTP (diunggah sebagai .part lalu diganti nama,
+# jadi berkas ini tidak pernah setengah jadi): tukar tanpa jeda. Hasilnya ditulis
+# ke ganti-binary.log, yang dibaca `rilis` di laptop lewat FTP.
+if [ -f "$APP_DIR/bohantar-backend.baru" ] && [ -f "$APP_DIR/ganti-binary.sh" ]; then
+    echo "[$(date '+%F %T')] binary baru ditemukan, menukar tanpa jeda" >> "$CRON_LOG"
+    bash "$APP_DIR/ganti-binary.sh" > "$APP_DIR/ganti-binary.log" 2>&1
+    tail -3 "$APP_DIR/ganti-binary.log" >> "$CRON_LOG"
+    exit 0
+fi
 
 if pgrep -f "$APP_DIR/bohantar-backend" > /dev/null; then
     echo "[$(date '+%F %T')] sudah berjalan, tidak melakukan apa-apa" >> "$CRON_LOG"

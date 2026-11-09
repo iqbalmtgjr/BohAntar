@@ -225,6 +225,14 @@ func notifikasiDriverSiaga(o Order) {
 	if !fcmAktif() {
 		return
 	}
+	// Pesanan manual admin: hanya driver tujuan, posisinya segar atau tidak —
+	// admin bisa saja sudah menelepon driver itu supaya membuka aplikasi.
+	if o.DriverTujuan != "" {
+		notifikasiKe(o.DriverTujuan, "Orderan dari admin!",
+			fmt.Sprintf("%s → %s · pendapatan Rp%.0f", o.PickupAddress, o.DropoffAddress, o.Fare-o.Komisi),
+			map[string]string{"tipe": "orderan_baru", "order_id": o.ID})
+		return
+	}
 	go func() {
 		batas := time.Now().Add(-10 * time.Minute)
 		// is_driver_active ikut jadi syarat: driver yang dinonaktifkan admin tidak

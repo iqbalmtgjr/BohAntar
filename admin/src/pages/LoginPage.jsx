@@ -292,7 +292,7 @@ export default function LoginPage({ onLogin, role }) {
                   {showPassword ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
                 </button>
               </div>
-              {/* Password mitra cuma ditampilkan sekali saat disetujui. Dua jalan
+              {/* Password mitra dibuat sendiri saat mendaftar. Dua jalan
                   pulih tanpa email/SMS: Google, atau admin yang menggantinya
                   lewat halaman Pengguna. */}
               {role !== 'admin' && <details className="mt-2 text-xs text-slate-500">

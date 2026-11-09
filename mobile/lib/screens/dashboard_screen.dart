@@ -6,6 +6,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:mobile/models/food.dart' show urlGambar;
 import 'package:mobile/screens/cari_screen.dart';
 import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/screens/daftar_chat_screen.dart';
@@ -63,6 +64,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   String _userName = "";
   String _userBadge = "Silver";
   String _kendaraan = 'motor'; // driver: 'motor' / 'mobil', dari profil
+  String _fotoWajah = ''; // driver: selfie yang dilihat penumpang, /uploads/...
   // Peran akun di server, bisa beda dari widget.role: akun driver yang sedang
   // di mode penumpang. Penentu munculnya tombol beralih mode.
   String _peranAkun = '';
@@ -416,6 +418,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           _userName = user['name'] ?? '';
           _userBadge = user['badge'] ?? 'Silver';
           _kendaraan = response['kendaraan'] ?? 'motor';
+          _fotoWajah = (response['foto_wajah'] ?? '').toString();
           _peranAkun = user['role'] ?? '';
           _driverDinonaktifkan = user['role'] == 'driver' && user['is_driver_active'] == false;
           _alasanNonaktif = (response['alasan_nonaktif'] ?? '').toString();
@@ -2195,6 +2198,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               CircleAvatar(
                 radius: 36,
                 backgroundColor: AppTheme.primaryBlue.withOpacity(0.12),
+                foregroundImage: _fotoWajah.isEmpty ? null : ResizeImage(NetworkImage(urlGambar(_fotoWajah)), width: 216),
+                // Gagal dimuat (sinyal putus): huruf depan tetap terlihat.
+                onForegroundImageError: _fotoWajah.isEmpty ? null : (_, _) {},
                 child: Text(
                   _userName.isNotEmpty ? _userName[0].toUpperCase() : 'U',
                   style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: AppTheme.primaryBlue),
@@ -2299,6 +2305,13 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
           if (_peranAkun == 'driver')
             _buildAkunMenuItem(
+              Icons.face_retouching_natural,
+              _fotoWajah.isEmpty ? "Pasang foto wajah" : "Foto wajah (terkunci)",
+              _pasangFotoWajah,
+              isDark,
+            ),
+          if (_peranAkun == 'driver')
+            _buildAkunMenuItem(
               widget.role == 'rider' ? Icons.two_wheeler : Icons.swap_horiz,
               widget.role == 'rider' ? "Beralih ke mode driver" : "Beralih ke mode penumpang",
               _gantiMode,
@@ -2374,6 +2387,39 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       ),
       ),
     );
+  }
+
+  /// Selfie langsung dari kamera depan, bukan galeri: yang dilihat penumpang
+  /// harus wajah orang yang memegang HP ini, bukan foto siapa saja. Hanya
+  /// bisa sekali; sesudahnya server menguncinya sampai admin membukanya.
+  Future<void> _pasangFotoWajah() async {
+    final pesan = ScaffoldMessenger.of(context);
+    // Status kunci bisa basi: admin mungkin baru saja membukanya (driver
+    // dapat notifikasi "Ambil ulang foto wajah"). Tanya server dulu, jangan
+    // menolak berdasarkan data layar yang dimuat jam lalu.
+    if (_fotoWajah.isNotEmpty) await _fetchUserProfile();
+    if (!mounted) return;
+    if (_fotoWajah.isNotEmpty) {
+      pesan.showSnackBar(const SnackBar(
+          content: Text("Foto wajah sudah dicek dan dikunci. Hubungi admin bohAntar kalau ingin menggantinya.")));
+      return;
+    }
+    try {
+      // Di dalam try: izin kamera yang ditolak melempar PlatformException.
+      final foto = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.front,
+        maxWidth: 800,
+        imageQuality: 75,
+      );
+      if (foto == null || !mounted) return;
+      final url = await ApiService().pasangFotoWajah(foto.path);
+      if (!mounted) return;
+      setState(() => _fotoWajah = url);
+      pesan.showSnackBar(const SnackBar(content: Text("Foto wajah tersimpan dan dikunci. Penumpang akan melihatnya saat kamu menjemput.")));
+    } catch (e) {
+      pesan.showSnackBar(SnackBar(content: Text(pesanGalat(e))));
+    }
   }
 
   /// Terutama untuk driver: password awalnya dibuat admin dan cuma

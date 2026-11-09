@@ -67,6 +67,7 @@ var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
   <li><strong>Rekening bank</strong> — bagi driver dan mitra yang mencairkan saldo: nama bank, nomor rekening, dan nama pemiliknya.</li>
   <li><strong>Percakapan</strong> — pesan antara penumpang dan driver selama satu pesanan berlangsung.</li>
   <li><strong>Dokumen driver</strong> — bagi calon driver: nomor dan foto KTP, SIM, dan STNK, serta data kendaraan, dipakai hanya untuk memverifikasi kelayakan berkendara.</li>
+  <li><strong>Foto wajah driver</strong> — selfie yang diambil driver saat mendaftar, dicocokkan admin dengan foto KTP, lalu ditampilkan kepada penumpang yang sedang dijemput supaya penumpang yakin naik dengan driver yang benar.</li>
   <li><strong>Data mitra</strong> — bagi pemilik warung dan rental: nomor KTP, nama usaha, serta alamat dan titik lokasinya.</li>
   <li><strong>Token perangkat</strong> — kode dari Firebase yang dipakai untuk mengirim notifikasi pesanan dan chat ke HP Anda.</li>
 </ul>
@@ -76,7 +77,7 @@ var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
 
 <h2>Siapa yang bisa melihatnya</h2>
 <ul>
-  <li><strong>Driver dan penumpang yang sedang terhubung</strong> saling melihat nama, nomor handphone, dan lokasi masing-masing selama pesanan berjalan — dan berhenti melihatnya setelah pesanan selesai.</li>
+  <li><strong>Driver dan penumpang yang sedang terhubung</strong> saling melihat nama, nomor handphone, dan lokasi masing-masing selama pesanan berjalan — dan berhenti melihatnya setelah pesanan selesai. Penumpang juga melihat foto wajah, kendaraan, dan plat nomor driver.</li>
   <li><strong>Warung bohFood</strong> menerima nama pemesan dan isi pesanan, serta nama, nomor handphone, dan kendaraan driver yang mengambilnya. Warung yang memakai aplikasi kasir Kasvo menerimanya lewat Kasvo.</li>
   <li><strong>Layanan peta berbasis OpenStreetMap</strong> (Photon, OSRM) menerima koordinat untuk menerjemahkan titik di peta jadi alamat dan menghitung rute.</li>
   <li><strong>Google</strong> menerima permintaan verifikasi bila Anda masuk dengan akun Google, token perangkat untuk mengantarkan notifikasi (Firebase Cloud Messaging), kata kunci pencarian alamat beserta perkiraan lokasi Anda (Google Places), dan data pemakaian peta dari aplikasi untuk menampilkannya (Google Maps).</li>
@@ -97,7 +98,7 @@ var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
   <p><strong>Dari dalam aplikasi:</strong> buka tab <strong>Akun</strong> → <strong>Hapus akun</strong>, lalu konfirmasi.</p>
   <p><strong>Tanpa aplikasi:</strong> kirim email ke <code>{{.Kontak}}</code> dari alamat email yang terdaftar, dengan subjek <em>Hapus Akun</em>. Permintaan diproses dalam 7 hari kerja.</p>
 </div>
-<p><strong>Yang ikut terhapus:</strong> nama, email, nomor handphone, alamat tersimpan, pesan yang Anda kirim, nomor dan foto KTP/SIM/STNK, data pengajuan mitra, warung atau kendaraan rental beserta menunya, dan sisa saldo BohPay penumpang.</p>
+<p><strong>Yang ikut terhapus:</strong> nama, email, nomor handphone, alamat tersimpan, pesan yang Anda kirim, nomor dan foto KTP/SIM/STNK, foto wajah driver, data pengajuan mitra, warung atau kendaraan rental beserta menunya, dan sisa saldo BohPay penumpang.</p>
 <p><strong>Yang tetap disimpan:</strong> catatan pesanan tanpa nama, nomor, alamat, dan foto Anda — hanya tanggal, layanan, dan nominalnya — serta catatan transaksi keuangan, karena keduanya diperlukan untuk pembukuan usaha.</p>
 <p>Akun tidak bisa dihapus selagi ada pesanan yang sedang berjalan, bila masih ada komisi yang belum disetor, atau — bagi driver dan mitra — bila masih ada saldo yang belum dicairkan atau pengajuan pencairan yang belum diproses. Cairkan saldo Anda lebih dulu supaya tidak hangus.</p>
 

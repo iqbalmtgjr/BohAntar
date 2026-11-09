@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:mobile/models/food.dart' show rupiah;
+import 'package:mobile/models/food.dart' show rupiah, urlGambar;
 import 'package:mobile/widgets/dialog_alasan.dart';
 import 'package:mobile/widgets/food_widgets.dart' show lebarDekode;
 import 'package:mobile/screens/chat_screen.dart';
@@ -91,6 +91,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // Plat dipisah supaya bisa ditulis besar: itu yang dicari penumpang di jalan.
   String _driverKendaraan = "";
   String _driverPlat = "";
+  String _driverFoto = ""; // selfie driver, /uploads/...
   double _driverRating = 0;
   int _driverUlasan = 0;
 
@@ -280,6 +281,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     if (d is! Map) return;
     _driverKendaraan = (d['kendaraan'] ?? '').toString();
     _driverPlat = (d['plat'] ?? '').toString();
+    _driverFoto = (d['foto'] ?? '').toString();
     _driverRating = (d['rating'] as num?)?.toDouble() ?? 0;
     _driverUlasan = (d['jumlah_ulasan'] as num?)?.toInt() ?? 0;
   }
@@ -2395,9 +2397,13 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           // Driver: nama, bintang, kendaraan, dan plat yang besar.
           Row(
             children: [
+              // Foto menimpa huruf depan; kalau belum dipasang atau gagal
+              // dimuat, huruf depannya yang terlihat.
               CircleAvatar(
-                radius: 22,
+                radius: 26,
                 backgroundColor: AppTheme.primaryBlue.withValues(alpha: 0.12),
+                foregroundImage: _driverFoto.isEmpty ? null : ResizeImage(NetworkImage(urlGambar(_driverFoto)), width: 156),
+                onForegroundImageError: _driverFoto.isEmpty ? null : (_, _) {},
                 child: Text(
                   _driverName.isNotEmpty ? _driverName[0].toUpperCase() : 'D',
                   style: const TextStyle(fontWeight: FontWeight.bold, color: AppTheme.primaryBlue),

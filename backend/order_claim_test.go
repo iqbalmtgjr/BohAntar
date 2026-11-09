@@ -29,6 +29,9 @@ func bukaDBTes(t *testing.T) {
 	t.Cleanup(func() { db = lama; conn.Close() })
 	migrasiAlasanBatal() // kolom orders.alasan_batal dibaca semua kueri pesanan
 	migrasiNonaktifDriver()
+	migrasiMenuWarung()
+	migrasiPasswordMitra()
+	migrasiFotoWajah() // dibaca infoDriver dan profil driver
 }
 
 // penggunaUji membuat satu akun sekali pakai dan menghapusnya lagi setelah tes.

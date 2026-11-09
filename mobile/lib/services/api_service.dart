@@ -179,6 +179,7 @@ class ApiService {
     required String ktpPhotoPath,
     required String simPhotoPath,
     required String stnkPhotoPath,
+    required String facePhotoPath,
   }) async {
     final request = http.MultipartRequest(
       'POST',
@@ -199,6 +200,7 @@ class ApiService {
       await http.MultipartFile.fromPath('ktp_photo', ktpPhotoPath),
       await http.MultipartFile.fromPath('sim_photo', simPhotoPath),
       await http.MultipartFile.fromPath('stnk_photo', stnkPhotoPath),
+      await http.MultipartFile.fromPath('face_photo', facePhotoPath),
     ]);
     return _handleResponse(
       await http.Response.fromStream(await klienHttp.send(request)),
@@ -269,6 +271,19 @@ class ApiService {
       body: jsonEncode({'current_password': lama, 'new_password': baru}),
     );
     return _handleResponse(response);
+  }
+
+  /// Driver memasang selfie yang dilihat penumpang saat dijemput.
+  /// Mengembalikan path /uploads/... fotonya.
+  Future<String> pasangFotoWajah(String path) async {
+    final url = await uploadFoto(path);
+    final response = await klienHttp.put(
+      Uri.parse('$baseUrl/api/users/profile'),
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $_token'},
+      body: jsonEncode({'foto_wajah': url}),
+    );
+    _handleResponse(response);
+    return url;
   }
 
   // Helper response parser. Server bisa membalas HTML (nginx 502, portal WiFi),

@@ -55,7 +55,9 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
   }
 
   Future<void> _pilihDokumen(String kunci) async {
-    final sumber = await showModalBottomSheet<ImageSource>(
+    // Foto wajah langsung kamera depan, tanpa pilihan galeri: admin
+    // mencocokkannya dengan KTP, dan penumpang melihatnya saat dijemput.
+    final sumber = kunci == 'wajah' ? ImageSource.camera : await showModalBottomSheet<ImageSource>(
       context: context,
       builder: (ctx) => SafeArea(
         child: Column(
@@ -81,6 +83,7 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
     // kamera sekarang lewat batas itu sendirian.
     final foto = await ImagePicker().pickImage(
       source: sumber,
+      preferredCameraDevice: kunci == 'wajah' ? CameraDevice.front : CameraDevice.rear,
       maxWidth: 1600,
       imageQuality: 70,
     );
@@ -90,8 +93,8 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
 
   Future<void> _kirim() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_dokumen.length < 3) {
-      setState(() => _errorMessage = 'Scan KTP, SIM, dan STNK wajib dilampirkan.');
+    if (_dokumen.length < 4) {
+      setState(() => _errorMessage = 'Foto wajah serta scan KTP, SIM, dan STNK wajib dilampirkan.');
       return;
     }
 
@@ -100,7 +103,7 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
       _errorMessage = '';
     });
     try {
-      await ApiService().daftarDriver(
+      final hasil = await ApiService().daftarDriver(
         phoneNumber: _phoneController.text.trim(),
         name: _nameController.text.trim(),
         email: _emailController.text.trim(),
@@ -113,18 +116,23 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
         ktpPhotoPath: _dokumen['ktp']!.path,
         simPhotoPath: _dokumen['sim']!.path,
         stnkPhotoPath: _dokumen['stnk']!.path,
+        facePhotoPath: _dokumen['wajah']!.path,
       );
       if (!mounted) return;
+      // Nomor yang sudah punya akun (mis. pernah memesan sebagai penumpang):
+      // server mengabaikan email & password di formulir ini demi keamanan,
+      // jadi jangan suruh dia masuk dengan password yang barusan diketik.
+      final akunLama = hasil['akun_lama'] == true;
+      final caraMasuk = akunLama
+          ? 'Nomor ini sudah punya akun, jadi masuk memakai email dan password akun lama Anda'
+          : 'Masuk memakai email dan password yang tadi Anda buat';
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => AlertDialog(
           icon: const Icon(Icons.hourglass_top, color: AppTheme.primaryBlue, size: 40),
           title: const Text('Pengajuan terkirim'),
-          content: const Text(
-            'Dokumen Anda sedang ditinjau admin bohAntar. Anda bisa masuk memakai '
-            'email dan password ini setelah pengajuan disetujui.',
-          ),
+          content: Text('Dokumen Anda sedang ditinjau admin bohAntar. $caraMasuk setelah pengajuan disetujui.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
@@ -140,9 +148,8 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(
-          builder: (_) => const LoginScreen(
-            pesanInfo: 'Pengajuan driver Anda sedang ditinjau admin. Masuk dengan '
-                'email dan password yang tadi Anda buat setelah pengajuan disetujui.',
+          builder: (_) => LoginScreen(
+            pesanInfo: 'Pengajuan driver Anda sedang ditinjau admin. $caraMasuk setelah pengajuan disetujui.',
           ),
         ),
         (route) => false,
@@ -255,7 +262,8 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
                   children: [
                     Text(
                       'Data diri dan kendaraan Anda diperiksa admin sebelum akun '
-                      'driver bisa dipakai. Siapkan KTP, SIM, dan STNK asli.',
+                      'driver bisa dipakai. Siapkan KTP, SIM, dan STNK asli, lalu '
+                      'ambil selfie untuk foto wajah.',
                       style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.teksRedup(context)),
                     ),
                     const SizedBox(height: 24),
@@ -342,6 +350,7 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
                     Text('Foto harus terbaca jelas, tidak terpotong.',
                         style: theme.textTheme.bodySmall),
                     const SizedBox(height: 12),
+                    _kartuDokumen('wajah', 'Foto Wajah', 'Selfie jelas tanpa masker/kacamata hitam — dilihat penumpang'),
                     _kartuDokumen('ktp', 'Scan KTP', 'Ketuk untuk ambil atau pilih foto'),
                     _kartuDokumen('sim', 'Scan SIM', 'SIM C untuk motor, SIM A untuk mobil'),
                     _kartuDokumen('stnk', 'Scan STNK', 'STNK kendaraan yang dipakai bekerja'),

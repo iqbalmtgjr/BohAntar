@@ -23,6 +23,7 @@ const OrdersPage = lazy(() => import("./pages/OrdersPage"));
 const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
 const TarifPage = lazy(() => import("./pages/TarifPage"));
 const PetaPage = lazy(() => import("./pages/PetaPage"));
+const DriverOnlinePage = lazy(() => import("./pages/DriverOnlinePage"));
 const BannerPage = lazy(() => import("./pages/BannerPage"));
 const KomisiPage = lazy(() => import("./pages/KomisiPage"));
 const PencairanPage = lazy(() => import("./pages/PencairanPage"));
@@ -204,6 +205,7 @@ export default function App() {
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/tarif" element={<TarifPage />} />
         <Route path="/peta" element={<PetaPage />} />
+        <Route path="/driver-online" element={<DriverOnlinePage />} />
         <Route path="/banner" element={<BannerPage />} />
         <Route path="/komisi" element={<KomisiPage />} />
         <Route path="/pencairan" element={<PencairanPage />} />

@@ -95,6 +95,36 @@ export const api = {
   // kolom contoh di halaman tarif tidak pernah menghitung versinya sendiri.
   contohTarif: (data) => post(`/admin/tarif/contoh`, data),
   getPemakaianPeta: () => json(`/admin/peta/pemakaian`),
+  // Kelola menu warung BohFood (backend/menu_warung.go). Balasan galat
+  // membawa `error`; menu yang disimpan dikembalikan apa adanya.
+  getMenuSemua: (mid) => json(`/food/menus?merchant_id=${mid}&semua=1`),
+  simpanMenu: (data) => post(`/food/menus`, data),
+  statusMenu: (id, data) => post(`/food/menus/${id}/status`, data),
+  hapusMenu: (id) => json(`/food/menus/${id}`, { method: "DELETE" }),
+  getKategori: (mid) => json(`/food/kategori?merchant_id=${mid}`),
+  simpanKategori: (data) => post(`/food/kategori`, data),
+  urutkanKategori: (mid, ids) => post(`/food/kategori/urutan`, { merchant_id: mid, ids }),
+  hapusKategori: (id) => json(`/food/kategori/${id}`, { method: "DELETE" }),
+  getVarian: (mid) => json(`/food/varian?merchant_id=${mid}`),
+  simpanVarian: (data) => post(`/food/varian`, data),
+  hapusVarian: (id) => json(`/food/varian/${id}`, { method: "DELETE" }),
+  // Impor Excel (backend/menu_impor.go): simpan=false = pratinjau saja.
+  templateImporMenu: () => authFetch(`${BASE}/food/menu-impor/template`).then((r) => { if (!r.ok) throw new Error("Gagal mengunduh template"); return r.blob(); }),
+  imporMenu: (mid, berkas, simpan, perbarui) => {
+    const fd = new FormData();
+    fd.append("merchant_id", mid);
+    fd.append("berkas", berkas);
+    fd.append("simpan", simpan ? "1" : "0");
+    fd.append("perbarui", perbarui ? "1" : "0");
+    return json(`/food/menu-impor`, { method: "POST", body: fd });
+  },
+  // Pantau driver online + pesanan manual (backend/dispatch.go).
+  getDriverOnline: () => json(`/admin/driver-online`),
+  buatPesananManual: (data) => post(`/admin/pesanan-manual`, data),
+  tujukanPesanan: (orderId, driverPhone) => post(`/admin/pesanan-tujukan`, { order_id: orderId, driver_phone: driverPhone }),
+  cariAlamat: (q, sesi) => json(`/maps/autocomplete?q=${encodeURIComponent(q)}&lat=0.0785&lng=111.494&session=${sesi}`),
+  detailTempat: (id, sesi) => json(`/maps/place?place_id=${encodeURIComponent(id)}&session=${sesi}`),
+  estimasiTarif: (layanan, a, b) => json(`/tarif/estimasi?layanan=${layanan}&from_lat=${a.lat}&from_lng=${a.lng}&to_lat=${b.lat}&to_lng=${b.lng}`),
   // Banner beranda aplikasi. Id ada = ubah, kosong = banner baru.
   getBanner: () => json(`/admin/banner`),
   simpanBanner: (b) => b.id

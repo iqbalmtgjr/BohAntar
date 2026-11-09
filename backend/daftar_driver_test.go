@@ -7,9 +7,62 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
+
+// pengajuanDariHP meniru formulir daftar driver di aplikasi (tanpa token).
+func pengajuanDariHP(phone, email, password, kendaraan string) *httptest.ResponseRecorder {
+	body := &bytes.Buffer{}
+	form := multipart.NewWriter(body)
+	for k, v := range map[string]string{
+		"phone_number": phone, "name": "Uji Driver", "email": email,
+		"ktp_number": "1234567890123456", "sim_number": "SIM123",
+		"vehicle_plate": "KB1234XY", "vehicle_type": kendaraan, "vehicle_model": "Beat",
+		"password": password,
+	} {
+		form.WriteField(k, v)
+	}
+	// PNG 1x1 sungguhan: isi berkas diperiksa, bukan hanya ekstensinya.
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R'}
+	for _, f := range []string{"ktp_photo", "sim_photo", "stnk_photo", "face_photo"} {
+		w, _ := form.CreateFormFile(f, f+".png")
+		w.Write(png)
+	}
+	form.Close()
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/drivers/register", body)
+	req.Header.Set("Content-Type", form.FormDataContentType())
+	req.RemoteAddr = "198.51.100.7:1234" // ember rem sendiri, lepas dari tes lain
+	rec := httptest.NewRecorder()
+	adminDriverRegisterHandler(rec, req)
+	return rec
+}
+
+// Akun berperan driver, nonaktif, tanpa baris pengajuan = sisa pengajuan yang
+// gagal tersimpan. Penjaga "sudah jadi driver" tidak boleh menguncinya: dia
+// belum pernah bisa bekerja, jadi harus bisa mengajukan ulang.
+func TestAkunDriverTanpaPengajuanBolehMengajukanUlang(t *testing.T) {
+	bukaDBTes(t)
+	const phone = "+62800000213"
+	penggunaUji(t, phone)
+	t.Cleanup(func() { db.Exec("DELETE FROM driver_applications WHERE phone_number = ?", phone) })
+	db.Exec("UPDATE users SET role = 'driver', is_driver_active = 0 WHERE phone_number = ?", phone)
+
+	rec := pengajuanDariHP(phone, "", "rahasia123", "mobil")
+	if rec.Code != 201 {
+		t.Fatalf("akun yatim ditolak mengajukan ulang: %d %s", rec.Code, rec.Body.String())
+	}
+	var hasil struct {
+		AkunLama bool `json:"akun_lama"`
+	}
+	json.Unmarshal(rec.Body.Bytes(), &hasil)
+	if !hasil.AkunLama {
+		t.Fatal("nomor yang sudah punya akun tidak ditandai akun_lama — aplikasi akan menyuruh masuk dengan password yang tidak dipakai")
+	}
+}
 
 // Pendaftaran driver dari HP menyentuh tiga hal yang cuma kelihatan salah kalau
 // dijalankan sungguhan: baris pengajuan ditolak foreign key kalau akunnya belum
@@ -25,30 +78,11 @@ func TestDaftarDriverDariHPTertahanSampaiDisetujui(t *testing.T) {
 		db.Exec("DELETE FROM users WHERE phone_number = ?", phone)
 	})
 
-	// --- daftar dari HP: form + tiga dokumen dalam satu permintaan ---
-	body := &bytes.Buffer{}
-	form := multipart.NewWriter(body)
-	for k, v := range map[string]string{
-		"phone_number": phone, "name": "Uji Driver", "email": email,
-		"ktp_number": "1234567890123456", "sim_number": "SIM123",
-		"vehicle_plate": "KB1234XY", "vehicle_type": "motor", "vehicle_model": "Beat",
-		"password": "rahasia123",
-	} {
-		form.WriteField(k, v)
+	// --- daftar dari HP: form + foto wajah + tiga dokumen dalam satu permintaan ---
+	dariHP := func(password, kendaraan string) *httptest.ResponseRecorder {
+		return pengajuanDariHP(phone, email, password, kendaraan)
 	}
-	// PNG 1x1 sungguhan: isi berkas diperiksa, bukan hanya ekstensinya.
-	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 'I', 'H', 'D', 'R'}
-	for _, f := range []string{"ktp_photo", "sim_photo", "stnk_photo"} {
-		w, _ := form.CreateFormFile(f, f+".png")
-		w.Write(png)
-	}
-	form.Close()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/admin/drivers/register", body)
-	req.Header.Set("Content-Type", form.FormDataContentType())
-	rec := httptest.NewRecorder()
-	adminDriverRegisterHandler(rec, req)
-	if rec.Code != 201 {
+	if rec := dariHP("rahasia123", "motor"); rec.Code != 201 {
 		t.Fatalf("pendaftaran ditolak: %d %s", rec.Code, rec.Body.String())
 	}
 
@@ -93,5 +127,40 @@ func TestDaftarDriverDariHPTertahanSampaiDisetujui(t *testing.T) {
 	}
 	if got := login(); got.Code != 200 {
 		t.Fatalf("driver yang sudah disetujui tetap tidak bisa masuk: %d %s", got.Code, got.Body.String())
+	}
+	// Selfie yang dicek admin saat approve jadi foto yang dilihat penumpang.
+	t.Cleanup(func() {
+		if f := fotoWajah(phone); isUploadedFileURL(f) {
+			os.Remove(filepath.Join("uploads", strings.TrimPrefix(f, "/uploads/")))
+		}
+	})
+	if a, _ := dbGetApplication(appID); a.FacePhotoURL == "" || fotoWajah(phone) != a.FacePhotoURL {
+		t.Fatalf("foto wajah pengajuan %q tidak tersalin ke akun (foto akun %q)", a.FacePhotoURL, fotoWajah(phone))
+	}
+
+	// --- orang asing yang tahu nomornya mengisi formulir publik lagi ---
+	// Dulu password driver langsung ditimpa dan loginnya tertahan "ditinjau".
+	if rec := dariHP("penyerang123", "mobil"); rec.Code != 409 {
+		t.Fatalf("formulir publik menerima pengajuan untuk driver aktif: %d %s", rec.Code, rec.Body.String())
+	}
+	if s := statusPengajuanDriver(phone); s != "approved" {
+		t.Fatalf("status pengajuan berubah jadi %q, driver aslinya terkunci", s)
+	}
+	if got := login(); got.Code != 200 {
+		t.Fatalf("password driver ditimpa formulir publik: %d %s", got.Code, got.Body.String())
+	}
+
+	// --- ganti motor ke mobil tetap bisa, lewat admin ---
+	b, _ := json.Marshal(map[string]string{
+		"phone_number": phone, "name": "Uji Driver", "ktp_number": "1234567890123456",
+		"sim_number": "SIMA123", "vehicle_plate": "KB1234XY", "vehicle_type": "mobil",
+		"ktp_photo_url": "/uploads/ktp.png", "sim_photo_url": "/uploads/sim.png", "stnk_photo_url": "/uploads/stnk.png",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/drivers/register", bytes.NewReader(b))
+	req.Header.Set("Authorization", "Bearer "+mustToken(t, "+620000000001", "admin"))
+	rec := httptest.NewRecorder()
+	adminDriverRegisterHandler(rec, req)
+	if rec.Code != 201 {
+		t.Fatalf("admin tidak bisa mengajukan ganti kendaraan: %d %s", rec.Code, rec.Body.String())
 	}
 }

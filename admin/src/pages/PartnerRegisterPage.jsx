@@ -11,15 +11,18 @@ export default function PartnerRegisterPage() {
   const [searchParams] = useSearchParams();
   const type = searchParams.get("type") === "food" ? "food" : "rental";
 
-  const [form, setForm] = useState({
+  const KOSONG = {
     name: "",
     phone_number: "",
     email: "",
+    password: "",
+    password2: "",
     ktp_number: "",
     business_name: "",
     address: "",
     notes: "",
-  });
+  };
+  const [form, setForm] = useState(KOSONG);
 
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
@@ -31,6 +34,10 @@ export default function PartnerRegisterPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (form.password !== form.password2) {
+      setError("Ulangi password belum sama dengan password.");
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -48,6 +55,7 @@ export default function PartnerRegisterPage() {
         name: form.name,
         phone_number: phone,
         email: form.email,
+        password: form.password,
         ktp_number: form.ktp_number,
         business_name: form.business_name,
         address: form.address,
@@ -56,15 +64,7 @@ export default function PartnerRegisterPage() {
 
       if (res.status === "success") {
         setSuccess(true);
-        setForm({
-          name: "",
-          phone_number: "",
-          email: "",
-          ktp_number: "",
-          business_name: "",
-          address: "",
-          notes: "",
-        });
+        setForm(KOSONG);
       } else {
         setError(res.error || "Gagal mengirim pendaftaran");
       }
@@ -138,7 +138,7 @@ export default function PartnerRegisterPage() {
                 <strong>Catatan Penting:</strong>
                 <ul className="list-disc pl-4 mt-2 space-y-1">
                   <li>Proses peninjauan biasanya memakan waktu 1-3 hari kerja.</li>
-                  <li>Jika pendaftaran disetujui, Anda akan otomatis terdaftar dan dapat masuk menggunakan akun Google yang didaftarkan.</li>
+                  <li>Jika pendaftaran disetujui, Anda dapat masuk ke portal mitra dengan email dan password yang Anda buat tadi.</li>
                   <li>Tim kami juga akan menghubungi Anda via WhatsApp/Telepon untuk konfirmasi kelengkapan berkas fisik.</li>
                 </ul>
               </div>
@@ -211,6 +211,38 @@ export default function PartnerRegisterPage() {
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:bg-white focus:outline-none transition text-sm placeholder-slate-400 font-medium"
                       />
                     </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase">Password</label>
+                        <input
+                          type="password"
+                          required
+                          minLength={8}
+                          maxLength={72}
+                          autoComplete="new-password"
+                          value={form.password}
+                          onChange={(e) => set("password", e.target.value)}
+                          placeholder="Minimal 8 karakter"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:bg-white focus:outline-none transition text-sm placeholder-slate-400 font-medium"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase">Ulangi Password</label>
+                        <input
+                          type="password"
+                          required
+                          minLength={8}
+                          maxLength={72}
+                          autoComplete="new-password"
+                          value={form.password2}
+                          onChange={(e) => set("password2", e.target.value)}
+                          placeholder="Ketik ulang password"
+                          className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:bg-white focus:outline-none transition text-sm placeholder-slate-400 font-medium"
+                        />
+                      </div>
+                    </div>
+                    <p className="text-xs text-slate-400 -mt-2">Dipakai untuk masuk ke portal mitra setelah pendaftaran disetujui.</p>
 
                     <div>
                       <label className="block text-xs font-bold text-slate-500 mb-1.5 uppercase">Nomor KTP Pemilik</label>

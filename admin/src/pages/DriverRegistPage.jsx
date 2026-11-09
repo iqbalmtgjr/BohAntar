@@ -6,6 +6,10 @@ import { Alert } from "../components/Feedback";
 
 const EMPTY_FORM = { phone_number: "", name: "", email: "", ktp_number: "", sim_number: "", vehicle_plate: "", vehicle_type: "motor", vehicle_model: "", notes: "" };
 const DOCS = [
+  // Gambar saja (bukan PDF/HEIC): ditampilkan ke penumpang. Sengaja tanpa
+  // capture="user": di HP itu memaksa kamera, padahal admin sering menerima
+  // fotonya lewat WhatsApp dan harus bisa memilih dari galeri.
+  { key: "face_photo_url", label: "Foto Wajah (selfie)", accept: "image/jpeg,image/png,image/webp" },
   { key: "ktp_photo_url", label: "Scan KTP" },
   { key: "sim_photo_url", label: "Scan SIM" },
   { key: "stnk_photo_url", label: "Scan STNK" },
@@ -24,7 +28,7 @@ export default function DriverRegistPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true); setError("");
-    // Unggah dulu ketiga dokumen; backend menolak pengajuan tanpa URL-nya.
+    // Unggah dulu foto wajah + ketiga dokumen; backend menolak pengajuan tanpa URL-nya.
     const uploads = await Promise.all(DOCS.map(d => api.uploadFile(docs[d.key])));
     const failed = uploads.find(u => u.status !== "success");
     if (failed) { setLoading(false); setError(failed.error || "Gagal mengunggah dokumen"); return; }
@@ -107,7 +111,7 @@ export default function DriverRegistPage() {
               {DOCS.map(d => (
                 <div key={d.key} className="input-group">
                   <label>{d.label}</label>
-                  <input className="input" type="file" accept={ACCEPT} onChange={e => setDocs(v => ({ ...v, [d.key]: e.target.files[0] }))} required />
+                  <input className="input" type="file" accept={d.accept || ACCEPT} onChange={e => setDocs(v => ({ ...v, [d.key]: e.target.files[0] }))} required />
                 </div>
               ))}
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>Foto atau PDF, maksimal 5 MB per dokumen.</div>
