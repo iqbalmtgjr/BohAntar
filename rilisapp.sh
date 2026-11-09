@@ -21,7 +21,21 @@ nama=${1:-$nama}
 nomor=$((nomor + 1))
 echo "== Versi baru: $nama+$nomor =="
 
+# Windows: daemon Gradle sisa build sebelumnya tetap memegang folder hasil
+# antaranya, dan build berikutnya gagal "Unable to delete directory
+# ...mergeReleaseAssets" / AccessDenied merged_native_libs — tiap rilis kedua
+# sejak 8 Nov. Daemon dihentikan sebelum tes (memberi waktu prosesnya benar-
+# benar keluar), hasil antara dibuang sesudahnya; Gradle membangunnya ulang.
+# JAVA_HOME hanya untuk perintah ini: Git Bash biasanya tidak punya, sedangkan
+# flutter build mencari JDK Android Studio sendiri.
+(cd android && JAVA_HOME="${JAVA_HOME:-/c/Program Files/Android/Android Studio/jbr}" ./gradlew --stop >/dev/null 2>&1) || true
+
 flutter test
+
+rm -rf build/app/intermediates || {
+  echo "Folder mobile/build/app/intermediates masih terkunci. Tutup Android Studio dan jendela Explorer yang membuka folder build, lalu ulangi rilisapp." >&2
+  exit 1
+}
 flutter build appbundle --release --build-name="$nama" --build-number="$nomor"
 
 # Ditulis SETELAH build sukses: build yang gagal tidak melompati nomor versi.
