@@ -28,13 +28,9 @@ func kontakPrivasi() string {
 	return "cs.bohantar@gmail.com"
 }
 
-var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
-<html lang="id">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kebijakan Privasi &amp; Hapus Akun — bohAntar</title>
-<style>
+// gayaHalamanPublik dipakai bersama halaman privasi dan syarat & ketentuan,
+// supaya dua halaman hukum yang saling bertautan tidak tampil berbeda gaya.
+const gayaHalamanPublik = `<style>
   :root { color-scheme: light dark; }
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
          line-height: 1.7; max-width: 44rem; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
@@ -47,7 +43,16 @@ var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
            padding: .9rem 1.1rem; border-radius: 0 8px 8px 0; margin: 1.25rem 0; }
   code { background: rgba(127,127,127,.15); padding: .1rem .35rem; border-radius: 4px; }
   footer { margin-top: 3rem; color: #6b7280; font-size: .9rem; }
-</style>
+  a { color: #1E7FFF; }
+</style>`
+
+var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kebijakan Privasi &amp; Hapus Akun — bohAntar</title>
+` + gayaHalamanPublik + `
 </head>
 <body>
 <h1>Kebijakan Privasi bohAntar</h1>
@@ -105,7 +110,7 @@ var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
 <h2>Menghubungi kami</h2>
 <p>Pertanyaan tentang privasi bisa dikirim ke <code>{{.Kontak}}</code>.</p>
 
-<footer>bohAntar — Sintang, Kalimantan Barat.</footer>
+<footer>bohAntar — Sintang, Kalimantan Barat. · <a href="/api/syarat">Syarat &amp; Ketentuan</a></footer>
 </body>
 </html>`))
 

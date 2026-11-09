@@ -1285,9 +1285,9 @@ export default function LandingPage({ onSelectPortal }) {
                             {
                                 title: 'Bantuan & Legal', links: [
                                     { label: 'FAQ & Pusat Bantuan', href: '#faq' },
-                                    { label: 'Syarat & Ketentuan', href: '#' },
-                                    { label: 'Kebijakan Privasi', href: '#' },
-                                    { label: 'Hubungi Kami', href: '#' },
+                                    { label: 'Syarat & Ketentuan', href: '/api/syarat' },
+                                    { label: 'Kebijakan Privasi', href: '/api/privasi' },
+                                    { label: 'Hubungi Kami', href: 'mailto:cs.bohantar@gmail.com' },
                                 ]
                             }
                         ].map((col, ci) => (
@@ -1317,7 +1317,7 @@ export default function LandingPage({ onSelectPortal }) {
                         <div>&copy; 2026 <strong className="text-slate-400">bohAntar</strong>. Seluruh hak cipta dilindungi.</div>
                         <div className="flex items-center gap-1.5">
                             <span>Dibuat dengan</span>
-                            <motion.span animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 1.5 }}>â¤ï¸</motion.span>
+                            <motion.span animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 1.5 }}>❤️</motion.span>
                             <span>untuk Kalimantan Barat</span>
                         </div>
                     </div>
