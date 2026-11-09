@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -205,6 +206,72 @@ func TestLepasPesananDriverLainDitolak(t *testing.T) {
 	}
 	if o, _ := dbGetOrder(oid); o.DriverPhone != pemilik {
 		t.Fatalf("pesanan berpindah dari pemiliknya jadi %q", o.DriverPhone)
+	}
+}
+
+// Alasan lepas dan batal tercatat untuk admin; aplikasi lama yang tidak
+// mengirim badan permintaan tetap bisa melepas dan membatalkan.
+func TestAlasanLepasDanBatalTercatat(t *testing.T) {
+	bukaDBTes(t)
+	const driver = "+62800000209"
+	const penumpang = "+62800000210"
+	penggunaUji(t, driver)
+	oid := pesananUji(t, penumpang, "cash", "pending", 10000)
+	t.Cleanup(func() { db.Exec("DELETE FROM pesanan_dilepas WHERE order_id = ?", oid) })
+	klaim := func() {
+		t.Helper()
+		if menang, err := dbClaimOrder(oid, driver, "Driver Uji", time.Now().Format(time.RFC3339)); err != nil || !menang {
+			t.Fatalf("gagal menyiapkan pesanan yang sudah diterima: menang=%v err=%v", menang, err)
+		}
+	}
+	kirim := func(fungsi func(http.ResponseWriter, *http.Request, string), aksi, hp, peran, badan string) int {
+		t.Helper()
+		tok, err := issueToken(hp, peran)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/orders/"+oid+"/"+aksi, strings.NewReader(badan))
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		fungsi(rec, req, oid)
+		return rec.Code
+	}
+
+	// Dilepas dua kali: dengan alasan, lalu tanpa badan (aplikasi lama).
+	klaim()
+	if c := kirim(releaseOrder, "lepas", driver, "driver", `{"alasan":"  Kendaraan bermasalah "}`); c != 200 {
+		t.Fatalf("lepas dengan alasan: HTTP %d", c)
+	}
+	klaim()
+	if c := kirim(releaseOrder, "lepas", driver, "driver", ""); c != 200 {
+		t.Fatalf("lepas tanpa badan: HTTP %d", c)
+	}
+	riwayat := riwayatDilepas([]Order{{ID: oid}})[oid]
+	if len(riwayat) != 2 || riwayat[0].Alasan != "Kendaraan bermasalah" || riwayat[0].Driver != "Driver Uji" || riwayat[1].Alasan != "" {
+		t.Fatalf("riwayat lepas %+v, mau 2 baris (alasan dirapikan, lalu kosong) atas nama Driver Uji", riwayat)
+	}
+	if n := jumlahLepas30Hari([]User{{PhoneNumber: driver, Role: "driver"}})[driver]; n != 2 {
+		t.Fatalf("jumlah lepas 30 hari %d, mau 2", n)
+	}
+
+	// Penumpang membatalkan setelah dapat driver: alasannya tersimpan.
+	klaim()
+	if c := kirim(cancelOrder, "cancel", penumpang, "rider", `{"alasan":"Salah titik jemput/tujuan"}`); c != 200 {
+		t.Fatalf("batal dengan alasan: HTTP %d", c)
+	}
+	if o, _ := dbGetOrder(oid); o.Status != "cancelled" || o.AlasanBatal != "Salah titik jemput/tujuan" {
+		t.Fatalf("setelah batal: status %q alasan %q", o.Status, o.AlasanBatal)
+	}
+
+	// Aplikasi lama: batal tanpa badan tetap diterima, alasan kosong.
+	lama := pesananUji(t, "+62800000211", "cash", "pending", 10000)
+	tok, _ := issueToken("+62800000211", "rider")
+	req := httptest.NewRequest(http.MethodPost, "/api/orders/"+lama+"/cancel", nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rec := httptest.NewRecorder()
+	cancelOrder(rec, req, lama)
+	if o, _ := dbGetOrder(lama); rec.Code != 200 || o.Status != "cancelled" || o.AlasanBatal != "" {
+		t.Fatalf("batal tanpa badan: HTTP %d status %q alasan %q", rec.Code, o.Status, o.AlasanBatal)
 	}
 }
 

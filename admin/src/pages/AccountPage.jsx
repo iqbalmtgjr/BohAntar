@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { CreditCard, ChevronRight } from "lucide-react";
-import { api } from "../api";
+import { api, fileURL } from "../api";
 import { toast } from "../components/Feedback";
 import { invalidateRentalName } from "./bohrental/invoice";
 
@@ -13,9 +13,10 @@ export default function AccountPage() {
   // jadi tidak perlu prop baru cuma untuk satu kartu khusus rental.
   const isRental = localStorage.getItem("portal_type") === "rental";
   const [user, setUser] = useState(null);
-  const [form, setForm] = useState({ name: "", email: "", business_name: "" });
+  const [form, setForm] = useState({ name: "", email: "", business_name: "", business_address: "", business_logo: "", rek_nama: "", rek_bank: "", rek_nomor: "" });
   const [pass, setPass] = useState({ current_password: "", new_password: "", confirm: "" });
   const [saving, setSaving] = useState("");
+  const [mengunggah, setMengunggah] = useState(false);
 
   useEffect(() => {
     api.getProfile().then(res => {
@@ -25,6 +26,11 @@ export default function AccountPage() {
           name: res.user.name || "",
           email: res.user.email || "",
           business_name: res.business_name || "",
+          business_address: res.business_address || "",
+          business_logo: res.business_logo || "",
+          rek_nama: res.rek_nama || "",
+          rek_bank: res.rek_bank || "",
+          rek_nomor: res.rek_nomor || "",
         });
       }
     });
@@ -37,7 +43,14 @@ export default function AccountPage() {
       const res = await api.updateProfile({
         name: form.name,
         email: form.email,
-        ...(isRental ? { business_name: form.business_name } : {}),
+        ...(isRental ? {
+          business_name: form.business_name,
+          business_address: form.business_address,
+          business_logo: form.business_logo,
+          rek_nama: form.rek_nama,
+          rek_bank: form.rek_bank,
+          rek_nomor: form.rek_nomor,
+        } : {}),
       });
       if (res.status === "success") {
         setUser(res.user);
@@ -113,6 +126,82 @@ export default function AccountPage() {
               />
               <small style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
                 Dipakai sebagai kop pada invoice yang dikirim ke penyewa.
+              </small>
+            </div>
+          )}
+          {isRental && (
+            <div className="input-group">
+              <label>Alamat Rental</label>
+              <textarea
+                className="input"
+                rows={2}
+                maxLength={255}
+                placeholder="Contoh: Jl. MT Haryono No. 12, Sintang"
+                value={form.business_address}
+                onChange={e => setForm({ ...form, business_address: e.target.value })}
+                style={{ resize: "vertical" }}
+              />
+              <small style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                Tampil di kanan atas invoice bersama nomor HP akun ini.
+              </small>
+            </div>
+          )}
+          {isRental && (
+            <div className="input-group">
+              <label>Logo Rental</label>
+              {form.business_logo && (
+                <img
+                  src={fileURL(form.business_logo)}
+                  alt="Logo rental"
+                  style={{ maxWidth: 120, maxHeight: 80, objectFit: "contain", display: "block", marginBottom: 8, borderRadius: 8, background: "#fff", padding: 4, border: "1px solid var(--border)" }}
+                />
+              )}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <label className="btn btn-sm" style={{ cursor: mengunggah ? "wait" : "pointer", display: "inline-flex" }}>
+                  {mengunggah ? "Mengunggah..." : form.business_logo ? "Ganti logo" : "Unggah logo"}
+                  <input
+                    type="file" accept="image/png,image/jpeg,image/webp" hidden disabled={mengunggah}
+                    onChange={e => {
+                      const berkas = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!berkas) return;
+                      setMengunggah(true);
+                      api.uploadFile(berkas)
+                        .then(res => {
+                          if (!res.url) throw new Error(res.error || "Gagal mengunggah logo");
+                          setForm(f => ({ ...f, business_logo: res.url }));
+                        })
+                        .catch(err => toast.error(err.message || "Gagal mengunggah logo"))
+                        .finally(() => setMengunggah(false));
+                    }}
+                  />
+                </label>
+                {form.business_logo && (
+                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => setForm({ ...form, business_logo: "" })}>
+                    Hapus logo
+                  </button>
+                )}
+              </div>
+              <small style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                Tampil di kiri atas invoice. Tekan Simpan Profil setelah mengunggah.
+              </small>
+            </div>
+          )}
+          {isRental && (
+            <div className="input-group">
+              <label>Rekening Pembayaran</label>
+              <div style={{ display: "grid", gap: 8 }}>
+                <input className="input" maxLength={100} placeholder="Nama pemilik rekening" value={form.rek_nama}
+                  onChange={e => setForm({ ...form, rek_nama: e.target.value })} />
+                <div style={{ display: "grid", gap: 8, gridTemplateColumns: "minmax(0, 2fr) minmax(0, 3fr)" }}>
+                  <input className="input" maxLength={50} placeholder="Bank (mis. BRI)" value={form.rek_bank}
+                    onChange={e => setForm({ ...form, rek_bank: e.target.value })} />
+                  <input className="input" maxLength={30} inputMode="numeric" pattern="[0-9 \-]*" title="Hanya angka" placeholder="No. rekening" value={form.rek_nomor}
+                    onChange={e => setForm({ ...form, rek_nomor: e.target.value })} />
+                </div>
+              </div>
+              <small style={{ display: "block", fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+                Dicetak di bagian "Pembayaran" pada invoice. Kosongkan kalau tidak ingin ditampilkan.
               </small>
             </div>
           )}

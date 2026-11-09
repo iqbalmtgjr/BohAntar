@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Search, Bike, User, Trash2, X, Star, Store, KeyRound, Edit } from "lucide-react";
+import { Search, Bike, User, Trash2, X, Star, Store, KeyRound, Edit, Ban, ShieldCheck } from "lucide-react";
 
 
 import { useNavigate } from "react-router-dom";
@@ -27,12 +27,20 @@ export default function UsersPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [limit, setLimit] = useState(10);
   const [totalRecords, setTotalRecords] = useState(0);
+  // Berapa kali tiap driver melepas pesanan dalam 30 hari (per nomor HP).
+  const [lepas, setLepas] = useState({});
+  // Alasan suspend tiap driver nonaktif (per nomor HP), dan form menonaktifkan.
+  const [alasanNonaktif, setAlasanNonaktif] = useState({});
+  const [suspend, setSuspend] = useState(null); // { user, alasan }
+  const [menyimpan, setMenyimpan] = useState(false);
   const navigate = useNavigate();
 
   const load = (role = filter, p = page, l = limit) => {
     setLoading(true);
-    api.getUsers(role, p, l).then(d => { 
-      setUsers(d.users || []); 
+    api.getUsers(role, p, l).then(d => {
+      setUsers(d.users || []);
+      setLepas(d.lepas_30_hari || {});
+      setAlasanNonaktif(d.alasan_nonaktif || {});
       if (d.pagination) {
         setPage(d.pagination.page);
         setTotalPages(d.pagination.total_pages);
@@ -102,7 +110,41 @@ export default function UsersPage() {
     }
   };
 
-  const filtered = users.filter(u => 
+  // Suspend: driver tidak bisa menerima orderan sampai diaktifkan lagi.
+  const nonaktifkan = async (e) => {
+    e.preventDefault();
+    setMenyimpan(true);
+    try {
+      const res = await api.updateUser(suspend.user.phone_number, { is_driver_active: false, alasan_nonaktif: suspend.alasan });
+      if (res.status !== "success") throw new Error(res.error || "Gagal menonaktifkan driver");
+      toast.success(`${suspend.user.name || suspend.user.phone_number} dinonaktifkan`);
+      setSuspend(null);
+      load(filter);
+    } catch (err) {
+      toast.error(err.message);
+    } finally {
+      setMenyimpan(false);
+    }
+  };
+
+  const aktifkan = async (u) => {
+    const ok = await confirmDialog({
+      title: "Aktifkan kembali driver ini?",
+      message: `${u.name || u.phone_number} bisa menerima orderan lagi dan mendapat notifikasi bahwa akunnya aktif.`,
+      confirmText: "Aktifkan",
+    });
+    if (!ok) return;
+    try {
+      const res = await api.updateUser(u.phone_number, { is_driver_active: true });
+      if (res.status !== "success") throw new Error(res.error || "Gagal mengaktifkan driver");
+      toast.success(`${u.name || u.phone_number} aktif lagi`);
+      load(filter);
+    } catch (err) {
+      toast.error(err.message);
+    }
+  };
+
+  const filtered = users.filter(u =>
     u.name?.toLowerCase().includes(search.toLowerCase()) || 
     u.phone_number?.includes(search) || 
     u.email?.toLowerCase().includes(search.toLowerCase())
@@ -186,11 +228,26 @@ export default function UsersPage() {
                       <span className="badge" style={{ background: ROLE_COLORS[u.role]?.bg || "rgba(148,163,184,0.1)", color: ROLE_COLORS[u.role]?.text || "#94A3B8" }}>
                         {ROLE_COLORS[u.role]?.label || u.role}
                       </span>
+                      {u.role === "driver" && !u.is_driver_active && (
+                        <div style={{ marginTop: 4 }}>
+                          <span className="badge badge-danger">Nonaktif</span>
+                          {alasanNonaktif[u.phone_number] && (
+                            <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 3, maxWidth: 180 }}>{alasanNonaktif[u.phone_number]}</div>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td data-label="Saldo" style={{ fontWeight: 600, color: "var(--success)" }}>
                       Rp {(u.balance || 0).toLocaleString("id-ID")}
                     </td>
-                    <td data-label="Total Order">{u.total_orders || 0}</td>
+                    <td data-label="Total Order">
+                      {u.total_orders || 0}
+                      {lepas[u.phone_number] > 0 && (
+                        <div style={{ fontSize: 11, color: "#B45309", fontWeight: 600 }} title="Alasannya ada di halaman Pesanan">
+                          lepas pesanan {lepas[u.phone_number]}× (30 hari)
+                        </div>
+                      )}
+                    </td>
                     <td data-label="Rating">
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <Star size={12} fill="var(--warning)" stroke="var(--warning)" />
@@ -201,10 +258,19 @@ export default function UsersPage() {
                       {new Date(u.created_at).toLocaleDateString("id-ID")}
                     </td>
                     <td data-label="Aksi">
-                      <div style={{ display: "flex", gap: 6 }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         <button className="btn btn-ghost btn-sm" onClick={() => openEditModal(u)} style={{ color: "var(--primary)" }}>
                           <Edit size={13} /> Edit
                         </button>
+                        {u.role === "driver" && (u.is_driver_active ? (
+                          <button className="btn btn-ghost btn-sm" onClick={() => setSuspend({ user: u, alasan: "" })} style={{ color: "#DC2626" }}>
+                            <Ban size={13} /> Nonaktifkan
+                          </button>
+                        ) : (
+                          <button className="btn btn-ghost btn-sm" onClick={() => aktifkan(u)} style={{ color: "#059669" }}>
+                            <ShieldCheck size={13} /> Aktifkan
+                          </button>
+                        ))}
                         <button className="btn btn-danger btn-sm" onClick={() => handleDelete(u)}>
                           <Trash2 size={13} /> Hapus
                         </button>
@@ -244,6 +310,35 @@ export default function UsersPage() {
           </div>
         )}
       </div>
+
+      {suspend && (
+        <div className="modal-overlay" onClick={() => setSuspend(null)}>
+          <form className="modal" onClick={e => e.stopPropagation()} onSubmit={nonaktifkan} style={{ maxWidth: 460, position: "relative" }}>
+            <button type="button" onClick={() => setSuspend(null)} style={{ position: "absolute", top: 16, right: 16, background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
+              <X size={18} />
+            </button>
+            <h2 style={{ fontSize: 20, fontWeight: 800, color: "var(--text-primary)", marginBottom: 8 }}>Nonaktifkan Driver</h2>
+            <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 14 }}>
+              <strong>{suspend.user.name || suspend.user.phone_number}</strong> · {suspend.user.phone_number}<br />
+              Driver tidak bisa menerima orderan sampai diaktifkan lagi. Pesanan yang sedang berjalan tetap bisa diselesaikan.
+              Driver mendapat notifikasi beserta alasannya.
+            </p>
+            <div className="input-group">
+              <label>Alasan</label>
+              <textarea className="input" rows={3} maxLength={255} required autoFocus
+                placeholder="Contoh: Menagih ongkos di atas tarif aplikasi"
+                value={suspend.alasan} onChange={e => setSuspend({ ...suspend, alasan: e.target.value })}
+                style={{ resize: "vertical" }} />
+            </div>
+            <div className="modal-footer" style={{ marginTop: 16, gap: 10 }}>
+              <button type="button" className="btn btn-ghost" onClick={() => setSuspend(null)}>Batal</button>
+              <button type="submit" className="btn btn-danger" disabled={menyimpan || !suspend.alasan.trim()}>
+                {menyimpan ? "Menyimpan…" : "Nonaktifkan"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Modern Custom Edit User Modal */}
       {editUser && (

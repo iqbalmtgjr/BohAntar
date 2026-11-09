@@ -21,13 +21,16 @@ export default function OrdersPage() {
   const [totalPages, setTotalPages] = useState(1);
   const [limit, setLimit] = useState(10);
   const [totalRecords, setTotalRecords] = useState(0);
+  // Riwayat driver melepas pesanan, per id pesanan: [{driver, alasan, waktu}].
+  const [dilepas, setDilepas] = useState({});
 
   const load = (status = filter, p = page, l = limit) => {
     setLoading(true);
     const params = { page: p, limit: l };
     if (status) params.status = status;
-    api.getOrders(params).then(d => { 
-      setOrders(d.orders || []); 
+    api.getOrders(params).then(d => {
+      setOrders(d.orders || []);
+      setDilepas(d.dilepas || {});
       if (d.pagination) {
         setPage(d.pagination.page);
         setTotalPages(d.pagination.total_pages);
@@ -93,7 +96,25 @@ export default function OrdersPage() {
                     <td style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-secondary)" }} data-label="Jemput">{o.pickup}</td>
                     <td style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-secondary)" }} data-label="Tujuan">{o.dropoff}</td>
                     <td data-label="Tarif" style={{ fontWeight: 600, color: "var(--success)" }}>Rp {(o.fare || 0).toLocaleString("id-ID")}</td>
-                    <td data-label="Status"><span className={`badge ${STATUS_BADGE[o.status] || "badge-muted"}`}>{STATUS_LABEL[o.status] || o.status}</span></td>
+                    <td data-label="Status">
+                      <span className={`badge ${STATUS_BADGE[o.status] || "badge-muted"}`}>{STATUS_LABEL[o.status] || o.status}</span>
+                      {o.status === "cancelled" && o.alasan_batal && (
+                        <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4, maxWidth: 160 }}>Alasan: {o.alasan_batal}</div>
+                      )}
+                      {/* BohFood: pengajuan batal penumpang yang menunggu / ditolak driver */}
+                      {o.status !== "cancelled" && o.minta_batal_at && (
+                        <div style={{ fontSize: 11, color: "#B45309", marginTop: 4, maxWidth: 160 }}>Minta batal (menunggu driver): {o.alasan_batal}</div>
+                      )}
+                      {o.status !== "cancelled" && !o.minta_batal_at && o.tolak_batal && (
+                        <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 4, maxWidth: 160 }}>Batal ditolak driver: {o.tolak_batal}</div>
+                      )}
+                      {dilepas[o.id]?.map((x, i) => (
+                        <div key={i} style={{ fontSize: 11, color: "#B45309", marginTop: 4, maxWidth: 160 }}
+                          title={new Date(x.waktu).toLocaleString("id-ID")}>
+                          Dilepas {x.driver}{x.alasan ? `: ${x.alasan}` : ""}
+                        </div>
+                      ))}
+                    </td>
                     <td data-label="Waktu" style={{ color: "var(--text-muted)", fontSize: 12 }}>{new Date(o.created_at).toLocaleString("id-ID")}</td>
                   </tr>
                 ))}

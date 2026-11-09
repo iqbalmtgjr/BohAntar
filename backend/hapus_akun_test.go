@@ -40,7 +40,12 @@ func TestHapusAkunLewatAdmin(t *testing.T) {
 	db.Exec("INSERT INTO order_ratings (order_id, driver_phone, rider_phone, stars, created_at) VALUES (?, ?, ?, 5, NOW())", oid, driver, rider)
 	db.Exec("INSERT INTO driver_applications (id, phone_number, ktp_photo_url, status, created_at) VALUES (?, ?, ?, 'approved', NOW())", newID("app"), rider, ktp)
 	db.Exec("INSERT INTO partner_applications (id, type, phone_number, ktp_number, created_at) VALUES (?, 'food', ?, '6101', NOW())", newID("pa"), rider)
+	// Alasan batal ketikan pemesan dan catatan lepas pesanan (bisa menyebut
+	// pemesannya) — halaman privasi menjanjikan keduanya tidak tersisa.
+	db.Exec("UPDATE orders SET alasan_batal = 'Bu Ani berubah pikiran' WHERE id = ?", oid)
+	db.Exec("INSERT INTO pesanan_dilepas (order_id, driver_phone, driver_name, alasan, created_at) VALUES (?, ?, 'Driver Uji', 'Bu Ani tidak angkat telepon', NOW())", oid, driver)
 	t.Cleanup(func() {
+		db.Exec("DELETE FROM pesanan_dilepas WHERE order_id = ?", oid)
 		db.Exec("DELETE FROM driver_applications WHERE phone_number = ?", rider)
 		db.Exec("DELETE FROM partner_applications WHERE phone_number = ?", rider)
 		db.Exec("DELETE FROM pencairan_saldo WHERE phone_number = ?", driver)
@@ -95,5 +100,22 @@ func TestHapusAkunLewatAdmin(t *testing.T) {
 	}
 	if ada(ktp) || ada(bukti) {
 		t.Fatalf("berkas tertinggal di disk: ktp=%v bukti=%v", ada(ktp), ada(bukti))
+	}
+	var alasanBatal, alasanLepas string
+	db.QueryRow("SELECT alasan_batal FROM orders WHERE id = ?", oid).Scan(&alasanBatal)
+	db.QueryRow("SELECT alasan FROM pesanan_dilepas WHERE order_id = ?", oid).Scan(&alasanLepas)
+	if alasanBatal != "" || alasanLepas != "" {
+		t.Fatalf("alasan tertinggal setelah pemesan dihapus: batal=%q lepas=%q", alasanBatal, alasanLepas)
+	}
+
+	// Driver menghapus akunnya: riwayat lepas pesanannya (nomor, nama) ikut hilang.
+	db.Exec("DELETE FROM pencairan_saldo WHERE phone_number = ?", driver)
+	if k := hapus(driver); k != 200 {
+		t.Fatalf("hapus driver tanpa saldo dibalas %d, harusnya 200", k)
+	}
+	var sisaLepas int
+	db.QueryRow("SELECT COUNT(*) FROM pesanan_dilepas WHERE driver_phone = ?", driver).Scan(&sisaLepas)
+	if sisaLepas != 0 {
+		t.Fatalf("%d riwayat lepas pesanan driver yang dihapus masih tersimpan", sisaLepas)
 	}
 }

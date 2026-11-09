@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
-import { BarChart3, DollarSign, Clock, Car, Printer, RefreshCw, Filter, Search, FileText, Paperclip } from "lucide-react";
+import { BarChart3, DollarSign, Clock, Car, Printer, RefreshCw, Filter, Search, Paperclip } from "lucide-react";
 import { BASE, authFetch } from "../../api";
-import { buildRows, bucketOf, isOverdue, parseDT, rentalDays } from "./schedule";
-import { bookingInvoice, scheduleInvoice, useRentalName } from "./invoice";
-import InvoiceModal from "./InvoiceModal";
+import { buildRows, bucketOf, isOverdue, isUpcoming, parseDT, rentalDays } from "./schedule";
+import { bookingInvoice, scheduleInvoice, useRentalProfile } from "./invoice";
+import InvoiceModal, { TombolDokumen } from "./InvoiceModal";
 
 const BUCKET_LABEL = { selesai: "SELESAI", batal: "BATAL", menunggu: "MENUNGGU", berjalan: "BERJALAN" };
 const BUCKET_BADGE = {
@@ -27,7 +27,7 @@ export default function RentalReports({ ownerPhone }) {
   const [bookings, setBookings] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [loading, setLoading] = useState(true);
-  const rentalName = useRentalName();
+  const rental = useRentalProfile();
   const [invoice, setInvoice] = useState(null);
 
   // Filter States
@@ -450,7 +450,8 @@ export default function RentalReports({ ownerPhone }) {
                         </span>
                       ) : (
                         <span className={`badge ${BUCKET_BADGE[bucket]}`}>
-                          {row.source === "maintenance" && bucket === "berjalan" ? "PERAWATAN" : BUCKET_LABEL[bucket]}
+                          {row.source === "maintenance" && bucket === "berjalan" ? "PERAWATAN"
+                            : bucket === "berjalan" && isUpcoming(row.start) ? "BOOKING" : BUCKET_LABEL[bucket]}
                         </span>
                       )}
                     </td>
@@ -475,16 +476,13 @@ export default function RentalReports({ ownerPhone }) {
                       {/* Hanya sewa yang sudah selesai yang boleh ditagihkan;
                           perawatan tidak punya penyewa untuk dikirimi invoice. */}
                       {bucket === "selesai" && row.source !== "maintenance" ? (
-                        <button
-                          className="btn btn-ghost btn-sm"
-                          onClick={() => setInvoice(
-                            row.source === "app"
-                              ? bookingInvoice(row.raw, car, rentalName)
-                              : scheduleInvoice(row.raw, car, rentalName)
-                          )}
-                        >
-                          <FileText size={14} /> Invoice
-                        </button>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                          <TombolDokumen
+                            doc={row.source === "app" ? bookingInvoice(row.raw, car, rental) : scheduleInvoice(row.raw, car, rental)}
+                            onBuka={setInvoice}
+                            ikon={14}
+                          />
+                        </div>
                       ) : (
                         <span style={{ color: "var(--text-muted)" }}>-</span>
                       )}
@@ -496,7 +494,7 @@ export default function RentalReports({ ownerPhone }) {
           </tbody>
         </table>
       </div>
-      <InvoiceModal data={invoice} onClose={() => setInvoice(null)} />
+      <InvoiceModal data={invoice} onClose={() => setInvoice(null)} onUbah={fetchData} />
     </div>
   );
 }

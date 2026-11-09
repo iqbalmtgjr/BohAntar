@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
-import { Calendar, Clock, CheckCircle, Trash2, Plus, Info, Edit, FileText } from "lucide-react";
+import { Calendar, Clock, CheckCircle, Trash2, Plus, Info, Edit } from "lucide-react";
 import { BASE, authFetch } from "../../api";
-import { parseSchedule, scheduleCost, parseDT, overlaps, rentalDays, carColor } from "./schedule";
+import { parseSchedule, scheduleCost, parseDT, overlaps, rentalDays, carColor, diskonReason, isUpcoming } from "./schedule";
 import { toast, confirmDialog, Alert } from "../../components/Feedback";
-import { bookingInvoice, scheduleInvoice, useRentalName } from "./invoice";
-import InvoiceModal from "./InvoiceModal";
+import { bookingInvoice, scheduleInvoice, useRentalProfile } from "./invoice";
+import InvoiceModal, { TombolDokumen } from "./InvoiceModal";
 
 export default function RentalCalendar({ ownerPhone }) {
   const [cars, setCars] = useState([]);
@@ -17,7 +17,7 @@ export default function RentalCalendar({ ownerPhone }) {
   const [loading, setLoading] = useState(true);
 
   // Modal details states
-  const rentalName = useRentalName();
+  const rental = useRentalProfile();
   const [invoice, setInvoice] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [showModal, setShowModal] = useState(false);
@@ -39,6 +39,8 @@ export default function RentalCalendar({ ownerPhone }) {
   const [paymentMethod, setPaymentMethod] = useState("Tunai"); // "Tunai" or "Transfer"
   const [paymentTerm, setPaymentTerm] = useState("Full");     // "Full" or "DP"
   const [dpAmount, setDpAmount] = useState("");
+  const [diskonTipe, setDiskonTipe] = useState(""); // "" | "persen" | "nominal"
+  const [diskonNilai, setDiskonNilai] = useState("");
   const [documentFile, setDocumentFile] = useState(null);
   const [existingDocUrl, setExistingDocUrl] = useState("");
   const [reason, setReason] = useState("Servis Berkala");
@@ -64,34 +66,41 @@ export default function RentalCalendar({ ownerPhone }) {
   const SUDAH_TUTUP = new Set(["completed", "cancelled", "rejected"]);
 
   // Ketersediaan diukur pada periode yang sedang diisi di form. Selama tanggalnya
-  // belum lengkap, patokannya "sekarang" supaya kendaraan yang lagi jalan tidak
-  // ikut ditawarkan begitu form dibuka.
+  // belum lengkap semua armada ditawarkan, termasuk yang sedang jalan: mitra
+  // sering mencatat booking mendatang untuk mobil yang hari ini masih disewa
+  // (masukan mitra 9 Nov 2026), dan dulu mobil itu hilang dari daftar.
   // ponytail: "sekarang" dibaca ulang tiap render, bukan disimpan di state — nilainya
   // memang harus ikut bergeser, dan yang dipengaruhi cuma isi dropdown.
   const now = new Date();
-  const [winStart, winEnd] = startDate && endDate
-    ? [parseDT(`${startDate} ${startTime}:00`), parseDT(`${endDate} ${endTime}:00`)]
-    : [now, new Date(now.getTime() + 60000)];
+  const adaTanggal = Boolean(startDate && endDate);
+  const winStart = parseDT(`${startDate} ${startTime}:00`);
+  const winEnd = parseDT(`${endDate} ${endTime}:00`);
 
-  // Aturan bentrok dipakai bersama backend, supaya pilihan yang tersisa di form
-  // tidak lagi ditolak 409 saat disimpan. Keduanya dipanggil hanya untuk jadwal
-  // yang belum ditutup, sehingga jatuh tempo yang sudah lewat berarti kendaraannya
-  // masih di luar dengan waktu kembali tak diketahui: armadanya menolak jadwal
-  // baru kapan pun sampai ditekan "Selesai".
-  const clashes = (otherStart, otherEnd) =>
-    overlaps(winStart, winEnd, otherStart, otherEnd) || parseDT(otherEnd) < now;
+  // Mobil benar-benar di luar: jadwal Kalender yang sudah mulai, atau pesanan
+  // aplikasi yang Sedang Berjalan. Pesanan Menunggu/Disetujui yang tanggalnya
+  // lewat (mitra tak merespons, penyewa tak datang) tidak dihitung.
+  const diLuar = (x) => x.reason !== undefined || x.status === "ongoing";
 
-  const busyCarIds = new Set([
-    ...bookings
-      .filter(b => !["cancelled", "rejected", "completed"].includes(b.status) && clashes(b.start_time, b.end_time))
-      .map(b => b.car_id),
-    // Jadwal yang sedang diubah tidak dihitung bentrok dengan dirinya sendiri.
-    ...activeSchedules
-      .filter(s => s.id !== editScheduleId && clashes(s.start_time, s.end_time))
-      .map(s => s.car_id)
-  ]);
+  // Sama dengan bentrokJadwalMitra di backend, supaya pilihan yang tersisa tidak
+  // ditolak 409 saat disimpan: sewa yang lewat jatuh tempo tapi belum ditutup
+  // hanya menolak jadwal yang mulai sekarang atau lebih awal.
+  const clashes = (x) =>
+    overlaps(winStart, winEnd, x.start_time, x.end_time) || (diLuar(x) && parseDT(x.end_time) < now && winStart <= now);
+
+  // Jadwal yang sedang diubah tidak dihitung bentrok dengan dirinya sendiri.
+  const jadwalHidup = [
+    ...bookings.filter(b => !SUDAH_TUTUP.has(b.status)),
+    ...activeSchedules.filter(s => s.id !== editScheduleId)
+  ];
+  const busyCarIds = new Set(adaTanggal
+    ? jadwalHidup.filter(clashes).map(x => x.car_id)
+    : []);
 
   const availableCars = cars.filter(c => !busyCarIds.has(c.id));
+
+  // Sewa yang sedang berjalan (atau telat kembali) pada mobil ini, untuk penanda di form.
+  const sedangJalan = (carId) => jadwalHidup.find(x =>
+    x.car_id === carId && !isUpcoming(x.start_time, now) && (diLuar(x) || parseDT(x.end_time) > now));
 
   const fetchData = () => {
     setLoading(true);
@@ -168,6 +177,7 @@ export default function RentalCalendar({ ownerPhone }) {
         const svc = services.find(s => s.id === serviceId);
         finalReason = `Booking - Customer: ${customerName} (${customerPhone}) | Pembayaran: ${paymentMethod} | Tipe: ${paymentTerm}${paymentTerm === "DP" ? ` | Nominal DP: ${dpAmount}` : ""}`;
         if (svc) finalReason += ` | Jasa: ${svc.name} | Biaya Jasa: ${svc.price}`;
+        finalReason += diskonReason({ tipe: diskonTipe, nilai: diskonNilai });
         if (docUrl) finalReason += ` | KTP: ${docUrl}`;
       } else if (docUrl) {
         finalReason += ` | Dokumen: ${docUrl}`;
@@ -199,6 +209,8 @@ export default function RentalCalendar({ ownerPhone }) {
             setPaymentTerm("Full");
             setDpAmount("");
             setServiceId("");
+            setDiskonTipe("");
+            setDiskonNilai("");
           } else {
             setReason("Servis Berkala");
           }
@@ -281,6 +293,8 @@ export default function RentalCalendar({ ownerPhone }) {
       setDpAmount(info.dpAmount ? String(info.dpAmount) : "");
       // Jasa dicocokkan balik lewat nama; kalau jasanya sudah dihapus, pilihan dikosongkan.
       setServiceId(services.find(s => s.name === info.serviceName)?.id || "");
+      setDiskonTipe(info.diskon.tipe);
+      setDiskonNilai(info.diskon.nilai ? String(info.diskon.nilai) : "");
       setReason("Servis Berkala");
     } else {
       setBlockType("maintenance");
@@ -291,6 +305,8 @@ export default function RentalCalendar({ ownerPhone }) {
       setPaymentTerm("Full");
       setDpAmount("");
       setServiceId("");
+      setDiskonTipe("");
+      setDiskonNilai("");
     }
 
     setShowModal(false);
@@ -672,7 +688,7 @@ export default function RentalCalendar({ ownerPhone }) {
                 const info = parseSchedule(s.reason);
                 const isManualBooking = info.isManual;
                 const cost = isManualBooking
-                  ? scheduleCost(s.start_time, s.end_time, car?.price_per_day, info.serviceFee)
+                  ? scheduleCost(s.start_time, s.end_time, car?.price_per_day, info.serviceFee, info.diskon)
                   : null;
                 return (
                   <div
@@ -686,10 +702,13 @@ export default function RentalCalendar({ ownerPhone }) {
                       borderRadius: 12,
                       border: "1px solid var(--border)",
                       transition: "all 0.2s ease",
-                      gap: 12
+                      gap: 12,
+                      // Kartu selebar 280px tidak muat teks + tiga tombol; tombol turun
+                      // ke baris bawah alih-alih menimpa tanggal.
+                      flexWrap: "wrap"
                     }}
                   >
-                    <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ flex: "1 1 200px", minWidth: 0 }}>
                       <div style={{ fontWeight: 700, fontSize: 14, color: "var(--text-primary)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                         {car ? `${car.brand} ${car.model}` : "Kendaraan"}
                       </div>
@@ -719,9 +738,14 @@ export default function RentalCalendar({ ownerPhone }) {
                       <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 6, whiteSpace: "nowrap" }}>
                         {s.start_time} s/d {s.end_time}
                       </div>
+                      {isManualBooking && isUpcoming(s.start_time, now) && (
+                        <div style={{ fontSize: 11, color: "#7C3AED", fontWeight: 700, marginTop: 4 }}>
+                          Booking — belum mulai
+                        </div>
+                      )}
                       {parseDT(s.end_time) < now && (
                         <div style={{ fontSize: 11, color: "#B45309", fontWeight: 700, marginTop: 4 }}>
-                          Telat {rentalDays(s.end_time, now)} hari — kendaraan terkunci sampai ditandai Selesai
+                          Telat {rentalDays(s.end_time, now)} hari — tandai Selesai begitu kendaraan kembali
                         </div>
                       )}
                       {cost && cost.total > 0 && (
@@ -984,8 +1008,8 @@ export default function RentalCalendar({ ownerPhone }) {
                 const docUrl = isManual ? "" : info.docUrl;
 
                 const cost = isManual
-                  ? scheduleCost(selectedEvent.raw.start_time, selectedEvent.raw.end_time, selectedEvent.car?.price_per_day, jasaFee)
-                  : { days: 0, rental: 0, service: 0, total: 0 };
+                  ? scheduleCost(selectedEvent.raw.start_time, selectedEvent.raw.end_time, selectedEvent.car?.price_per_day, jasaFee, info.diskon)
+                  : { days: 0, rental: 0, service: 0, discount: 0, total: 0 };
                 const tagihan = cost.total + (selectedEvent.raw.late_fee || 0);
                 const sisaBayar = payTerm === "DP" && dpVal ? Math.max(0, tagihan - dpVal) : 0;
 
@@ -1028,6 +1052,12 @@ export default function RentalCalendar({ ownerPhone }) {
                                 <span>Rp {cost.service.toLocaleString("id-ID")}</span>
                               </div>
                             )}
+                            {cost.discount > 0 && (
+                              <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
+                                <span style={{ color: "#059669" }}>Diskon{info.diskon.tipe === "persen" ? ` ${info.diskon.nilai}%` : ""}</span>
+                                <span style={{ color: "#059669", fontWeight: 700 }}>− Rp {cost.discount.toLocaleString("id-ID")}</span>
+                              </div>
+                            )}
                             {selectedEvent.raw.late_fee > 0 && (
                               <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
                                 <span style={{ color: "#B45309" }}>Denda keterlambatan</span>
@@ -1056,7 +1086,7 @@ export default function RentalCalendar({ ownerPhone }) {
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "13px" }}>
                             <span style={{ color: "var(--text-secondary)" }}>Tipe Pembayaran:</span>
                             <span className="badge" style={{ background: "rgba(245, 158, 11, 0.15)", color: "#F59E0B", fontWeight: 700 }}>
-                              {payTerm === "DP" ? "DP (Uang Muka)" : "LUNAS / FULL"}
+                              {payTerm === "DP" ? "DP (Uang Muka)" : "BAYAR PENUH"}
                             </span>
                           </div>
                         )}
@@ -1121,6 +1151,10 @@ export default function RentalCalendar({ ownerPhone }) {
                       {selectedEvent.raw.status === "completed" ? (
                         <span className="badge" style={{ background: "rgba(100,116,139,0.2)", color: "#64748B" }}>
                           SELESAI
+                        </span>
+                      ) : isManual && isUpcoming(selectedEvent.raw.start_time) ? (
+                        <span className="badge" style={{ background: "rgba(124,58,237,0.15)", color: "#7C3AED" }}>
+                          BOOKING (BELUM MULAI)
                         </span>
                       ) : isManual ? (
                         <span className="badge badge-success" style={{ background: "rgba(16,185,129,0.2)", color: "#10B981" }}>
@@ -1195,17 +1229,14 @@ export default function RentalCalendar({ ownerPhone }) {
                   // Perawatan tidak punya penyewa, jadi tidak ada yang bisa ditagih.
                   if (!isBooking && !info.isManual) return null;
                   return (
-                    <button
-                      onClick={() => setInvoice(
-                        isBooking
-                          ? bookingInvoice(selectedEvent.raw, selectedEvent.car, rentalName)
-                          : scheduleInvoice(selectedEvent.raw, selectedEvent.car, rentalName)
-                      )}
+                    <TombolDokumen
+                      doc={isBooking
+                        ? bookingInvoice(selectedEvent.raw, selectedEvent.car, rental)
+                        : scheduleInvoice(selectedEvent.raw, selectedEvent.car, rental)}
+                      onBuka={setInvoice}
                       className="btn btn-primary"
                       style={{ padding: "8px 16px", borderRadius: "8px", cursor: "pointer", fontSize: "13px", fontWeight: 600 }}
-                    >
-                      <FileText size={15} /> Invoice
-                    </button>
+                    />
                   );
                 })()}
                 <button
@@ -1280,21 +1311,31 @@ export default function RentalCalendar({ ownerPhone }) {
                     <option value="">— Pilih kendaraan —</option>
                   )}
                   {availableCars.map(c => (
-                    <option key={c.id} value={c.id}>{c.brand} {c.model} ({c.plate_number})</option>
+                    <option key={c.id} value={c.id}>
+                      {c.brand} {c.model} ({c.plate_number}){sedangJalan(c.id) ? " — sedang jalan" : ""}
+                    </option>
                   ))}
                 </select>
                 {availableCars.length === 0 ? (
                   <div style={{ fontSize: 12, color: "#EF4444", marginTop: 4 }}>
-                    Tidak ada kendaraan yang bebas pada {startDate && endDate ? "periode tersebut" : "saat ini"}.
-                    Ubah tanggalnya, atau selesaikan dulu jadwal yang sedang berjalan.
+                    Tidak ada kendaraan yang bebas pada periode tersebut. Ubah tanggalnya.
                   </div>
                 ) : cars.length > availableCars.length && (
                   <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 4 }}>
-                    {cars.length - availableCars.length} kendaraan disembunyikan karena sudah ada jadwal
-                    {startDate && endDate ? " pada periode tersebut" : " yang sedang berjalan"}, atau belum
-                    dikembalikan melewati jatuh tempo.
+                    {cars.length - availableCars.length} kendaraan disembunyikan karena sudah ada jadwal pada periode tersebut.
                   </div>
                 )}
+                {(() => {
+                  const jalan = sedangJalan(blockCarId);
+                  if (!jalan || !availableCars.some(c => c.id === blockCarId)) return null;
+                  return (
+                    <div style={{ fontSize: 12, color: "#7C3AED", background: "rgba(124,58,237,0.08)", borderRadius: 8, padding: "8px 10px", marginTop: 6 }}>
+                      Kendaraan ini sedang disewa s/d <strong>{jalan.end_time.slice(0, 16)}</strong>
+                      {parseDT(jalan.end_time) < now ? " (telat kembali)" : ""}. Isi tanggal setelahnya —
+                      jadwal ini tercatat sebagai <strong>booking mendatang</strong>.
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="grid-2">
@@ -1368,7 +1409,7 @@ export default function RentalCalendar({ ownerPhone }) {
                     <div className="input-group">
                       <label>Tipe Pembayaran</label>
                       <select className="input" value={paymentTerm} onChange={e => setPaymentTerm(e.target.value)}>
-                        <option value="Full">Bayar Full (Lunas)</option>
+                        <option value="Full">Bayar penuh (tanpa DP)</option>
                         <option value="DP">Bayar di Awal (DP)</option>
                       </select>
                     </div>
@@ -1388,11 +1429,39 @@ export default function RentalCalendar({ ownerPhone }) {
                     </div>
                   )}
 
+                  <div className="grid-2">
+                    <div className="input-group">
+                      <label>Diskon</label>
+                      <select className="input" value={diskonTipe} onChange={e => setDiskonTipe(e.target.value)}>
+                        <option value="">Tanpa diskon</option>
+                        <option value="persen">Persen (%)</option>
+                        <option value="nominal">Nominal (Rp)</option>
+                      </select>
+                    </div>
+                    {diskonTipe && (
+                      <div className="input-group">
+                        <label>{diskonTipe === "persen" ? "Besar Diskon (%)" : "Besar Diskon (Rp)"}</label>
+                        <input
+                          className="input"
+                          type="number"
+                          min="0"
+                          max={diskonTipe === "persen" ? 100 : undefined}
+                          step={diskonTipe === "persen" ? "0.5" : "1000"}
+                          placeholder={diskonTipe === "persen" ? "Contoh: 10" : "Contoh: 50000"}
+                          value={diskonNilai}
+                          onChange={e => setDiskonNilai(e.target.value)}
+                          required
+                        />
+                      </div>
+                    )}
+                  </div>
+
                   {/* Rincian tarif otomatis: lama sewa x harga mobil, ditambah jasa bila dipilih */}
                   {(() => {
                     const car = cars.find(c => c.id === blockCarId);
                     const svc = services.find(s => s.id === serviceId);
-                    const est = scheduleCost(`${startDate} ${startTime}:00`, `${endDate} ${endTime}:00`, car?.price_per_day, svc?.price);
+                    const est = scheduleCost(`${startDate} ${startTime}:00`, `${endDate} ${endTime}:00`, car?.price_per_day, svc?.price,
+                      { tipe: diskonTipe, nilai: diskonNilai });
                     if (!car || !startDate || !endDate || est.days === 0) {
                       return (
                         <div style={{ fontSize: 12, color: "var(--text-muted)", background: "var(--bg-input)", border: "1px dashed var(--border)", borderRadius: 10, padding: 12 }}>
@@ -1416,6 +1485,12 @@ export default function RentalCalendar({ ownerPhone }) {
                               {svc.name} {est.days} hari × Rp {svc.price.toLocaleString("id-ID")}
                             </span>
                             <span>Rp {est.service.toLocaleString("id-ID")}</span>
+                          </div>
+                        )}
+                        {est.discount > 0 && (
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                            <span style={{ color: "#059669" }}>Diskon{diskonTipe === "persen" ? ` ${diskonNilai}%` : ""}</span>
+                            <span style={{ color: "#059669", fontWeight: 700 }}>− Rp {est.discount.toLocaleString("id-ID")}</span>
                           </div>
                         )}
                         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, paddingTop: 8, borderTop: "1px dashed var(--border)" }}>
@@ -1493,7 +1568,12 @@ export default function RentalCalendar({ ownerPhone }) {
           </div>
         </div>
       )}
-      <InvoiceModal data={invoice} onClose={() => setInvoice(null)} />
+      <InvoiceModal
+        data={invoice}
+        onClose={() => setInvoice(null)}
+        // Detail jadwal yang terbuka memegang data lama; ditutup supaya tidak menampilkan status bayar basi.
+        onUbah={() => { fetchData(); setShowModal(false); }}
+      />
     </div>
   );
 }

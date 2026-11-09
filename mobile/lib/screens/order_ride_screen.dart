@@ -5,6 +5,7 @@ import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile/models/food.dart' show rupiah;
+import 'package:mobile/widgets/dialog_alasan.dart';
 import 'package:mobile/widgets/food_widgets.dart' show lebarDekode;
 import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/services/api_service.dart';
@@ -53,6 +54,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   final _pickupController = TextEditingController();
   final _destinationController = TextEditingController();
   final _fokusTujuan = FocusNode();
+  final _fokusJemput = FocusNode();
   final _formKey = GlobalKey<FormState>();
 
   late String _selectedService;
@@ -113,6 +115,21 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // ada karena isian ini bukan lokasi siapa pun: tanpa penanda itu, penumpang
   // yang GPS-nya gagal memesan dari titik ini dan ongkosnya dihitung dari sini.
   bool _gpsTerbaca = false;
+  // Titik jemput bisa dicari seperti tujuan (orang tua menjemput anak di
+  // sekolah). Selama tulisannya diketik tangan dan belum ada saran yang
+  // dipilih, _currentLatLng masih titik lama: pesanan dan ongkos ditahan.
+  bool _jemputDiketik = false;
+  // Pengajuan batal BohFood (lihat _batalkanPesanan): menunggu jawaban driver,
+  // dan alasan driver menolak pengajuan terakhir.
+  bool _menungguBatal = false;
+  String _tolakBatal = '';
+  // Polling yang berangkat sebelum pengajuan dikirim membawa status lama; tanpa
+  // penanda ini balasannya memunculkan "ditolak" palsu dari pengajuan sebelumnya.
+  DateTime _batalDiajukanPada = DateTime(0);
+  bool get _harusAjukanBatal => _selectedService == 'BohFood' && _orderStatus == 'accepted';
+  // Naik tiap kali penumpang sendiri memindahkan titik jemput. GPS yang baru
+  // terbaca sesudahnya tidak menimpa pilihan itu (GPS awal butuh sampai 8 detik).
+  int _versiJemput = 0;
   LatLng? _destinationLatLng;
   // Posisi penanda driver di layar. Selama digeser halus menuju posisi baru,
   // isinya titik antara; _sasaranDriver posisi terakhir dari server.
@@ -131,6 +148,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
 
   // Autocomplete and Places suggestions
   List<PlaceSuggestion> _suggestions = [];
+  // Saran yang tampil milik kolom jemput (true) atau tujuan (false).
+  bool _cariJemput = false;
   bool _loadingSuggestions = false;
   // Kabar di bawah kolom tujuan: tidak ketemu, atau pencariannya gagal. Dulu
   // galatnya ditelan dan penumpang cuma melihat kolom yang diam.
@@ -205,6 +224,21 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     });
     _muatDriverSiaga();
     _siagaTimer = Timer.periodic(const Duration(seconds: 15), (_) => _muatDriverSiaga());
+    // Saran milik kolom yang sedang diketik: pindah kolom membuang saran kolom
+    // lain, supaya mengetuk saran tidak mengisi kolom yang salah.
+    _fokusJemput.addListener(() => _gantiKolomCari(jemput: true, fokus: _fokusJemput.hasFocus));
+    _fokusTujuan.addListener(() => _gantiKolomCari(jemput: false, fokus: _fokusTujuan.hasFocus));
+  }
+
+  // Hanya saat sebuah kolom MENDAPAT fokus (selalu karena ketukan penumpang):
+  // kehilangan fokus juga terjadi saat layar ditutup, dan setState di situ galat.
+  void _gantiKolomCari({required bool jemput, required bool fokus}) {
+    if (!mounted || !fokus || _cariJemput == jemput) return;
+    setState(() {
+      _cariJemput = jemput;
+      _suggestions = [];
+      _pesanCari = '';
+    });
   }
 
   /// Posisi driver siaga dibaca ulang tiap 15 detik: driver yang diam di
@@ -225,6 +259,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     _pickupController.dispose();
     _destinationController.dispose();
     _fokusTujuan.dispose();
+    _fokusJemput.dispose();
     _packageNotesController.dispose();
     _receiverNameController.dispose();
     _receiverPhoneController.dispose();
@@ -333,27 +368,66 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     final id = _orderId;
     if (id == null) return;
 
-    final yakin = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Batalkan pesanan?'),
-        // Selagi mencari belum ada driver yang perlu diberi tahu.
-        content: Text(_orderStatus == 'searching'
-            ? 'Pesananmu belum dapat driver. Kalau dibatalkan, pencarian dihentikan.'
-            : 'Driver yang sedang menuju ke tempatmu akan langsung diberi tahu.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Jangan')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Ya, batalkan', style: TextStyle(color: AppTheme.errorColor)),
-          ),
-        ],
-      ),
-    );
-    if (yakin != true) return;
+    // Selagi mencari belum ada driver yang dirugikan, jadi cukup konfirmasi.
+    // Sesudah dapat driver, alasannya wajib: diteruskan ke driver yang sudah
+    // berangkat dan dicatat untuk admin.
+    final String? alasan;
+    if (_orderStatus == 'searching') {
+      final yakin = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Batalkan pesanan?'),
+          content: const Text('Pesananmu belum dapat driver. Kalau dibatalkan, pencarian dihentikan.'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Jangan')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Ya, batalkan', style: TextStyle(color: AppTheme.errorColor)),
+            ),
+          ],
+        ),
+      );
+      alasan = yakin == true ? '' : null;
+    } else if (_harusAjukanBatal) {
+      // BohFood: makanannya mungkin sudah dibeli driver atau dimasak warung,
+      // jadi penumpang mengajukan dan driver yang memutuskan.
+      final ajuan = await pilihAlasan(
+        context,
+        judul: 'Ajukan pembatalan?',
+        isi: 'Makananmu mungkin sudah dipesan atau dibayar driver di warung, jadi pembatalan perlu persetujuan driver. Kenapa mau dibatalkan?',
+        pilihan: const ['Berubah pikiran', 'Salah pilih menu', 'Salah alamat antar', 'Driver terlalu lama', alasanLainnya],
+        tombol: 'Ajukan',
+      );
+      if (ajuan == null) return;
+      _batalDiajukanPada = DateTime.now();
+      try {
+        await ApiService().mintaBatal(id, alasan: ajuan);
+        if (!mounted) return;
+        setState(() {
+          _menungguBatal = true;
+          _tolakBatal = '';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Pengajuan pembatalan dikirim. Tunggu jawaban driver, ya.')),
+        );
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(pesanGalat(e)), backgroundColor: AppTheme.errorColor));
+      }
+      return;
+    } else {
+      alasan = await pilihAlasan(
+        context,
+        judul: 'Batalkan pesanan?',
+        isi: 'Driver yang sedang menuju ke tempatmu akan langsung diberi tahu. Kenapa dibatalkan?',
+        pilihan: const ['Driver terlalu lama', 'Driver minta dibatalkan', 'Salah titik jemput/tujuan', 'Berubah pikiran', alasanLainnya],
+        tombol: 'Ya, batalkan',
+      );
+    }
+    if (alasan == null) return;
 
     try {
-      await ApiService().cancelOrder(id);
+      await ApiService().cancelOrder(id, alasan: alasan);
       if (!mounted) return;
       _statusTimer?.cancel();
       _radarController.stop();
@@ -482,6 +556,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     }
 
     // When we reach here, permissions are granted and we can fetch coordinates
+    // Kalau penumpang memindahkan titik jemput sendiri selama GPS dicari
+    // (memilih sekolah dari daftar, misalnya), hasil GPS ini dibuang.
+    final versi = ++_versiJemput;
     setState(() {
       _pickupController.text = "Mencari lokasimu…";
     });
@@ -493,10 +570,13 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           timeLimit: Duration(seconds: 8),
         ),
       );
-      
+      if (!mounted || versi != _versiJemput) return;
+
       setState(() {
         _currentLatLng = LatLng(position.latitude, position.longitude);
         _gpsTerbaca = true;
+        _jemputDiketik = false;
+        if (_cariJemput) _suggestions = [];
       });
       _pindahPeta(_currentLatLng, 15.0);
       _muatDriverSiaga(); // yang pertama tadi memakai titik bawaan peta
@@ -514,6 +594,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       );
     } catch (e) {
       debugPrint("GPS gagal: $e");
+      if (!mounted || versi != _versiJemput) return;
       // Kosong, bukan "Sintang, Kalimantan Barat": tulisan kota terbaca seolah
       // titik jemputnya sudah pasti, padahal _gpsTerbaca masih false.
       setState(() {
@@ -555,30 +636,55 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     _fokusTujuan.requestFocus();
   }
 
+  /// Tombol × di kolom jemput: kosong sekaligus, siap diketik nama tempat.
+  void _hapusJemput() {
+    _pickupController.clear();
+    _onPickupChanged('');
+  }
+
+  /// Kolom jemput diketik: dicari seperti tujuan. Titik lama tidak lagi sesuai
+  /// tulisannya, jadi pesanan ditahan sampai satu saran dipilih (atau GPS /
+  /// geser peta / tekan lama).
+  void _onPickupChanged(String query) {
+    _versiJemput++;
+    if (!_jemputDiketik || _pesanCari.isNotEmpty || !_cariJemput) {
+      setState(() {
+        _jemputDiketik = true;
+        _cariJemput = true;
+        _pesanCari = '';
+      });
+    }
+    _jadwalkanCari(query);
+  }
+
+  void _jadwalkanCari(String query) {
+    if (_debounceTimer?.isActive ?? false) _debounceTimer?.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+      if (!mounted) return;
+      if (query.trim().length > 2) {
+        _searchPlaces(query);
+      } else {
+        setState(() => _suggestions = []);
+      }
+    });
+  }
+
   void _onDestinationChanged(String query) {
     // Tulisan tujuan diubah tangan: titik lama tidak lagi sesuai tulisannya.
     // Tanpa ini pesanan bisa berangkat ke tujuan sebelumnya dengan nama yang
     // baru diketik. Tombol Lanjutkan menunggu sampai satu saran dipilih atau
     // titiknya digeser di peta.
-    if (_destinationLatLng != null || _pesanCari.isNotEmpty) {
+    if (_destinationLatLng != null || _pesanCari.isNotEmpty || _cariJemput) {
       setState(() {
         _destinationLatLng = null;
         _routePoints = [];
         _estimasi = null;
         _estimasiGagal = false;
         _pesanCari = '';
+        _cariJemput = false;
       });
     }
-    if (_debounceTimer?.isActive ?? false) _debounceTimer?.cancel();
-    _debounceTimer = Timer(const Duration(milliseconds: 500), () {
-      if (query.trim().length > 2) {
-        _searchPlaces(query);
-      } else {
-        setState(() {
-          _suggestions = [];
-        });
-      }
-    });
+    _jadwalkanCari(query);
   }
 
   Future<void> _searchPlaces(String query) async {
@@ -599,7 +705,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       setState(() {
         _suggestions = hasil;
         _loadingSuggestions = false;
-        _pesanCari = hasil.isEmpty ? 'Tempatnya belum ketemu. Coba nama lain, atau geser peta ke tujuan.' : '';
+        _pesanCari = hasil.isEmpty
+            ? 'Tempatnya belum ketemu. Coba nama lain, atau geser peta ke ${_cariJemput ? 'titik jemput' : 'tujuan'}.'
+            : '';
       });
     } catch (e) {
       debugPrint("Suggestions fetch error: $e");
@@ -617,17 +725,18 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // aplikasi ini pernah menyimpan salinan rumusnya sendiri, dan salinan itu
   // tidak pernah ikut berubah saat tarif diubah dari dashboard.
   Future<void> _ambilEstimasi(LatLng tujuan, String layanan) async {
+    final dari = _currentLatLng;
     try {
       final hasil = await ApiService().estimasiTarif(
         layanan: layanan,
-        dariLat: _currentLatLng.latitude,
-        dariLng: _currentLatLng.longitude,
+        dariLat: dari.latitude,
+        dariLng: dari.longitude,
         keLat: tujuan.latitude,
         keLng: tujuan.longitude,
       );
-      // Tujuan atau layanan bisa sudah berganti selama permintaan berjalan;
-      // balasan yang sudah basi tidak boleh menimpa angka yang sedang tampil.
-      if (!mounted || _destinationLatLng != tujuan || _selectedService != layanan) return;
+      // Jemput, tujuan, atau layanan bisa sudah berganti selama permintaan
+      // berjalan; balasan yang basi tidak boleh menimpa angka yang tampil.
+      if (!mounted || _destinationLatLng != tujuan || _selectedService != layanan || _currentLatLng != dari) return;
       setState(() {
         _estimasi = hasil;
         // _fare adalah ongkos perjalanan saja, sama seperti kolom `fare` di
@@ -667,14 +776,22 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   }
 
   Future<void> _pilihTempat(PlaceSuggestion saran) async {
+    final jemput = _cariJemput;
+    final kolom = jemput ? _pickupController : _destinationController;
+    final versi = jemput ? ++_versiJemput : _versiJemput;
     setState(() {
-      _destinationController.text = saran.name;
+      kolom.text = saran.name;
       _suggestions = [];
       _loadingSuggestions = true;
     });
     try {
       final detail = await MapsService().detailTempat(saran.placeId);
       if (!mounted) return;
+      // Titik jemput diubah lagi (diketik, GPS, geser) selama detail dicari.
+      if (jemput && versi != _versiJemput) {
+        setState(() => _loadingSuggestions = false);
+        return;
+      }
       if (detail == null) {
         setState(() => _loadingSuggestions = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -683,10 +800,26 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         return;
       }
       setState(() {
-        _destinationLatLng = detail.posisi;
-        _destinationController.text = detail.name.isEmpty ? saran.name : detail.name;
+        kolom.text = detail.name.isEmpty ? saran.name : detail.name;
+        if (jemput) {
+          _currentLatLng = detail.posisi;
+          _gpsTerbaca = true; // titik yang dipilih sendiri sama sahnya dengan GPS
+          _jemputDiketik = false;
+        } else {
+          _destinationLatLng = detail.posisi;
+        }
         _loadingSuggestions = false;
       });
+      if (jemput) {
+        _muatDriverSiaga(); // driver siaga di sekitar titik jemput yang baru
+        // Orang tua yang menjemput anak: berikutnya tujuan, kalau belum diisi.
+        if (_destinationLatLng == null) {
+          _pindahPeta(_currentLatLng, 16);
+          _fokusTujuan.requestFocus();
+        } else {
+          FocusManager.instance.primaryFocus?.unfocus();
+        }
+      }
       _calculateFareFromDistance();
       _fitMapBounds();
     } catch (e) {
@@ -826,6 +959,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     try {
       final alamat = await MapsService().alamatDariTitik(position);
       if (!mounted || alamat == null) return;
+      // Titiknya sudah berpindah selama alamat dicari (mis. tempat dipilih dari
+      // daftar): alamat ini basi dan tidak boleh menimpa nama tempatnya.
+      if (position != (isPickup ? _currentLatLng : _destinationLatLng)) return;
       setState(() {
         if (isPickup) {
           _pickupController.text = alamat;
@@ -846,9 +982,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       );
       return;
     }
-    if (!_gpsTerbaca) {
+    if (_jemputDiketik || !_gpsTerbaca) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Titik jemput belum pasti. Nyalakan GPS, atau tekan lama lokasimu di peta.")),
+        const SnackBar(content: Text("Titik jemput belum pasti. Cari tempatnya dan pilih dari daftar, nyalakan GPS, atau tekan lama titiknya di peta.")),
       );
       return;
     }
@@ -935,6 +1071,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       if (s == AppLifecycleState.paused || s == AppLifecycleState.hidden) return;
 
       try {
+        final dimintaPada = DateTime.now();
         final response = await ApiService().getOrderStatus(_orderId!);
         if (response['status'] == 'success' && response['order'] != null) {
           final order = response['order'];
@@ -956,6 +1093,25 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           }
 
           if (response['driver'] != null) setState(() => _bacaInfoDriver(response['driver']));
+
+          // Pengajuan batal BohFood: menunggu, ditolak driver, atau gugur karena
+          // makanannya sudah diambil. Disetujui = status cancelled di bawah.
+          final menunggu = (order['minta_batal_at'] ?? '').toString().isNotEmpty;
+          final tolak = (order['tolak_batal'] ?? '').toString();
+          if (dimintaPada.isAfter(_batalDiajukanPada) && (menunggu != _menungguBatal || tolak != _tolakBatal)) {
+            final kabar = _menungguBatal && !menunggu
+                ? status == 'picked_up'
+                    ? 'Makanan sudah dibeli driver, jadi pengajuan pembatalanmu gugur.'
+                    : status == 'accepted' && tolak.isNotEmpty
+                        ? 'Pembatalan ditolak driver: $tolak'
+                        : null
+                : null;
+            setState(() {
+              _menungguBatal = menunggu;
+              _tolakBatal = tolak;
+            });
+            if (kabar != null) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(kabar)));
+          }
 
           if (status == 'accepted' && _orderStatus != 'accepted') {
             setState(() {
@@ -1126,10 +1282,13 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                 },
                 onLongPress: (titik) {
                   if (_orderStatus != "input" || _inputStep != 0) return;
+                  _versiJemput++;
                   setState(() {
                     _currentLatLng = titik;
                     // Menunjuk titik jemput sendiri sama sahnya dengan GPS.
                     _gpsTerbaca = true;
+                    _jemputDiketik = false;
+                    if (_cariJemput) _suggestions = [];
                     _pickupController.text = "Memperbarui lokasi...";
                   });
                   _calculateFareFromDistance();
@@ -1143,6 +1302,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                   _pusatPeta = titik;
                   if (!_geserPeta) return;
                   if (_geserJemput) {
+                    _versiJemput++;
                     _currentLatLng = titik;
                     _gpsTerbaca = true;
                   } else {
@@ -1348,15 +1508,18 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     // Peta yang tidak sempat bergerak sama sekali belum pernah memanggil
     // onCameraMove; _pindahPeta di _mulaiGeser sudah mencatat titik awalnya.
     final titik = _pusatPeta ?? _currentLatLng;
+    if (jemput) _versiJemput++;
     setState(() {
       _geserPeta = false;
       if (jemput) {
         _currentLatLng = titik;
         _gpsTerbaca = true;
+        _jemputDiketik = false;
       } else {
         _destinationLatLng = titik;
       }
     });
+    if (jemput) _muatDriverSiaga();
     _calculateFareFromDistance();
     _reverseGeocode(titik, jemput);
   }
@@ -1438,27 +1601,50 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                   child: Column(
                     children: [
                       // Pickup text input
-                      // Tidak bisa diketik: tulisan jemput yang diubah tangan
-                      // tidak memindahkan titiknya, jadi driver datang ke titik
-                      // lama dengan alamat baru. Mengetuknya membuka mode geser.
-                      // Label berupa pertanyaan: kosong ia jadi petunjuk, terisi
-                      // ia naik jadi judul jawabannya.
+                      // Bisa dicari seperti tujuan (orang tua menjemput anak di
+                      // sekolah). Tulisan yang diketik tidak memindahkan titiknya,
+                      // jadi pesanan ditahan (_jemputDiketik) sampai satu saran
+                      // dipilih — kalau tidak, driver datang ke titik lama dengan
+                      // alamat baru. Label berupa pertanyaan: kosong ia jadi
+                      // petunjuk, terisi ia naik jadi judul jawabannya.
                       TextFormField(
                         controller: _pickupController,
-                        readOnly: true,
-                        onTap: () => _mulaiGeser(true),
+                        focusNode: _fokusJemput,
+                        textInputAction: TextInputAction.search,
                         decoration: _hiasKolomAlamat(
                           isDark,
                           label: _kirimBarang ? "Paket diambil di mana?" : "Dijemput di mana?",
-                          // Satu ikon saja: mengetuk kolomnya sudah membuka
-                          // mode geser peta, dan ikon pin kedua dulu memotong
-                          // alamatnya jadi tinggal belasan huruf.
-                          aksi: IconButton(
-                            tooltip: "Pakai lokasiku sekarang",
-                            icon: const Icon(Icons.my_location, color: AppTheme.primaryBlue, size: 18),
-                            onPressed: _getCurrentLocation,
+                          petunjuk: "Ketik nama tempat, mis. sekolah",
+                          // Tidak sedang diketik: satu ikon GPS, supaya alamatnya
+                          // tidak terpotong. Sedang diketik: hapus + pilih di peta.
+                          aksi: ListenableBuilder(
+                            listenable: Listenable.merge([_fokusJemput, _pickupController]),
+                            builder: (_, _) => _fokusJemput.hasFocus
+                                ? Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (_pickupController.text.isNotEmpty)
+                                        IconButton(
+                                          tooltip: "Hapus titik jemput",
+                                          visualDensity: VisualDensity.compact,
+                                          icon: Icon(Icons.close, size: 18, color: AppTheme.teksRedup(context)),
+                                          onPressed: _hapusJemput,
+                                        ),
+                                      IconButton(
+                                        tooltip: "Pilih di peta",
+                                        icon: const Icon(Icons.pin_drop_outlined, color: Colors.green, size: 18),
+                                        onPressed: () => _mulaiGeser(true),
+                                      ),
+                                    ],
+                                  )
+                                : IconButton(
+                                    tooltip: "Pakai lokasiku sekarang",
+                                    icon: const Icon(Icons.my_location, color: AppTheme.primaryBlue, size: 18),
+                                    onPressed: _getCurrentLocation,
+                                  ),
                           ),
                         ),
+                        onChanged: _onPickupChanged,
                       ),
                       const SizedBox(height: 10),
                       // Dropoff text input
@@ -1503,13 +1689,30 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                 IconButton(
                   tooltip: "Tukar titik jemput dan tujuan",
                   onPressed: () {
-                    // Swap pickup & destination
+                    // Tukar tulisan dan titiknya. Kolom yang belum punya titik
+                    // pasti (tujuan kosong, atau jemput yang masih diketik) tetap
+                    // belum pasti di tempat barunya.
                     final tempText = _pickupController.text;
-                    _pickupController.text = _destinationController.text;
-                    _destinationController.text = tempText;
-                    final tempLatLng = _currentLatLng;
-                    _currentLatLng = _destinationLatLng ?? _currentLatLng;
-                    _destinationLatLng = tempLatLng;
+                    final tujuanLama = _destinationLatLng;
+                    final jemputLama = _jemputDiketik ? null : _currentLatLng;
+                    _versiJemput++;
+                    setState(() {
+                      _pickupController.text = _destinationController.text;
+                      _destinationController.text = tempText;
+                      _destinationLatLng = jemputLama;
+                      if (jemputLama == null) {
+                        _routePoints = [];
+                        _estimasi = null;
+                      }
+                      if (tujuanLama != null) {
+                        _currentLatLng = tujuanLama;
+                        _gpsTerbaca = true;
+                      }
+                      _jemputDiketik = tujuanLama == null;
+                      _suggestions = [];
+                      _pesanCari = '';
+                    });
+                    _muatDriverSiaga();
                     _calculateFareFromDistance(); // sudah menjadwalkan _fetchRoute
                   },
                   icon: const Icon(Icons.swap_vert, color: AppTheme.primaryBlue),
@@ -1555,16 +1758,34 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                       child: Text(_pesanCari, style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
                     ),
                     TextButton(
-                      onPressed: () => _mulaiGeser(false),
+                      onPressed: () => _mulaiGeser(_cariJemput),
                       child: const Text('Pilih di peta'),
                     ),
                   ],
                 ),
               ),
 
+            // Jemput diketik tapi belum dipilih dari daftar: kenapa tombolnya mati.
+            if (_jemputDiketik && _suggestions.isEmpty && _pesanCari.isEmpty && !_loadingSuggestions)
+              Padding(
+                padding: const EdgeInsets.only(top: 12),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(Icons.info_outline, size: 16, color: Color(0xFFB45309)),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        "Pilih titik jemput dari daftar saran, atau tunjuk titiknya di peta.",
+                        style: TextStyle(fontSize: 11.5, color: AppTheme.teksBerwarna(context, const Color(0xFFB45309))),
+                      ),
+                    ),
+                  ],
+                ),
+              )
             // Ketuk dan tekan-lama peta tidak kelihatan dari mana pun; tanpa
             // kalimat ini penumpang tidak tahu peta bisa dipakai memilih.
-            if (_destinationLatLng == null && _suggestions.isEmpty && _pesanCari.isEmpty && !_loadingSuggestions)
+            else if (_destinationLatLng == null && _suggestions.isEmpty && _pesanCari.isEmpty && !_loadingSuggestions)
               Padding(
                 padding: const EdgeInsets.only(top: 12),
                 child: Row(
@@ -1589,7 +1810,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             const SizedBox(height: 18),
 
             ElevatedButton(
-              onPressed: _destinationLatLng != null
+              onPressed: _destinationLatLng != null && !_jemputDiketik
                   ? () {
                       setState(() {
                         if (_kirimBarang) {
@@ -2301,14 +2522,35 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           // sudah bekerja, dan backend memang menolak pembatalannya.
           if (_orderStatus == "accepted") ...[
             const SizedBox(height: 6),
-            TextButton(
-              onPressed: _batalkanPesanan,
-              style: TextButton.styleFrom(
-                foregroundColor: AppTheme.errorColor,
-                minimumSize: const Size(double.infinity, 40),
+            if (_menungguBatal)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: const Color(0xFFB45309).withValues(alpha: 0.10), borderRadius: BorderRadius.circular(10)),
+                child: Row(
+                  children: [
+                    const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFFB45309))),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text('Menunggu persetujuan driver untuk membatalkan…',
+                          style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: AppTheme.teksBerwarna(context, const Color(0xFFB45309)))),
+                    ),
+                  ],
+                ),
+              )
+            else ...[
+              if (_harusAjukanBatal && _tolakBatal.isNotEmpty)
+                Text('Pengajuan batal ditolak driver: $_tolakBatal',
+                    textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
+              TextButton(
+                onPressed: _batalkanPesanan,
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.errorColor,
+                  minimumSize: const Size(double.infinity, 40),
+                ),
+                child: Text(_harusAjukanBatal ? "Ajukan pembatalan" : "Batalkan pesanan", style: const TextStyle(fontWeight: FontWeight.w600)),
               ),
-              child: const Text("Batalkan pesanan", style: TextStyle(fontWeight: FontWeight.w600)),
-            ),
+            ],
           ],
         ],
       ),

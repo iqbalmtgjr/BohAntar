@@ -77,9 +77,28 @@ export function parseSchedule(reason = "") {
     paymentTerm: field(raw, "Tipe") || "Full",
     dpAmount: parseFloat(field(raw, "Nominal DP")) || 0,
     serviceName: field(raw, "Jasa"),
-    serviceFee: parseFloat(field(raw, "Biaya Jasa")) || 0
+    serviceFee: parseFloat(field(raw, "Biaya Jasa")) || 0,
+    diskon: parseDiskon(field(raw, "Diskon"))
   };
 }
+
+// Diskon sewa manual tersimpan di reason sebagai "Diskon: 10%" (persen) atau
+// "Diskon: 50000" (nominal rupiah).
+export function parseDiskon(teks = "") {
+  const nilai = parseFloat(String(teks).replace(/[^\d.]/g, "")) || 0;
+  if (nilai <= 0) return { tipe: "", nilai: 0 };
+  return { tipe: String(teks).includes("%") ? "persen" : "nominal", nilai };
+}
+
+export function diskonReason(d) {
+  if (!d?.tipe || !(Number(d.nilai) > 0)) return "";
+  return ` | Diskon: ${Number(d.nilai)}${d.tipe === "persen" ? "%" : ""}`;
+}
+
+// Jadwal yang belum mulai = booking untuk hari mendatang. Status di database
+// tetap "active"; ini hanya label supaya mitra bisa membedakannya dari yang
+// sedang jalan.
+export const isUpcoming = (start, now = new Date()) => parseDT(start) > now;
 
 // Riwayat transaksi rental berasal dari dua tabel: pesanan aplikasi
 // (rental_bookings) dan jadwal yang dibuat sendiri di Kalender
@@ -111,7 +130,7 @@ export function buildRows(bookings, schedules, cars) {
     const info = parseSchedule(s.reason);
     const car = cars.find(c => c.id === s.car_id);
     const cost = info.isManual
-      ? scheduleCost(s.start_time, s.end_time, car?.price_per_day, info.serviceFee)
+      ? scheduleCost(s.start_time, s.end_time, car?.price_per_day, info.serviceFee, info.diskon)
       : null;
     return {
       id: s.id,
@@ -149,10 +168,58 @@ export function isOverdue(row, now = new Date()) {
   return bucketOf(row.status) === "berjalan" && parseDT(row.end) < now;
 }
 
-// Tarif dihitung per hari: (harga sewa mobil + biaya jasa) x jumlah hari.
-export function scheduleCost(startStr, endStr, pricePerDay = 0, serviceFee = 0) {
+// Tarif dihitung per hari: (harga sewa mobil + biaya jasa) x jumlah hari,
+// lalu dikurangi diskon. Diskon tidak pernah melebihi subtotal.
+export function scheduleCost(startStr, endStr, pricePerDay = 0, serviceFee = 0, diskon = null) {
   const days = rentalDays(startStr, endStr);
   const rental = days * (Number(pricePerDay) || 0);
   const service = days * (Number(serviceFee) || 0);
-  return { days, rental, service, total: rental + service };
+  const subtotal = rental + service;
+  const n = Number(diskon?.nilai) || 0;
+  const discount = Math.min(subtotal, Math.max(0,
+    diskon?.tipe === "persen" ? Math.round(subtotal * Math.min(n, 100) / 100)
+    : diskon?.tipe === "nominal" ? n : 0));
+  return { days, rental, service, subtotal, discount, total: subtotal - discount };
 }
+
+// Pembayaran sewa: berapa yang sudah masuk, kapan, dan apakah sudah lunas.
+// Pelunasan yang ditandai mitra (lunas_at) selalu menang. Tanpa itu, `awal`
+// (bayar saat booking manual: penuh atau DP) yang dipakai. Lunas dibanding
+// total TERMASUK denda, jadi denda yang muncul setelah pelunasan membuat
+// statusnya kembali belum lunas sebesar dendanya.
+export function statusBayar(total, rec = {}, awal = null) {
+  const ditandai = Boolean(rec?.lunas_at);
+  const dibayar = ditandai ? Number(rec.lunas_nominal) || 0 : Number(awal?.nominal) || 0;
+  const lunas = total > 0 && dibayar >= total;
+  return {
+    dibayar,
+    sisa: Math.max(0, total - dibayar),
+    lunas,
+    lunasAt: lunas ? (ditandai ? rec.lunas_at : awal?.waktu || "") : "",
+    metode: ditandai ? rec.lunas_metode || "" : awal?.metode || "",
+    ditandai,
+  };
+}
+
+const ANGKA = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"];
+
+// Angka ke kata untuk kuitansi: 1260000 -> "satu juta dua ratus enam puluh ribu".
+export function terbilang(n) {
+  n = Math.floor(Math.abs(Number(n) || 0));
+  const gabung = (a, b) => `${a} ${b}`.trim();
+  if (n < 12) return ANGKA[n];
+  if (n < 20) return gabung(terbilang(n - 10), "belas");
+  if (n < 100) return gabung(`${terbilang(Math.floor(n / 10))} puluh`, terbilang(n % 10));
+  if (n < 200) return gabung("seratus", terbilang(n - 100));
+  if (n < 1000) return gabung(`${terbilang(Math.floor(n / 100))} ratus`, terbilang(n % 100));
+  if (n < 2000) return gabung("seribu", terbilang(n - 1000));
+  for (const [besar, nama] of [[1e12, "triliun"], [1e9, "miliar"], [1e6, "juta"], [1e3, "ribu"]]) {
+    if (n >= besar) return gabung(`${terbilang(Math.floor(n / besar))} ${nama}`, terbilang(n % besar));
+  }
+  return "";
+}
+
+export const terbilangRupiah = (n) => {
+  const kata = `${terbilang(n) || "nol"} rupiah`;
+  return kata.charAt(0).toUpperCase() + kata.slice(1);
+};

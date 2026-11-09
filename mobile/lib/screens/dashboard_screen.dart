@@ -21,6 +21,7 @@ import 'package:mobile/services/notifikasi_service.dart';
 import 'package:mobile/status_pesanan.dart';
 import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/banner_beranda.dart';
+import 'package:mobile/widgets/dialog_alasan.dart';
 import 'package:mobile/widgets/food_widgets.dart' show PesanKosong, lebarDekode;
 import 'package:mobile/widgets/peta.dart';
 
@@ -65,6 +66,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   // Peran akun di server, bisa beda dari widget.role: akun driver yang sedang
   // di mode penumpang. Penentu munculnya tombol beralih mode.
   String _peranAkun = '';
+  // Akun driver yang disuspend admin (users.is_driver_active = 0) dan alasannya.
+  bool _driverDinonaktifkan = false;
+  String _alasanNonaktif = '';
   Map<String, String> _userAddresses = {};
   Map<String, dynamic>? _riderActiveOrder;
 
@@ -147,9 +151,114 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   bool get _sudahDijemput => _acceptedOrder?['status'] == 'picked_up';
   LatLng? get _tujuanAktif => _sudahDijemput ? _orderDropoffLatLng : _orderPickupLatLng;
 
+  // Panel pesanan berjalan diciutkan jadi satu bar supaya peta terlihat, sama
+  // dengan layar penumpang. Pesanan berikutnya selalu mulai dengan panel penuh.
+  bool _panelKecil = false;
+
+  String _arahBerikut(Map<String, dynamic>? o) => _sudahDijemput
+      ? 'Ke tujuan'
+      : _makanan(o)
+          ? 'Ke warung'
+          : _kirimBarang(o)
+              ? 'Ke titik ambil'
+              : 'Ke penumpang';
+
+  bool _menjawabBatal = false;
+  // Polling yang berangkat sebelum jawaban dikirim masih membawa pengajuannya;
+  // tanpa penanda ini kotak Setujui/Tolak muncul lagi sesaat setelah dijawab.
+  DateTime _batalDijawabPada = DateTime(0);
+
+  /// Jawaban atas pengajuan batal BohFood. Driver yang tahu apakah makanannya
+  /// sudah dibeli; menolak wajib beralasan supaya pemesan mengerti.
+  Future<void> _jawabBatal(bool setuju) async {
+    final id = _acceptedOrder?['id'];
+    if (id == null) return;
+    var alasan = '';
+    if (!setuju) {
+      final a = await pilihAlasan(
+        context,
+        judul: 'Tolak pembatalan?',
+        isi: 'Pesanan tetap berjalan dan pemesan diberi tahu alasannya.',
+        pilihan: const ['Makanan sudah dibeli', 'Makanan sudah dimasak warung', 'Sudah dekat lokasi antar', alasanLainnya],
+        tombol: 'Tolak',
+        batal: 'Kembali',
+      );
+      if (a == null || !mounted) return;
+      alasan = a;
+    }
+    setState(() => _menjawabBatal = true);
+    _batalDijawabPada = DateTime.now();
+    try {
+      await ApiService().jawabBatal(id, setuju: setuju, alasan: alasan);
+      if (!mounted) return;
+      if (setuju) {
+        setState(_tutupPesananDriver);
+        _beriTahu('Pesanan dibatalkan atas permintaan pemesan.');
+        _fetchUserProfile();
+      } else {
+        setState(() => _acceptedOrder!['minta_batal_at'] = '');
+        _beriTahu('Pembatalan ditolak. Lanjutkan pengantaran.');
+      }
+    } catch (e) {
+      if (mounted) _beriTahu(pesanGalat(e));
+    } finally {
+      if (mounted) setState(() => _menjawabBatal = false);
+    }
+  }
+
+  Widget _kotakMintaBatal() {
+    final alasan = (_acceptedOrder!['alasan_batal'] ?? '').toString();
+    final merah = AppTheme.teksBerwarna(context, AppTheme.errorColor);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.errorColor.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.errorColor.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Pemesan minta pesanan dibatalkan', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: merah)),
+          if (alasan.isNotEmpty) Text('Alasan: $alasan', style: TextStyle(fontSize: 12.5, color: AppTheme.teksRedup(context))),
+          const SizedBox(height: 4),
+          Text('Setujui kalau makanannya belum dibeli. Kalau sudah dibayar di warung, tolak.',
+              style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _menjawabBatal ? null : () => _jawabBatal(false),
+                  child: const Text('Tolak', style: TextStyle(fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _menjawabBatal ? null : () => _jawabBatal(true),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor, foregroundColor: Colors.white),
+                  child: const Text('Setujui batal'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Usap ke bawah menciutkan, ke atas membuka.
+  void _usapPanelDriver(DragEndDetails d) {
+    final v = d.primaryVelocity ?? 0;
+    if (v.abs() > 150) setState(() => _panelKecil = v > 0);
+  }
+
   // Semua jalan keluar pesanan (selesai, lepas) membersihkan peta lewat sini,
   // supaya pin dan garis pesanan lama tidak tertinggal.
   void _tutupPesananDriver() {
+    _panelKecil = false;
     _acceptedOrder = null;
     _driverRoutePoints = [];
     _dropoffRoutePoints = [];
@@ -308,10 +417,18 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           _userBadge = user['badge'] ?? 'Silver';
           _kendaraan = response['kendaraan'] ?? 'motor';
           _peranAkun = user['role'] ?? '';
+          _driverDinonaktifkan = user['role'] == 'driver' && user['is_driver_active'] == false;
+          _alasanNonaktif = (response['alasan_nonaktif'] ?? '').toString();
           if (user['addresses'] != null) {
             _userAddresses = Map<String, String>.from(user['addresses']);
           }
         });
+        // Driver yang disuspend tidak dibiarkan online menunggu orderan yang
+        // tak akan datang (server sudah tidak mengirimnya). Pesanan yang sedang
+        // berjalan tetap boleh diselesaikan.
+        if (_driverDinonaktifkan && _isOnline && _acceptedOrder == null && widget.role != 'rider') {
+          _toggleOnline(false);
+        }
       }
     } catch (e) {
       debugPrint("Error fetching profile: $e");
@@ -556,6 +673,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   }
 
   void _toggleOnline(bool online) {
+    if (online && _driverDinonaktifkan) {
+      _beriTahu('Akun driver Anda sedang dinonaktifkan admin. Hubungi admin bohAntar.');
+      return;
+    }
     SharedPreferences.getInstance().then((p) => p.setBool(_kunciOnline, online));
     setState(() {
       _isOnline = online;
@@ -768,6 +889,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   Future<void> _checkAcceptedOrderStatus() async {
     if (_acceptedOrder == null) return;
     try {
+      final dimintaPada = DateTime.now();
       final response = await ApiService().getOrderStatus(_acceptedOrder!['id']);
       if (response['status'] == 'success') {
         final order = response['order'];
@@ -775,6 +897,15 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         final kasir = order['kasvo_pesanan_id'];
         if (kasir != null && kasir != _acceptedOrder!['kasvo_pesanan_id'] && mounted) {
           setState(() => _acceptedOrder!['kasvo_pesanan_id'] = kasir);
+        }
+        // Pengajuan batal BohFood dari pemesan: kotak Setujui/Tolak di panel.
+        final minta = (order['minta_batal_at'] ?? '').toString();
+        if (dimintaPada.isAfter(_batalDijawabPada) && minta != (_acceptedOrder!['minta_batal_at'] ?? '').toString() && mounted) {
+          setState(() {
+            _acceptedOrder!['minta_batal_at'] = minta;
+            _acceptedOrder!['alasan_batal'] = order['alasan_batal'];
+            if (minta.isNotEmpty) _panelKecil = false; // pengajuan baru harus terlihat
+          });
         }
         if (order['status'] == 'completed') {
           setState(() {
@@ -793,7 +924,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           // diizinkan. Tanpa ini kartu pesanannya tetap terpampang dan driver
           // menunggu di titik jemput untuk orang yang tidak akan datang.
           setState(_tutupPesananDriver);
-          _beriTahu('Pesanan dibatalkan. Tidak perlu dilanjutkan.');
+          final alasan = (order['alasan_batal'] ?? '').toString();
+          _beriTahu(alasan.isEmpty
+              ? 'Pesanan dibatalkan. Tidak perlu dilanjutkan.'
+              : 'Pesanan dibatalkan pemesan: $alasan. Tidak perlu dilanjutkan.');
           _fetchUserProfile();
         }
       }
@@ -2808,14 +2942,102 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   // menyusut selebar isinya dan menempel ke kiri.
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    if (_walletBalance < _ambangSaldoMenipis) _kartuSaldoDriver(isDark),
-                    _buildBottomPanel(isDark, theme),
+                    if (_acceptedOrder != null && _panelKecil)
+                      _barKecilDriver(isDark)
+                    else ...[
+                      if (_acceptedOrder != null) _tombolLihatPeta(isDark),
+                      if (_walletBalance < _ambangSaldoMenipis) _kartuSaldoDriver(isDark),
+                      _buildBottomPanel(isDark, theme),
+                    ],
                   ],
                 ),
               ),
             ),
           ),
         ],
+    );
+  }
+
+  /// Tombol di atas panel pesanan berjalan: ketuk atau usap ke bawah untuk
+  /// menciutkan panel dan melihat peta.
+  Widget _tombolLihatPeta(bool isDark) => Center(
+        child: GestureDetector(
+          onVerticalDragEnd: _usapPanelDriver,
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Material(
+              color: isDark ? const Color(0xFF1E293B) : Colors.white,
+              shape: const StadiumBorder(),
+              elevation: 3,
+              child: InkWell(
+                customBorder: const StadiumBorder(),
+                onTap: () => setState(() => _panelKecil = true),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.keyboard_arrow_down, size: 20),
+                      SizedBox(width: 4),
+                      Text('Lihat peta', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+
+  /// Panel pesanan berjalan yang diciutkan: arah berikutnya, perkiraan tiba,
+  /// dan alamatnya. Ketuk atau usap ke atas untuk membuka rincian dan tombol aksi.
+  Widget _barKecilDriver(bool isDark) {
+    final o = _acceptedOrder!;
+    final warna = _sudahDijemput ? Colors.green.shade700 : AppTheme.primaryBlue;
+    final alamat = _sudahDijemput ? '${o['dropoff'] ?? ''}' : _cleanPickupAddress(o['pickup']);
+    final eta = teksEstimasi(_ruteAktif, _driverLatLng);
+    return Semantics(
+      button: true,
+      label: 'Buka rincian pesanan',
+      child: GestureDetector(
+        onTap: () => setState(() => _panelKecil = false),
+        onVerticalDragEnd: _usapPanelDriver,
+        child: Container(
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF1E293B) : Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.15), blurRadius: 15)],
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: warna, shape: BoxShape.circle),
+                child: Icon(_sudahDijemput ? Icons.flag : ikonLayanan('${o['service'] ?? ''}'), color: Colors.white, size: 18),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      eta == null ? _arahBerikut(o) : '${_arahBerikut(o)}: $eta',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontWeight: FontWeight.w900, fontSize: 14, color: AppTheme.teksBerwarna(context, warna)),
+                    ),
+                    if (alamat.isNotEmpty)
+                      Text(alamat, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
+                  ],
+                ),
+              ),
+              const Icon(Icons.keyboard_arrow_up),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -3096,29 +3318,21 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     final orderId = _acceptedOrder?['id'];
     if (orderId == null) return;
 
-    final yakin = await showDialog<bool>(
-      context: context,
-      builder: (d) => AlertDialog(
-        title: const Text('Lepas pesanan ini?'),
-        content: const Text(
-          'Pesanan dikembalikan ke papan orderan supaya driver lain bisa mengambilnya, '
-          'dan komisinya tidak lagi menahan saldo Anda.',
-          style: TextStyle(fontSize: 13),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Batal')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(d, true),
-            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.errorColor),
-            child: const Text('Lepas'),
-          ),
-        ],
-      ),
+    // Alasannya dicatat untuk admin: driver yang sering melepas pesanan
+    // (memilih-milih orderan) jadi terlihat.
+    final alasan = await pilihAlasan(
+      context,
+      judul: 'Lepas pesanan ini?',
+      isi: 'Pesanan dikembalikan ke papan orderan supaya driver lain bisa mengambilnya, '
+          'dan komisinya tidak lagi menahan saldo Anda. Apa alasannya?',
+      pilihan: const ['Kendaraan bermasalah', 'Pemesan tidak bisa dihubungi', 'Lokasi jemput terlalu jauh', 'Pemesan minta dibatalkan', alasanLainnya],
+      tombol: 'Lepas',
+      batal: 'Batal',
     );
-    if (yakin != true || !mounted) return;
+    if (alasan == null || !mounted) return;
 
     try {
-      await ApiService().lepasPesanan(orderId);
+      await ApiService().lepasPesanan(orderId, alasan: alasan);
       if (!mounted) return;
       setState(_tutupPesananDriver);
       // Saldo dibaca ulang: komisi yang tadi tertahan sekarang bebas lagi.
@@ -3604,21 +3818,38 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.offline_bolt_outlined, size: 48, color: Colors.grey.shade500),
-            const SizedBox(height: 12),
-            const Text(
-              'Anda Sedang Offline',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Aktifkan tombol online di atas untuk mulai menerima orderan pelanggan.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey, fontSize: 13),
-            ),
-            const SizedBox(height: 12),
-          ],
+          children: _driverDinonaktifkan
+              ? [
+                  const Icon(Icons.block, size: 48, color: AppTheme.errorColor),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Akun Driver Dinonaktifkan',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${_alasanNonaktif.isEmpty ? '' : 'Alasan: $_alasanNonaktif\n'}'
+                    'Anda belum bisa menerima orderan. Hubungi admin bohAntar untuk mengaktifkan kembali.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 13),
+                  ),
+                  const SizedBox(height: 12),
+                ]
+              : [
+                  Icon(Icons.offline_bolt_outlined, size: 48, color: Colors.grey.shade500),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Anda Sedang Offline',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Aktifkan tombol online di atas untuk mulai menerima orderan pelanggan.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey, fontSize: 13),
+                  ),
+                  const SizedBox(height: 12),
+                ],
         ),
       );
     }
@@ -3644,6 +3875,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if ((_acceptedOrder!['minta_batal_at'] ?? '').toString().isNotEmpty) _kotakMintaBatal(),
             Row(
               children: [
                 Container(
@@ -3715,7 +3947,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '${_sudahDijemput ? 'Ke tujuan' : _makanan(_acceptedOrder) ? 'Ke warung' : _kirimBarang(_acceptedOrder) ? 'Ke titik ambil' : 'Ke penumpang'}: $eta',
+                      '${_arahBerikut(_acceptedOrder)}: $eta',
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                     ),
                   ),

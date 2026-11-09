@@ -27,6 +27,8 @@ func bukaDBTes(t *testing.T) {
 	lama := db
 	db = conn
 	t.Cleanup(func() { db = lama; conn.Close() })
+	migrasiAlasanBatal() // kolom orders.alasan_batal dibaca semua kueri pesanan
+	migrasiNonaktifDriver()
 }
 
 // penggunaUji membuat satu akun sekali pakai dan menghapusnya lagi setelah tes.

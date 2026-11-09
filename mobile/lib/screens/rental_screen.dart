@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:mobile/ketersediaan_sewa.dart';
 import 'package:mobile/models/food.dart' show rupiah;
 import 'package:mobile/services/api_service.dart';
 import 'package:mobile/theme.dart';
@@ -78,6 +79,25 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
   String _tanggal(DateTime t) => '${_hari[t.weekday - 1]}, ${t.day} ${_bulan[t.month - 1]} ${t.year}';
   String _waktu(DateTime t) => '${_tanggal(t)} · ${_dua(t.hour)}.${_dua(t.minute)}';
   String _keServer(DateTime t) => '${t.year}-${_dua(t.month)}-${_dua(t.day)} ${_dua(t.hour)}:${_dua(t.minute)}:00';
+  String _pendek(DateTime t) => '${t.day} ${_bulan[t.month - 1]} ${_dua(t.hour)}.${_dua(t.minute)}';
+
+  /// Satu baris status di kartu kendaraan: tersedia, sedang disewa, atau belum kembali.
+  Widget _statusSedia(RentangTerpakai? r) {
+    final (ikon, teks, warna) = r == null
+        ? (Icons.check_circle_outline, 'Tersedia sekarang', const Color(0xFF047857))
+        : r.belumKembali
+            ? (Icons.error_outline, 'Belum dikembalikan penyewa sebelumnya', const Color(0xFFDC2626))
+            : (Icons.schedule, 'Sedang disewa s/d ${_pendek(r.selesai)}', const Color(0xFFB45309));
+    final c = AppTheme.teksBerwarna(context, warna);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(ikon, size: 15, color: c),
+        const SizedBox(width: 5),
+        Flexible(child: Text(teks, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: c))),
+      ],
+    );
+  }
   String _nama(Map<String, dynamic> k) => '${k['brand'] ?? ''} ${k['model'] ?? ''}'.trim();
   IconData _ikonJenis(Object? jenis) => jenis == 'motorcycle' ? Icons.two_wheeler : Icons.directions_car;
 
@@ -160,6 +180,7 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
     final redup = AppTheme.teksRedup(context);
     final motor = k['vehicle_type'] == 'motorcycle';
     final alamat = (k['mitra_alamat'] ?? '').toString().trim();
+    final dipakai = sedangDipakai(RentangTerpakai.dariJson(k['terpakai']), DateTime.now());
     Widget info(IconData ikon, String teks) => Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -202,6 +223,8 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
                       if (!motor && (k['seats'] as num? ?? 0) > 0) info(Icons.event_seat_outlined, '${k['seats']} kursi'),
                     ],
                   ),
+                  const SizedBox(height: 8),
+                  _statusSedia(dipakai),
                   const SizedBox(height: 10),
                   Row(
                     children: [
@@ -244,7 +267,10 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
 
   Future<void> _bukaFormSewa(Map<String, dynamic> k) async {
     final besok = DateTime.now().add(const Duration(days: 1));
-    var tanggal = DateTime(besok.year, besok.month, besok.day);
+    final terpakai = RentangTerpakai.dariJson(k['terpakai']);
+    // Tanggal awal = hari bebas pertama mulai besok, supaya penyewa tidak
+    // disuguhi tanggal yang pasti ditolak.
+    var tanggal = tanggalBebasPertama(terpakai, besok, 8, 0, 1) ?? DateTime(besok.year, besok.month, besok.day);
     var jam = const TimeOfDay(hour: 8, minute: 0);
     var lama = 1;
     var mengirim = false;
@@ -260,6 +286,8 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
           final mulai = DateTime(tanggal.year, tanggal.month, tanggal.day, jam.hour, jam.minute);
           final selesai = mulai.add(Duration(days: lama));
           final redup = AppTheme.teksRedup(ctx);
+          final bentrok = bentrokSewa(terpakai, mulai, selesai);
+          final mendatang = [for (final r in terpakai) if (r.belumKembali || r.selesai.isAfter(DateTime.now())) r];
 
           Future<void> ajukan() async {
             if (!mulai.isAfter(DateTime.now())) {
@@ -293,6 +321,27 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
                 children: [
                   Text(_nama(k), style: Theme.of(ctx).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800)),
                   Text('${k['mitra_nama'] ?? ''} · ${rupiah(harga)}/hari', style: TextStyle(color: redup, fontSize: 13)),
+                  if (mendatang.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(color: Colors.grey.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(10)),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Sudah terpakai', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 4),
+                          for (final r in mendatang.take(4))
+                            Text(
+                              r.belumKembali ? '• Belum dikembalikan penyewa sebelumnya' : '• ${_pendek(r.mulai)} – ${_pendek(r.selesai)}',
+                              style: TextStyle(fontSize: 12.5, color: redup),
+                            ),
+                          if (mendatang.length > 4) Text('• dan ${mendatang.length - 4} lainnya', style: TextStyle(fontSize: 12.5, color: redup)),
+                        ],
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 8),
                   baris(Icons.calendar_today_outlined, 'Tanggal ambil', _tanggal(tanggal), () async {
                     final hariIni = DateTime.now();
@@ -359,13 +408,21 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
                       ],
                     ),
                   ),
-                  if (galat != null) ...[
+                  if (bentrok != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      bentrok.belumKembali
+                          ? 'Kendaraan ini belum dikembalikan penyewa sebelumnya, jadi belum bisa dipesan. Hubungi mitranya atau pilih kendaraan lain, ya.'
+                          : 'Waktu ini bentrok dengan sewa lain (${_pendek(bentrok.mulai)} – ${_pendek(bentrok.selesai)}). Pilih waktu di luar itu, ya.',
+                      style: const TextStyle(color: AppTheme.errorColor, fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  ] else if (galat != null) ...[
                     const SizedBox(height: 10),
                     Text(galat!, style: const TextStyle(color: AppTheme.errorColor, fontSize: 13, fontWeight: FontWeight.w600)),
                   ],
                   const SizedBox(height: 14),
                   ElevatedButton(
-                    onPressed: mengirim ? null : ajukan,
+                    onPressed: mengirim || bentrok != null ? null : ajukan,
                     child: mengirim
                         ? const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
                         : const Text('Ajukan sewa'),
@@ -383,6 +440,7 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
       );
       _tab.animateTo(1);
       _muatSewa();
+      _muatKatalog(); // sewa baru ikut tercatat sebagai rentang terpakai
     }
   }
 

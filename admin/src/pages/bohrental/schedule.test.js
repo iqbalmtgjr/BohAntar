@@ -1,7 +1,7 @@
 // Jalankan: node --test src/pages/bohrental/schedule.test.js
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseSchedule, rentalDays, scheduleCost, overlaps, buildRows, carColor, CAR_COLORS } from "./schedule.js";
+import { parseSchedule, rentalDays, scheduleCost, overlaps, buildRows, carColor, CAR_COLORS, diskonReason, statusBayar, terbilangRupiah } from "./schedule.js";
 
 test("reason sewa manual terbaca utuh", () => {
   const r = parseSchedule(
@@ -47,7 +47,7 @@ test("kendaraan dianggap sibuk hanya bila periodenya beririsan", () => {
 
 test("3 hari = 3 x (harga sewa + jasa)", () => {
   const c = scheduleCost("2026-08-01 08:00:00", "2026-08-04 08:00:00", 300000, 150000);
-  assert.deepEqual(c, { days: 3, rental: 900000, service: 450000, total: 1350000 });
+  assert.deepEqual(c, { days: 3, rental: 900000, service: 450000, subtotal: 1350000, discount: 0, total: 1350000 });
   assert.equal(scheduleCost("2026-08-01 08:00:00", "2026-08-04 08:00:00", 300000).total, 900000);
 });
 
@@ -113,4 +113,59 @@ test("tiap armada dapat warna berbeda, pilihan owner menang", () => {
 
   // Mobil yang sudah dihapus tidak bikin kalender error.
   assert.equal(carColor("hilang", cars), "#64748B");
+});
+
+test("diskon persen/nominal tersimpan di reason dan memotong total", () => {
+  const dua = ["2026-08-01 08:00:00", "2026-08-03 08:00:00"]; // 2 hari
+  // 2 x (300.000 + 50.000) = 700.000
+  const persen = parseSchedule(`Booking - Customer: A (1) | Biaya Jasa: 50000${diskonReason({ tipe: "persen", nilai: 10 })}`);
+  assert.deepEqual(persen.diskon, { tipe: "persen", nilai: 10 });
+  const c1 = scheduleCost(...dua, 300000, persen.serviceFee, persen.diskon);
+  assert.equal(c1.subtotal, 700000);
+  assert.equal(c1.discount, 70000);
+  assert.equal(c1.total, 630000);
+
+  const nominal = parseSchedule(`Booking - Customer: A (1)${diskonReason({ tipe: "nominal", nilai: 25000 })} | KTP: /uploads/a.jpg`);
+  assert.deepEqual(nominal.diskon, { tipe: "nominal", nilai: 25000 });
+  assert.equal(nominal.docUrl, "/uploads/a.jpg");
+  assert.equal(scheduleCost(...dua, 300000, 0, nominal.diskon).total, 575000);
+
+  // Diskon tidak bisa membuat total minus, dan reason lama tanpa diskon tetap utuh.
+  assert.equal(scheduleCost(...dua, 300000, 0, { tipe: "nominal", nilai: 9e9 }).total, 0);
+  assert.equal(scheduleCost(...dua, 300000, 0, { tipe: "persen", nilai: 150 }).total, 0);
+  assert.equal(diskonReason({ tipe: "persen", nilai: 0 }), "");
+  assert.equal(scheduleCost(...dua, 300000, 0, parseSchedule("Booking - Customer: A (1)").diskon).total, 600000);
+});
+
+test("terbilang rupiah untuk kuitansi", () => {
+  const cek = { 0: "Nol rupiah", 11: "Sebelas rupiah", 15: "Lima belas rupiah", 100: "Seratus rupiah",
+    1000: "Seribu rupiah", 1500: "Seribu lima ratus rupiah", 21000: "Dua puluh satu ribu rupiah",
+    100000: "Seratus ribu rupiah", 1260000: "Satu juta dua ratus enam puluh ribu rupiah",
+    1000001: "Satu juta satu rupiah", 2500000000: "Dua miliar lima ratus juta rupiah",
+    111111: "Seratus sebelas ribu seratus sebelas rupiah" };
+  for (const [n, kata] of Object.entries(cek)) assert.equal(terbilangRupiah(Number(n)), kata);
+});
+
+test("status bayar: pelunasan, bayar penuh di awal, DP, dan denda susulan", () => {
+  // Belum ada pembayaran (pesanan aplikasi).
+  assert.deepEqual(statusBayar(500000, {}), { dibayar: 0, sisa: 500000, lunas: false, lunasAt: "", metode: "", ditandai: false });
+  // Booking manual DP: belum lunas, sisa dihitung dari DP.
+  const dp = statusBayar(700000, {}, { nominal: 200000, waktu: "2026-11-01 08:00:00", metode: "Tunai" });
+  assert.equal(dp.lunas, false);
+  assert.equal(dp.sisa, 500000);
+  // Booking manual "Bayar Full": lunas sejak dibuat.
+  const full = statusBayar(700000, {}, { nominal: 700000, waktu: "2026-11-01 08:00:00", metode: "Transfer" });
+  assert.equal(full.lunas, true);
+  assert.equal(full.lunasAt, "2026-11-01 08:00:00");
+  assert.equal(full.metode, "Transfer");
+  // Denda muncul setelah lunas: kembali belum lunas sebesar dendanya.
+  const denda = statusBayar(750000, {}, { nominal: 700000, waktu: "x", metode: "Transfer" });
+  assert.equal(denda.lunas, false);
+  assert.equal(denda.sisa, 50000);
+  // Pelunasan yang ditandai mitra mengalahkan pembayaran awal.
+  const ditandai = statusBayar(750000, { lunas_at: "2026-11-05 10:00:00", lunas_nominal: 750000, lunas_metode: "QRIS" },
+    { nominal: 200000, waktu: "x", metode: "Tunai" });
+  assert.equal(ditandai.lunas, true);
+  assert.equal(ditandai.lunasAt, "2026-11-05 10:00:00");
+  assert.equal(ditandai.metode, "QRIS");
 });

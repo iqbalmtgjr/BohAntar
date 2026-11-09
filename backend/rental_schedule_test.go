@@ -139,6 +139,21 @@ func TestOverdueScheduleStillBlocksCar(t *testing.T) {
 		t.Fatalf("kendaraan yang telat kembali masih bisa dijadwalkan: %d %s", w.Code, w.Body)
 	}
 
+	// Tapi mitra tetap boleh mencatat booking untuk hari berikutnya (masukan
+	// mitra 9 Nov: "harus di input dulu agar tidak lupa").
+	besok := fmt.Sprintf(`{"car_id":%q,"start_time":%q,"end_time":%q,"reason":"Booking - Customer: Besok (0800) | Pembayaran: Tunai | Tipe: Full"}`,
+		carID,
+		time.Now().Add(24*time.Hour).Format("2006-01-02 15:04:05"),
+		time.Now().Add(48*time.Hour).Format("2006-01-02 15:04:05"))
+	w = httptest.NewRecorder()
+	rentalSchedulesHandler(w, as(http.MethodPost, "/api/rental/schedules", besok))
+	if w.Code != 200 {
+		t.Fatalf("booking besok untuk mobil yang belum kembali ditolak: %d %s", w.Code, w.Body)
+	}
+	var booking RentalCarSchedule
+	json.Unmarshal(w.Body.Bytes(), &booking)
+	defer db.Exec("DELETE FROM rental_car_schedules WHERE id = ?", booking.ID)
+
 	// Setelah ditandai selesai, armadanya baru bebas.
 	w = httptest.NewRecorder()
 	rentalScheduleDetailHandler(w, as(http.MethodPut, "/api/rental/schedules/"+lewat.ID, `{"status":"completed"}`))
@@ -274,5 +289,159 @@ func TestLateFeeLockedOnCompletion(t *testing.T) {
 	defer db.Exec("DELETE FROM rental_car_schedules WHERE id = ?", tepatWaktu)
 	if got := tutup(tepatWaktu); got != 0 {
 		t.Errorf("denda untuk sewa tepat waktu = %v, mau 0", got)
+	}
+}
+
+// Tandai Lunas: hanya pemilik armada, metode & nominal divalidasi, tercatat di
+// daftar jadwal (dasar dashboard menerbitkan kuitansi), dan bisa dibatalkan.
+func TestTandaiLunasJadwalManual(t *testing.T) {
+	carID, as := connectTestDB(t)
+	migrasiPelunasan()
+
+	s := RentalCarSchedule{
+		ID: newID("schedule"), CarID: carID,
+		StartTime: time.Now().Add(400 * 24 * time.Hour).Format("2006-01-02 15:04:05"),
+		EndTime:   time.Now().Add(402 * 24 * time.Hour).Format("2006-01-02 15:04:05"),
+		Reason:    "Booking - Customer: Lunas (0800) | Pembayaran: Tunai | Tipe: DP | Nominal DP: 100000",
+	}
+	if _, err := db.Exec("INSERT INTO rental_car_schedules (id, car_id, start_time, end_time, reason, status, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?)",
+		s.ID, s.CarID, s.StartTime, s.EndTime, s.Reason, time.Now()); err != nil {
+		t.Fatalf("gagal menyiapkan jadwal: %v", err)
+	}
+	defer db.Exec("DELETE FROM rental_car_schedules WHERE id = ?", s.ID)
+
+	lunas := func(req *http.Request) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		rentalLunasHandler(w, req)
+		return w
+	}
+	kemarin := time.Now().Add(-24 * time.Hour).Format("2006-01-02 15:04:05")
+	body := fmt.Sprintf(`{"sumber":"manual","id":%q,"waktu":%q,"metode":"Transfer","nominal":700000}`, s.ID, kemarin)
+
+	// Orang lain (penyewa, mitra lain) tidak boleh menyatakan uangnya diterima.
+	orangLain := httptest.NewRequest(http.MethodPut, "/api/rental/lunas", strings.NewReader(body))
+	orangLain = orangLain.WithContext(context.WithValue(context.WithValue(orangLain.Context(), ctxPhone, "+62800000000"), ctxRole, "rental_partner"))
+	if w := lunas(orangLain); w.Code != 403 {
+		t.Fatalf("bukan pemilik bisa menandai lunas: %d %s", w.Code, w.Body)
+	}
+	if w := lunas(as(http.MethodPut, "/api/rental/lunas", strings.Replace(body, "Transfer", "Ngutang", 1))); w.Code != 400 {
+		t.Errorf("metode asing diterima: %d", w.Code)
+	}
+	if w := lunas(as(http.MethodPut, "/api/rental/lunas", strings.Replace(body, "700000", "0", 1))); w.Code != 400 {
+		t.Errorf("nominal 0 diterima: %d", w.Code)
+	}
+
+	if w := lunas(as(http.MethodPut, "/api/rental/lunas", body)); w.Code != 200 {
+		t.Fatalf("tandai lunas gagal: %d %s", w.Code, w.Body)
+	}
+	cari := func() RentalCarSchedule {
+		w := httptest.NewRecorder()
+		rentalSchedulesHandler(w, as(http.MethodGet, "/api/rental/schedules?car_id="+carID, ""))
+		var semua []RentalCarSchedule
+		json.Unmarshal(w.Body.Bytes(), &semua)
+		for _, x := range semua {
+			if x.ID == s.ID {
+				return x
+			}
+		}
+		t.Fatalf("jadwal uji tidak ada di daftar: %s", w.Body)
+		return RentalCarSchedule{}
+	}
+	if got := cari(); got.LunasAt != kemarin || got.LunasNominal != 700000 || got.LunasMetode != "Transfer" {
+		t.Errorf("pelunasan tersimpan salah: %+v", got.Pelunasan)
+	}
+
+	if w := lunas(as(http.MethodPut, "/api/rental/lunas", fmt.Sprintf(`{"sumber":"manual","id":%q,"batal":true}`, s.ID))); w.Code != 200 {
+		t.Fatalf("batal lunas gagal: %d %s", w.Code, w.Body)
+	}
+	if got := cari(); got.LunasAt != "" || got.LunasNominal != 0 {
+		t.Errorf("pelunasan tidak terhapus: %+v", got.Pelunasan)
+	}
+}
+
+// Perpanjangan manual oleh super admin sampai tanggal pilihan (dashboard yang
+// menghitung tanggalnya dari jumlah bulan); tercatat MANUAL di laporan.
+func TestPerpanjangLanggananManual(t *testing.T) {
+	carID, _ := connectTestDB(t)
+	migrasiPelunasan()
+	var mitra string
+	if err := db.QueryRow("SELECT owner_phone FROM rental_cars WHERE id = ?", carID).Scan(&mitra); err != nil {
+		t.Skip("pemilik kendaraan uji tidak ditemukan")
+	}
+
+	// Simpan langganan aslinya, kembalikan setelah tes.
+	var asliStatus string
+	var asliSampai sql.NullTime
+	adaAsli := db.QueryRow("SELECT status, valid_until FROM partner_subscriptions WHERE phone_number = ?", mitra).Scan(&asliStatus, &asliSampai) == nil
+	t.Cleanup(func() {
+		if adaAsli {
+			db.Exec("UPDATE partner_subscriptions SET status = ?, valid_until = ? WHERE phone_number = ?", asliStatus, asliSampai, mitra)
+		} else {
+			db.Exec("DELETE FROM partner_subscriptions WHERE phone_number = ?", mitra)
+		}
+		db.Exec("DELETE FROM subscription_invoices WHERE phone_number = ? AND status = 'MANUAL' AND catatan LIKE 'uji-perpanjang%'", mitra)
+	})
+	setSampai := func(t0 time.Time) {
+		db.Exec(`INSERT INTO partner_subscriptions (phone_number, status, valid_until, updated_at) VALUES (?, 'ACTIVE', ?, NOW())
+			ON DUPLICATE KEY UPDATE valid_until = ?`, mitra, t0, t0)
+	}
+	adminReq := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/admin/rental/langganan", strings.NewReader(body))
+		r = r.WithContext(context.WithValue(context.WithValue(r.Context(), ctxPhone, "+62800admin"), ctxRole, "admin"))
+		w := httptest.NewRecorder()
+		adminLanggananRentalHandler(w, r)
+		return w
+	}
+	sampai := func() time.Time {
+		var vu time.Time
+		db.QueryRow("SELECT valid_until FROM partner_subscriptions WHERE phone_number = ?", mitra).Scan(&vu)
+		return vu
+	}
+
+	// Mitra yang sudah habis diperpanjang sampai tanggal pilihan: berlaku hingga
+	// akhir hari itu, status kembali aktif.
+	setSampai(time.Now().Add(-10 * 24 * time.Hour))
+	tujuan := time.Now().AddDate(0, 2, 7)
+	if w := adminReq(fmt.Sprintf(`{"phone_number":%q,"sampai":%q,"nominal":250000,"catatan":"uji-perpanjang transfer"}`, mitra, tujuan.Format("2006-01-02"))); w.Code != 200 {
+		t.Fatalf("perpanjang gagal: %d %s", w.Code, w.Body)
+	}
+	mau := time.Date(tujuan.Year(), tujuan.Month(), tujuan.Day(), 23, 59, 59, 0, time.Local)
+	if got := sampai(); !got.Equal(mau) {
+		t.Errorf("valid_until = %v, mau %v", got, mau)
+	}
+	var status string
+	db.QueryRow("SELECT status FROM partner_subscriptions WHERE phone_number = ?", mitra).Scan(&status)
+	if status != "ACTIVE" {
+		t.Errorf("status = %q, mau ACTIVE", status)
+	}
+
+	// Tercatat MANUAL di laporan pembayaran beserta nominal dan catatannya.
+	var nominal float64
+	db.QueryRow("SELECT amount FROM subscription_invoices WHERE phone_number = ? AND status = 'MANUAL' AND catatan = 'uji-perpanjang transfer'", mitra).Scan(&nominal)
+	if nominal != 250000 {
+		t.Errorf("baris MANUAL di laporan: nominal = %v, mau 250000", nominal)
+	}
+
+	// Tanggal yang sudah lewat, terlalu jauh, atau rusak ditolak; begitu juga
+	// nomor yang bukan mitra rental.
+	besok := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	for _, salah := range []string{time.Now().AddDate(0, 0, -1).Format("2006-01-02"), time.Now().AddDate(11, 0, 0).Format("2006-01-02"), "31-12-2026", ""} {
+		if w := adminReq(fmt.Sprintf(`{"phone_number":%q,"sampai":%q}`, mitra, salah)); w.Code != 400 {
+			t.Errorf("tanggal %q diterima: %d", salah, w.Code)
+		}
+	}
+	if w := adminReq(fmt.Sprintf(`{"phone_number":"+62800tidakada","sampai":%q}`, besok)); w.Code != 404 {
+		t.Errorf("nomor asing diterima: %d", w.Code)
+	}
+}
+
+// Kolom created_at tagihan yang masih teks berisi jam lokal tanpa zona; dulu
+// dibaca sebagai UTC sehingga dashboard menampilkannya +7 jam.
+func TestWaktuInvoiceTeksJamLokal(t *testing.T) {
+	mau := time.Date(2026, 11, 9, 1, 26, 14, 0, time.Local).Format(time.RFC3339)
+	for _, teks := range []string{"2026-11-09 01:26:14", "2026-11-09 01:26:14.3789168", mau} {
+		if got := waktuInvoice(teks); got != mau {
+			t.Errorf("waktuInvoice(%q) = %s, mau %s", teks, got, mau)
+		}
 	}
 }

@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
 import {
   ShoppingBag, Search, RefreshCw, CheckCircle2, XCircle, PlayCircle,
-  Flag, Clock, Phone, User, CalendarDays, StickyNote, FileText
+  Flag, Clock, Phone, User, CalendarDays, StickyNote
 } from "lucide-react";
 import { BASE, authFetch } from "../../api";
 import { toast, Alert } from "../../components/Feedback";
-import { bookingInvoice, useRentalName } from "./invoice";
-import InvoiceModal from "./InvoiceModal";
+import { bookingInvoice, useRentalProfile } from "./invoice";
+import InvoiceModal, { TombolDokumen } from "./InvoiceModal";
 
 // Peta status: label, warna badge, dan aksi lanjutan yang boleh dilakukan mitra.
 // Urutannya sama dengan allowedTransition di backend — kalau salah satu diubah,
@@ -66,7 +66,7 @@ export default function RentalOrders({ ownerPhone }) {
 
   // Modal catatan dipakai untuk dua aksi yang sama-sama butuh alasan.
   const [noteModal, setNoteModal] = useState(null); // { booking, status }
-  const rentalName = useRentalName();
+  const rental = useRentalProfile();
   const [invoice, setInvoice] = useState(null);
   const [note, setNote] = useState("");
 
@@ -317,12 +317,7 @@ export default function RentalOrders({ ownerPhone }) {
                 )}
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end", padding: "0 18px 18px" }}>
-                  <button
-                    className="btn btn-ghost btn-sm"
-                    onClick={() => setInvoice(bookingInvoice(b, car, rentalName))}
-                  >
-                    <FileText size={15} /> Invoice
-                  </button>
+                  <TombolDokumen doc={bookingInvoice(b, car, rental)} onBuka={setInvoice} />
                   {actions.map(a => (
                     <button key={a.label} className={a.className} onClick={a.run} disabled={busyId === b.id}>
                       <a.icon size={15} /> {busyId === b.id ? "Memproses..." : a.label}
@@ -387,7 +382,7 @@ export default function RentalOrders({ ownerPhone }) {
           </div>
         </div>
       )}
-      <InvoiceModal data={invoice} onClose={() => setInvoice(null)} />
+      <InvoiceModal data={invoice} onClose={() => setInvoice(null)} onUbah={fetchData} />
     </div>
   );
 }

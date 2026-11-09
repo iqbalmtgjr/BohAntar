@@ -33,7 +33,7 @@ const navItems = [
   { section: "Pelaporan Pembayaran" },
   { to: "/komisi", icon: Wallet, label: "Bagi Hasil Driver", short: "Komisi", desktopOnly: true },
   { to: "/pencairan", icon: Banknote, label: "Pencairan Saldo", short: "Cair", desktopOnly: true },
-  { to: "/payment-reports/rental", icon: CreditCard, label: "bohRental", short: "Bayar", desktopOnly: true },
+  { to: "/payment-reports/rental", icon: CreditCard, label: "Langganan bohRental", short: "Langganan", desktopOnly: true },
 ];
 
 /* Menu yang tidak kebagian slot di tab bar. Diekspor supaya Dashboard memakai

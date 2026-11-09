@@ -637,13 +637,14 @@ class ApiService {
   /// Hanya sebelum penumpang atau barangnya diambil. Tanpa ini, pesanan yang
   /// tidak bisa dilanjutkan menahan komisi driver tanpa batas waktu dan bisa
   /// membuatnya tidak bisa menerima pesanan lain sama sekali.
-  Future<Map<String, dynamic>> lepasPesanan(String orderId) async {
+  Future<Map<String, dynamic>> lepasPesanan(String orderId, {String alasan = ''}) async {
     if (_token == null) {
       throw Exception(_sesiHabis);
     }
     final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/orders/$orderId/lepas'),
-      headers: {'Authorization': 'Bearer $_token'},
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $_token'},
+      body: jsonEncode({'alasan': alasan}),
     );
     return _handleResponse(response);
   }
@@ -679,7 +680,8 @@ class ApiService {
   }
 
   /// Membatalkan pesanan. Backend hanya mengizinkannya sebelum penumpang naik.
-  Future<Map<String, dynamic>> cancelOrder(String orderId) async {
+  /// [alasan] diteruskan ke driver dan dicatat untuk admin.
+  Future<Map<String, dynamic>> cancelOrder(String orderId, {String alasan = ''}) async {
     if (_token == null) {
       throw Exception(_sesiHabis);
     }
@@ -689,6 +691,28 @@ class ApiService {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $_token',
       },
+      body: jsonEncode({'alasan': alasan}),
+    );
+    return _handleResponse(response);
+  }
+
+  /// BohFood yang sudah dapat driver: penumpang mengajukan pembatalan, driver
+  /// yang memutuskan (makanannya mungkin sudah dibeli).
+  Future<Map<String, dynamic>> mintaBatal(String orderId, {required String alasan}) =>
+      _kirimAksiPesanan(orderId, 'minta-batal', alasan);
+
+  /// Jawaban driver atas pengajuan pembatalan. Menolak wajib beralasan.
+  Future<Map<String, dynamic>> jawabBatal(String orderId, {required bool setuju, String alasan = ''}) =>
+      _kirimAksiPesanan(orderId, setuju ? 'batal-setuju' : 'batal-tolak', alasan);
+
+  Future<Map<String, dynamic>> _kirimAksiPesanan(String orderId, String aksi, String alasan) async {
+    if (_token == null) {
+      throw Exception(_sesiHabis);
+    }
+    final response = await klienHttp.post(
+      Uri.parse('$baseUrl/api/orders/$orderId/$aksi'),
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $_token'},
+      body: jsonEncode({'alasan': alasan}),
     );
     return _handleResponse(response);
   }

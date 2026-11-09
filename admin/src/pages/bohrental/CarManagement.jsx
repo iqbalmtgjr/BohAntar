@@ -1,8 +1,39 @@
 import { useState, useEffect } from "react";
 import { Plus, Trash2, Shield, Eye, Settings, Car } from "lucide-react";
-import { BASE, authFetch } from "../../api";
+import { BASE, authFetch, api, fileURL } from "../../api";
 import { CAR_COLORS, carColor } from "./schedule";
 import { toast, confirmDialog, Alert } from "../../components/Feedback";
+
+// Foto dari unggahan disimpan sebagai "/uploads/..."; tautan luar (armada lama) apa adanya.
+const urlFoto = (u) => (u && u.startsWith("/uploads/") ? fileURL(u) : u);
+
+function FotoKendaraan({ nilai, onUbah }) {
+  const [mengunggah, setMengunggah] = useState(false);
+  return (
+    <div className="input-group">
+      <label>Foto Kendaraan</label>
+      {nilai && (
+        <img src={urlFoto(nilai)} alt="" style={{ width: 160, height: 100, objectFit: "cover", borderRadius: 10, marginBottom: 8, display: "block" }} />
+      )}
+      <label className="btn btn-sm" style={{ cursor: mengunggah ? "wait" : "pointer", display: "inline-flex" }}>
+        {mengunggah ? "Mengunggah..." : nilai ? "Ganti foto" : "Unggah foto"}
+        <input
+          type="file" accept="image/*" hidden disabled={mengunggah}
+          onChange={e => {
+            const berkas = e.target.files?.[0];
+            e.target.value = "";
+            if (!berkas) return;
+            setMengunggah(true);
+            api.uploadFile(berkas)
+              .then(res => { if (!res.url) throw new Error(res.error || "Gagal mengunggah foto"); onUbah(res.url); })
+              .catch(err => toast.error(err.message || "Gagal mengunggah foto"))
+              .finally(() => setMengunggah(false));
+          }}
+        />
+      </label>
+    </div>
+  );
+}
 
 // Deretan contoh warna; "Otomatis" mengembalikan pilihan ke urutan armada.
 function PilihWarna({ nilai, onPilih, previewId, cars }) {
@@ -294,10 +325,7 @@ export default function CarManagement({ ownerPhone }) {
                 <label>Tarif Harian (Rp)</label>
                 <input className="input" type="number" step="5000" min="20000" value={price} onChange={e => setPrice(e.target.value)} required />
               </div>
-              <div className="input-group">
-                <label>Link Foto Kendaraan (URL)</label>
-                <input className="input" placeholder="https://images.unsplash.com/..." value={imageUrl} onChange={e => setImageUrl(e.target.value)} />
-              </div>
+              <FotoKendaraan nilai={imageUrl} onUbah={setImageUrl} />
             </div>
 
             <PilihWarna nilai={color} onPilih={setColor} cars={cars} />
@@ -322,8 +350,8 @@ export default function CarManagement({ ownerPhone }) {
           {cars.map(car => (
             <div key={car.id} className="card" style={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
               <div style={{ height: "clamp(140px, 40vw, 180px)", width: "100%", overflow: "hidden", background: "var(--bg-input)", position: "relative" }}>
-                <img 
-                  src={car.image_url} 
+                <img
+                  src={urlFoto(car.image_url)}
                   alt={`${car.brand} ${car.model}`}
                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
                   onError={(e) => {
@@ -491,10 +519,7 @@ export default function CarManagement({ ownerPhone }) {
                 </div>
               </div>
 
-              <div className="input-group">
-                <label>Link Foto Kendaraan (URL)</label>
-                <input className="input" placeholder="https://images.unsplash.com/..." value={editImageUrl} onChange={e => setEditImageUrl(e.target.value)} />
-              </div>
+              <FotoKendaraan nilai={editImageUrl} onUbah={setEditImageUrl} />
 
               <PilihWarna nilai={editColor} onPilih={setEditColor} previewId={editingCar?.id} cars={cars} />
 

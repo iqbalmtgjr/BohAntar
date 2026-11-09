@@ -47,3 +47,35 @@ func TestGantiPasswordDariAplikasi(t *testing.T) {
 		t.Fatal("password baru tidak berlaku atau password lama masih berlaku")
 	}
 }
+
+// Rekening pembayaran mitra rental (dicetak di invoice) disimpan lewat Akun
+// Saya; nomor rekening hanya angka, dan permintaan lain tidak ikut menghapusnya.
+func TestRekeningPembayaranDiProfil(t *testing.T) {
+	bukaDBTes(t)
+	migrasiRekening()
+	phone := "+62800000096"
+	penggunaUji(t, phone)
+
+	kirim := func(method, isi string) (int, string) {
+		r := httptest.NewRequest(method, "/api/users/profile", strings.NewReader(isi))
+		r.Header.Set("Authorization", "Bearer "+tokenUji(t, phone))
+		w := httptest.NewRecorder()
+		profileHandler(w, r)
+		return w.Code, w.Body.String()
+	}
+
+	if k, _ := kirim(http.MethodPut, `{"rek_nomor":"12ab"}`); k != 400 {
+		t.Fatalf("nomor rekening berhuruf harus 400, dapat %d", k)
+	}
+	if k, b := kirim(http.MethodPut, `{"rek_nama":" RBA Transport ","rek_bank":"BRI","rek_nomor":"0123-01-000123-30-1"}`); k != 200 {
+		t.Fatalf("simpan rekening gagal: %d %s", k, b)
+	}
+	// Ganti nama saja tidak boleh mengosongkan rekening.
+	kirim(http.MethodPut, `{"name":"Uji Rekening"}`)
+	_, b := kirim(http.MethodGet, "")
+	for _, mau := range []string{`"rek_nama":"RBA Transport"`, `"rek_bank":"BRI"`, `"rek_nomor":"0123-01-000123-30-1"`} {
+		if !strings.Contains(b, mau) {
+			t.Errorf("profil tidak memuat %s: %s", mau, b)
+		}
+	}
+}
