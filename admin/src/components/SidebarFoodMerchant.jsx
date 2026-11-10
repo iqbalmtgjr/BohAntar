@@ -1,5 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, Salad, LogOut, Utensils, UserCog } from "lucide-react";
+import { LayoutDashboard, Salad, LogOut, UserCog } from "lucide-react";
+import logoB from "../assets/logo_b_icon.png";
 import ThemeToggle from "./ThemeToggle";
 
 const navItems = [
@@ -18,9 +19,12 @@ export default function SidebarFoodMerchant({ onLogout }) {
     <aside className="sidebar">
       <div className="sidebar-brand" style={{ justifyContent: "space-between", width: "100%" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <div className="logo-icon" style={{ background: "linear-gradient(135deg, #F59E0B, #D97706)" }}>
-            <Utensils size={20} />
-          </div>
+          <img
+            src={logoB}
+            alt="bohFood"
+            className="logo-icon"
+            style={{ background: "none", objectFit: "contain" }}
+          />
           <div>
             <div className="brand-name">bohFood</div>
             <div className="brand-sub">Merchant Panel</div>

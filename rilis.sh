@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# rilis — bangun binary backend bohAntar dan (kalau kunci SSH ke server sudah
+# rilis — bangun binary backend BohAntar dan (kalau kunci SSH ke server sudah
 # terpasang) langsung pasang di VPS tanpa jeda layanan. Ketik `rilis` di Git
 # Bash dari folder mana pun di dalam repo ini (fungsi `rilis` di ~/.bashrc).
 #

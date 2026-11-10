@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 class AppTheme {
   // Brand Colors
-  static const Color primaryBlue = Color(0xFF1E7FFF); // Premium bohAntar Blue
+  static const Color primaryBlue = Color(0xFF1E7FFF); // Premium BohAntar Blue
   static const Color primaryDarkBlue = Color(0xFF0066FF); // Darker Blue
   static const Color primaryLightBlue = Color(0xFFEFF6FF); // Tailwind Blue 50
   

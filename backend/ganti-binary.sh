@@ -1,5 +1,5 @@
 #!/bin/bash
-# ganti-binary.sh — tukar binary backend bohAntar TANPA jeda layanan.
+# ganti-binary.sh — tukar binary backend BohAntar TANPA jeda layanan.
 #
 # Dipanggil otomatis oleh `rilis` di laptop (lewat SSH). Bisa juga manual:
 # unggah binary baru sebagai bohantar-backend.baru ke folder ini, lalu

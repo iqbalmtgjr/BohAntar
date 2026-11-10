@@ -2,7 +2,7 @@
 # rilisweb — bangun dashboard (admin/) dan pasang di VPS tanpa zip/ekstrak
 # manual. Ketik `rilisweb` di Git Bash dari folder mana pun di dalam repo ini.
 #
-# Folder web di server dicari dari conf nginx aaPanel untuk domain bohAntar;
+# Folder web di server dicari dari conf nginx aaPanel untuk domain BohAntar;
 # bisa dipaksa: BOHANTAR_WEB_ROOT=/www/wwwroot/xxx rilisweb
 # Berkas lama di assets/ tidak dihapus: halaman yang sedang terbuka di browser
 # orang masih memintanya, dan index.html lama (index.html.sebelum) tetap bisa

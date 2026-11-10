@@ -263,7 +263,7 @@ func bagiPembayaran(metode string, fare, komisi, talangan, biayaJasa float64) (d
 	return 0, -tagihanAplikator(komisi, biayaJasa)
 }
 
-// tagihanAplikator adalah total yang harus sampai ke bohAntar dari satu pesanan.
+// tagihanAplikator adalah total yang harus sampai ke BohAntar dari satu pesanan.
 // Dipakai di tiga tempat yang harus selalu sepakat: pembagian saat pesanan
 // ditutup, gerbang saldo saat driver menerima, dan jumlah yang tertahan oleh
 // pesanan yang sedang berjalan.
@@ -504,7 +504,7 @@ func adminKomisiHandler(w http.ResponseWriter, r *http.Request) {
 		"to":               to,
 		"total_komisi":     totalKomisi,
 		"total_biaya_jasa": totalBiayaJasa,
-		// Yang benar-benar jadi pendapatan bohAntar: komisi, biaya jasa, dan
+		// Yang benar-benar jadi pendapatan BohAntar: komisi, biaya jasa, dan
 		// potongan tagihan QR mitra.
 		"total_pendapatan": totalKomisi + totalBiayaJasa + komisiTagihan,
 		// Dari order tunai, jadi uangnya masih di tangan driver sampai ia setor.
@@ -525,7 +525,7 @@ type barisTagihanQR struct {
 	PenerimaNama  string  `json:"penerima_nama"`
 	Jumlah        int     `json:"jumlah"`
 	Total         float64 `json:"total"`  // dibayar pemesan
-	Komisi        float64 `json:"komisi"` // potongan bohAntar; mitra menerima total - komisi
+	Komisi        float64 `json:"komisi"` // potongan BohAntar; mitra menerima total - komisi
 }
 
 // laporanTagihanQR menjumlah tagihan QR warung/rental yang DIBAYAR di rentang

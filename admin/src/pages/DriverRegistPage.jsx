@@ -44,7 +44,7 @@ export default function DriverRegistPage() {
     <>
       <Topbar title="Pendaftaran Driver" />
       <div className="page">
-        <div className="page-header"><h1>Daftar Driver Baru</h1><p>Isi data lengkap calon mitra driver bohAntar</p></div>
+        <div className="page-header"><h1>Daftar Driver Baru</h1><p>Isi data lengkap calon mitra driver BohAntar</p></div>
 
         {success && (
           <div className="card" style={{ marginBottom: 24, border: "1px solid var(--success)", background: "var(--success-glow)" }}>

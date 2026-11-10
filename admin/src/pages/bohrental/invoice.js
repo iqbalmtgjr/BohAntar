@@ -116,7 +116,7 @@ const dataBayar = (bayar) => ({
   paymentMethod: bayar.metode,
 });
 
-// Pesanan yang masuk dari aplikasi bohAntar (tabel rental_bookings).
+// Pesanan yang masuk dari aplikasi BohAntar (tabel rental_bookings).
 export function bookingInvoice(b, car, rental) {
   const days = rentalDays(b.start_time, b.end_time) || 1;
   const sewa = Number(b.total_price) || 0;

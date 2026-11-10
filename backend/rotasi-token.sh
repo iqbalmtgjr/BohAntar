@@ -1,5 +1,5 @@
 #!/bin/bash
-# Rotasi XENDIT_CALLBACK_TOKEN untuk bohAntar DAN Kasvo sekaligus.
+# Rotasi XENDIT_CALLBACK_TOKEN untuk BohAntar DAN Kasvo sekaligus.
 #
 # Token ini SATU untuk seluruh akun Xendit dan dipakai kedua aplikasi. Kalau
 # hanya satu sisi yang diganti, sisi yang tertinggal menolak setiap webhook
@@ -69,17 +69,17 @@ unset TOK NILAI
 echo
 echo "== Verifikasi =="
 bash -n "$BOH" && echo "  sintaks run.sh sah"
-echo "  bohAntar: $(grep -c '^export XENDIT_CALLBACK_TOKEN=' "$BOH") baris token"
+echo "  BohAntar: $(grep -c '^export XENDIT_CALLBACK_TOKEN=' "$BOH") baris token"
 echo "  Kasvo   : $(grep -c '^XENDIT_CALLBACK_TOKEN=' "$KAS") baris token"
 # Sidik jari, bukan isinya. Kedua nilai wajib sama.
-echo "  sidik jari bohAntar: $(grep '^export XENDIT_CALLBACK_TOKEN=' "$BOH" | cut -d'"' -f2 | md5sum | cut -c1-12)"
+echo "  sidik jari BohAntar: $(grep '^export XENDIT_CALLBACK_TOKEN=' "$BOH" | cut -d'"' -f2 | md5sum | cut -c1-12)"
 echo "  sidik jari Kasvo   : $(grep '^XENDIT_CALLBACK_TOKEN='        "$KAS" | cut -d= -f2- | md5sum | cut -c1-12)"
 
 echo
 echo "== Menerapkan =="
 cd "$(dirname "$KAS")" && php artisan config:clear
 pkill -f bohantar-backend || true
-echo "bohAntar dihentikan; daemon cron menyalakannya lagi dalam <60 detik."
+echo "BohAntar dihentikan; daemon cron menyalakannya lagi dalam <60 detik."
 
 echo
 echo "Langkah terakhir yang HARUS Anda lakukan sendiri:"

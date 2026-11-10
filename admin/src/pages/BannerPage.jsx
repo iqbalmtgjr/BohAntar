@@ -8,7 +8,7 @@ import ikonCar from "../assets/layanan/layanan_bohcar.png";
 import ikonFood from "../assets/layanan/layanan_bohfood.png";
 import ikonSend from "../assets/layanan/layanan_bohsend.png";
 
-/* Banner beranda aplikasi: spanduk geser di belakang kartu BohPay.
+/* Banner beranda aplikasi: spanduk geser selebar layar.
    Banner tanpa gambar digambar aplikasi dari judul, keterangan, dan warna —
    pratinjau di sini meniru gambarnya. Banner bergambar dipasang apa adanya.
    Warna dan ilustrasi WAJIB sama dengan mobile/lib/widgets/banner_beranda.dart. */
@@ -33,7 +33,7 @@ const IKON = { BohRide: ikonRide, BohCar: ikonCar, BohFood: ikonFood, BohSend: i
 const KOSONG = { judul: "", keterangan: "", label_tombol: "", tujuan: "", url: "", warna: "biru", gambar_url: "", aktif: true, urutan: 0 };
 
 // Sebanding dengan aplikasi: banner setinggi 200 dp selebar layar (±2:1 di HP
-// biasa), dan kartu BohPay menutup ±17% bagian bawahnya.
+// biasa). Kartu saldo yang dulu menutup bagian bawahnya dibuang 24 Okt 2026.
 function PratinjauBanner({ b }) {
   const [gelap, terang] = WARNA[b.warna] || WARNA.biru;
   const ikon = IKON[b.tujuan];
@@ -58,14 +58,6 @@ function PratinjauBanner({ b }) {
           </div>
         </>
       )}
-      <div
-        style={{
-          position: "absolute", left: 12, right: 12, bottom: -8, height: "26%", background: "rgba(255,255,255,0.94)",
-          borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, color: "#64748B", fontWeight: 700,
-        }}
-      >
-        Kartu BohPay menutup bagian ini
-      </div>
     </div>
   );
 }
@@ -141,7 +133,7 @@ export default function BannerPage() {
         <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
           <div>
             <h1>Banner Beranda</h1>
-            <p>Spanduk geser di beranda aplikasi pelanggan, tepat di belakang kartu BohPay. Diurutkan dari angka urutan terkecil.</p>
+            <p>Spanduk geser di beranda aplikasi pelanggan. Diurutkan dari angka urutan terkecil.</p>
           </div>
           <button className="btn btn-primary" onClick={() => { setGalat(""); setForm({ ...KOSONG }); }}>
             <Plus size={16} /> Tambah banner
@@ -240,7 +232,6 @@ export default function BannerPage() {
                 </div>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 6 }}>
                   Ukuran 1200×600 px (2:1), maks. 5 MB. Gambar menggantikan judul &amp; warna — tulis teksnya di gambar.
-                  Jangan taruh tulisan penting di ±20% bagian bawah: di aplikasi tertutup kartu BohPay.
                 </div>
               </div>
 

@@ -132,7 +132,7 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
         builder: (ctx) => AlertDialog(
           icon: const Icon(Icons.hourglass_top, color: AppTheme.primaryBlue, size: 40),
           title: const Text('Pengajuan terkirim'),
-          content: Text('Dokumen Anda sedang ditinjau admin bohAntar. $caraMasuk setelah pengajuan disetujui.'),
+          content: Text('Dokumen Anda sedang ditinjau admin BohAntar. $caraMasuk setelah pengajuan disetujui.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),

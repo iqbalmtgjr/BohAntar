@@ -25,7 +25,7 @@
          dipulihkan ke HP baru, isinya tidak bisa dibuka lagi. Datanya ada di
          server, jadi di HP baru cukup login ulang. -->
     <application
-        android:label="bohAntar"
+        android:label="BohAntar"
         android:name="${applicationName}"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"

@@ -196,7 +196,7 @@ func dbGetFoodMerchant(id string) (FoodMerchant, bool) {
 
 // menuWarung adalah menu yang berlaku untuk satu warung, plus apakah warung itu
 // sedang menerima pesanan. Toko Kasvo dibaca langsung dari kasirnya, termasuk
-// jam bukanya; is_open di sini tetap berlaku sebagai saklar dari sisi bohAntar.
+// jam bukanya; is_open di sini tetap berlaku sebagai saklar dari sisi BohAntar.
 func menuWarung(m FoodMerchant) ([]FoodMenu, bool, error) {
 	if m.KasvoTokoUUID == "" {
 		menus, err := dbMenuWarung(m.ID, false)

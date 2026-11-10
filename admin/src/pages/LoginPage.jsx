@@ -220,7 +220,7 @@ export default function LoginPage({ onLogin, role }) {
         >
           <img 
             src={logoImg} 
-            alt="bohAntar Logo" 
+            alt="BohAntar Logo" 
             className="h-10 w-auto object-contain"
           />
         </div>
@@ -302,7 +302,7 @@ export default function LoginPage({ onLogin, role }) {
                   <p>
                     Bukan Gmail?{' '}
                     <a
-                      href={`https://wa.me/628996979079?text=${encodeURIComponent(`Halo Admin bohAntar, saya lupa password akun mitra saya${email ? ` dengan email ${email}` : ''}. Mohon dibantu atur ulang.`)}`}
+                      href={`https://wa.me/628996979079?text=${encodeURIComponent(`Halo Admin BohAntar, saya lupa password akun mitra saya${email ? ` dengan email ${email}` : ''}. Mohon dibantu atur ulang.`)}`}
                       target="_blank" rel="noopener noreferrer"
                       className="font-semibold text-blue-600 underline"
                     >
@@ -346,7 +346,7 @@ export default function LoginPage({ onLogin, role }) {
           {role !== 'admin' && (
             <div className="pt-4 border-t border-slate-100 text-center space-y-2">
               <p className="text-[11px] text-slate-500">
-                Belum terdaftar sebagai Mitra bohAntar?
+                Belum terdaftar sebagai Mitra BohAntar?
               </p>
               <button
                 type="button"
@@ -363,7 +363,7 @@ export default function LoginPage({ onLogin, role }) {
 
       {/* Footer */}
       <footer className="py-8 text-center text-[10px] text-slate-400">
-        &copy; {new Date().getFullYear()} bohAntar. Semua hak cipta dilindungi.
+        &copy; {new Date().getFullYear()} BohAntar. Semua hak cipta dilindungi.
       </footer>
     </div>
   );

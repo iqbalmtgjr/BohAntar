@@ -17,7 +17,7 @@ class EstimasiTarif {
   /// yang dibagi dengan driver.
   final double ongkos;
 
-  /// Rupiah tetap yang masuk utuh ke bohAntar, ditambahkan di atas ongkos.
+  /// Rupiah tetap yang masuk utuh ke BohAntar, ditambahkan di atas ongkos.
   final double biayaJasa;
 
   /// Yang benar-benar dibayar penumpang.

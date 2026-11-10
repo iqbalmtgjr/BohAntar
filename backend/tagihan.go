@@ -37,7 +37,7 @@ type tagihan struct {
 	PenerimaPhone string  `json:"-"`
 	PenerimaNama  string  `json:"penerima_nama"`
 	Amount        float64 `json:"amount"` // yang dibayar pelanggan
-	Komisi        float64 `json:"komisi"` // potongan bohAntar; penerima mendapat amount - komisi
+	Komisi        float64 `json:"komisi"` // potongan BohAntar; penerima mendapat amount - komisi
 	CreatedAt     string  `json:"created_at"`
 	ExpiresAt     string  `json:"expires_at"`
 	PaidAt        string  `json:"paid_at,omitempty"`
@@ -145,7 +145,7 @@ func namaPenerimaTagihan(phone, peran string) (nama string, kode int, pesan stri
 	return nama, 0, ""
 }
 
-// komisiTagihan menghitung potongan bohAntar dari satu tagihan, memakai persen
+// komisiTagihan menghitung potongan BohAntar dari satu tagihan, memakai persen
 // di baris tarif 'TagihanQR' yang diatur super admin.
 //
 // Sengaja tidak lewat ambilTarif: kalau barisnya tidak terbaca, ambilTarif
@@ -196,7 +196,7 @@ func bayarTagihanHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	isi := strings.TrimSpace(input.Token)
 	if !strings.HasPrefix(isi, awalanQRTagihan) {
-		writeJSONResponse(w, 400, map[string]string{"error": "QR ini bukan QR pembayaran bohAntar"})
+		writeJSONResponse(w, 400, map[string]string{"error": "QR ini bukan QR pembayaran BohAntar"})
 		return
 	}
 	id := strings.TrimPrefix(isi, awalanQRTagihan)
@@ -267,7 +267,7 @@ func bayarTagihanHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Pelanggan didebit penuh, mitra dikredit setelah potongan. Selisihnya
 	// tidak dikreditkan ke mana pun — sama seperti komisi pesanan dompet, bagian
-	// bohAntar adalah uang yang tidak sampai ke saldo siapa pun.
+	// BohAntar adalah uang yang tidak sampai ke saldo siapa pun.
 	res, err = tx.Exec("UPDATE users SET balance = balance + ? WHERE phone_number = ?", jumlah-komisi, penerima)
 	if err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal memperbarui saldo penerima"})

@@ -54,7 +54,7 @@ export default function OrdersPage() {
     <>
       <Topbar title="Pesanan" />
       <div className="page">
-        <div className="page-header"><h1>Semua Pesanan</h1><p>Monitor dan kelola alur pesanan bohAntar</p></div>
+        <div className="page-header"><h1>Semua Pesanan</h1><p>Monitor dan kelola alur pesanan BohAntar</p></div>
         <div className="filter-bar">
           {["", "pending", "accepted", "picked_up", "completed", "cancelled"].map(s => (
             <button key={s} className={`filter-btn${filter === s ? " active" : ""}`} onClick={() => { setFilter(s); setPage(1); load(s, 1, limit); }}>

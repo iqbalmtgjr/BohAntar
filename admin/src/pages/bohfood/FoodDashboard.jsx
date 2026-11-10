@@ -505,7 +505,7 @@ export default function FoodDashboard({ ownerPhone }) {
                 </div>
                 {orders.length === 0 ? (
                   <p style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                    Belum ada pesanan. Pesanan dari aplikasi bohAntar akan muncul di sini — driver yang datang, membayar, dan mengantar.
+                    Belum ada pesanan. Pesanan dari aplikasi BohAntar akan muncul di sini — driver yang datang, membayar, dan mengantar.
                   </p>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -557,7 +557,7 @@ export default function FoodDashboard({ ownerPhone }) {
               <Store size={48} style={{ color: "var(--border)", margin: "0 auto 16px" }} />
               <h2>Lengkapi Profil Warung Anda</h2>
               <p style={{ color: "var(--text-secondary)", fontSize: 13, marginTop: 4, maxWidth: 400, margin: "8px auto 20px" }}>
-                Isi nama, alamat, dan lokasi warung di formulir sebelah kiri supaya warung tampil di aplikasi bohAntar.
+                Isi nama, alamat, dan lokasi warung di formulir sebelah kiri supaya warung tampil di aplikasi BohAntar.
               </p>
             </div>
           )}

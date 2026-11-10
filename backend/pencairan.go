@@ -21,7 +21,7 @@ import (
 //  1. Pemilik saldo mengajukan nominal dan rekening tujuan. Saldonya langsung
 //     dipotong saat itu juga, jadi uang yang sedang dicairkan tidak bisa ikut
 //     dipakai, ditagih, atau diajukan dua kali.
-//  2. Admin mentransfer dari rekening bohAntar, lalu menandai "selesai".
+//  2. Admin mentransfer dari rekening BohAntar, lalu menandai "selesai".
 //  3. Kalau tidak bisa ditransfer (rekening salah, dsb.), admin menolak dan
 //     saldonya dikembalikan utuh.
 //
@@ -36,7 +36,7 @@ const (
 )
 
 // Peran yang punya saldo pendapatan. Penumpang sengaja tidak: saldonya hasil
-// top up, dan mencairkannya kembali sama dengan meminjamkan rekening bohAntar
+// top up, dan mencairkannya kembali sama dengan meminjamkan rekening BohAntar
 // sebagai tempat transit uang.
 var peranBolehCair = []string{"driver", "food_merchant", "rental_partner"}
 

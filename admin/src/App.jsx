@@ -48,7 +48,7 @@ const FoodDashboard = lazy(() => import("./pages/bohfood/FoodDashboard"));
 const MenuManagement = lazy(() => import("./pages/bohfood/MenuManagement"));
 import SidebarFoodMerchant from "./components/SidebarFoodMerchant";
 
-const memuat = <p style={{ padding: 24, opacity: 0.6 }}>Memuat…</p>;
+const memuat = <div className="loading-overlay" style={{ minHeight: "60vh" }} role="status" aria-label="Memuat"><div className="spinner" /></div>;
 
 function Layout({ children, portalType, onLogout, userPhone }) {
   // Select which sidebar to show based on portalType

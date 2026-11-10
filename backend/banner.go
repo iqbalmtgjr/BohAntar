@@ -9,7 +9,7 @@ import (
 	"unicode/utf8"
 )
 
-// Banner beranda aplikasi: spanduk geser di belakang kartu BohPay, diatur super
+// Banner beranda aplikasi: spanduk geser selebar layar, diatur super
 // admin dari dashboard (halaman Banner Beranda).
 //
 // Banner tanpa gambar digambar aplikasi sendiri dari judul, keterangan, dan

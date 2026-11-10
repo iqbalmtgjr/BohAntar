@@ -1,5 +1,5 @@
 #!/bin/bash
-# Rotasi kredensial produksi bohAntar.
+# Rotasi kredensial produksi BohAntar.
 #
 # Nilai rahasianya dibangkitkan DI SINI, di VPS. Tidak ada yang perlu diketik
 # dari luar kecuali dua nilai Xendit yang memang harus disalin dari dashboard
@@ -46,7 +46,7 @@ echo
 
 echo "== 2/3  Kredensial Xendit =="
 echo "PERHATIAN: akun Xendit ini dipakai bersama aplikasi Kasvo Indonesia."
-echo "  - Secret key boleh banyak per akun, jadi membuat key baru untuk bohAntar AMAN."
+echo "  - Secret key boleh banyak per akun, jadi membuat key baru untuk BohAntar AMAN."
 echo "  - Callback token cuma SATU untuk seluruh akun. Menggantinya mematikan"
 echo "    webhook Kasvo juga, diam-diam. Kosongkan saja (tekan Enter) kecuali"
 echo "    config Kasvo sedang terbuka dan siap diganti berbarengan."
@@ -125,7 +125,7 @@ for i in 1 2 3 4 5; do
     echo "  1. Login ulang ke dashboard admin (sesi lama sudah mati)"
     echo "  2. Pindahkan Kasvo Indonesia ke secret key barunya sendiri. Key lama"
     echo "     dipakai kedua aplikasi -- menghapusnya sekarang mematikan Kasvo."
-    echo "  3. Setelah bohAntar DAN Kasvo dua-duanya terbukti jalan dengan key"
+    echo "  3. Setelah BohAntar DAN Kasvo dua-duanya terbukti jalan dengan key"
     echo "     masing-masing, baru hapus key lama yang bocor di dashboard Xendit."
     echo "  4. Hapus cadangan berisi kredensial lama: rm $CADANGAN"
     exit 0

@@ -41,7 +41,7 @@ class ApiService {
   static const bool isProduction = true;
   static const String prodUrl = 'https://bohantar.indotechconsulting.com';
 
-  /// WhatsApp CS/admin bohAntar (format wa.me, tanpa "+"). Dipakai "Lupa
+  /// WhatsApp CS/admin BohAntar (format wa.me, tanpa "+"). Dipakai "Lupa
   /// password?" di layar masuk dan menu Bantuan.
   static const String waCS = '628996979079';
 

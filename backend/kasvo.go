@@ -336,7 +336,7 @@ func kasvoGabungHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var adaPengajuan int
 	if db.QueryRow("SELECT 1 FROM partner_applications WHERE kasvo_toko_uuid = ? AND status = 'pending' LIMIT 1", p.TokoUUID).Scan(&adaPengajuan) == nil {
-		writeJSONResponse(w, 200, map[string]string{"status": "menunggu", "message": "Pengajuan toko ini sedang ditinjau admin bohAntar"})
+		writeJSONResponse(w, 200, map[string]string{"status": "menunggu", "message": "Pengajuan toko ini sedang ditinjau admin BohAntar"})
 		return
 	}
 
@@ -352,7 +352,7 @@ func kasvoGabungHandler(w http.ResponseWriter, r *http.Request) {
 	var peran string
 	if db.QueryRow("SELECT COALESCE(role, '') FROM users WHERE phone_number = ?", phone).Scan(&peran) == nil {
 		if peran != "food_merchant" {
-			writeJSONResponse(w, 409, map[string]string{"error": "Nomor " + phone + " sudah dipakai akun bohAntar lain (" + peran + "). Pakai nomor lain untuk akun warung."})
+			writeJSONResponse(w, 409, map[string]string{"error": "Nomor " + phone + " sudah dipakai akun BohAntar lain (" + peran + "). Pakai nomor lain untuk akun warung."})
 			return
 		}
 		var uuidLain string
@@ -388,7 +388,7 @@ func kasvoGabungHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan pengajuan"})
 		return
 	}
-	writeJSONResponse(w, 201, map[string]string{"status": "menunggu", "message": "Pengajuan terkirim. Admin bohAntar akan meninjaunya."})
+	writeJSONResponse(w, 201, map[string]string{"status": "menunggu", "message": "Pengajuan terkirim. Admin BohAntar akan meninjaunya."})
 }
 
 // kasvoStatusHandler: "belum", "menunggu", "ditolak", atau "tergabung" —

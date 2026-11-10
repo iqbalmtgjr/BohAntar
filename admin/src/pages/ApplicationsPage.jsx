@@ -66,7 +66,7 @@ export default function ApplicationsPage() {
     <>
       <Topbar title="Pengajuan Driver" />
       <div className="page">
-        <div className="page-header"><h1>Pengajuan Driver</h1><p>Verifikasi calon mitra driver bohAntar</p></div>
+        <div className="page-header"><h1>Pengajuan Driver</h1><p>Verifikasi calon mitra driver BohAntar</p></div>
         <div className="filter-bar">
           {FILTER_ITEMS.map(f => (
             <button 

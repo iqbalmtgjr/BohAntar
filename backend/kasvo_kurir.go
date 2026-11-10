@@ -250,7 +250,7 @@ func kasvoKurirBatalHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if !batal {
 		writeJSONResponse(w, 409, map[string]interface{}{
-			"error":        "Pesanan sudah dibawa kurir, tidak bisa dibatalkan dari toko. Hubungi admin bohAntar.",
+			"error":        "Pesanan sudah dibawa kurir, tidak bisa dibatalkan dari toko. Hubungi admin BohAntar.",
 			"order_status": o.Status,
 		})
 		return

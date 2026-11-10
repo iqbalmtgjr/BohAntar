@@ -60,7 +60,7 @@ func TestOngkosBohRideCocokDenganHargaLokal(t *testing.T) {
 		Pembulatan: 1000, KeAtas: true, KomisiPersen: 20, BiayaJasa: 1000,
 	}
 	// Kolom total adalah harga lokal yang ditiru dan tidak ikut komisi. Kolom
-	// driver dan bohAntar mengikuti komisi 20% (keputusan user 9 Okt 2026); kalau
+	// driver dan BohAntar mengikuti komisi 20% (keputusan user 9 Okt 2026); kalau
 	// komisi diubah, cukup dua kolom itu yang dihitung ulang.
 	kasus := []struct {
 		meter                    float64
@@ -86,7 +86,7 @@ func TestOngkosBohRideCocokDenganHargaLokal(t *testing.T) {
 		aplikator := komisi + tr.BiayaJasa
 
 		if total != k.total || driver != k.driver || aplikator != k.aplikator {
-			t.Errorf("%.0f m: total %.0f/%.0f, driver %.0f/%.0f, bohAntar %.0f/%.0f",
+			t.Errorf("%.0f m: total %.0f/%.0f, driver %.0f/%.0f, BohAntar %.0f/%.0f",
 				k.meter, total, k.total, driver, k.driver, aplikator, k.aplikator)
 		}
 	}

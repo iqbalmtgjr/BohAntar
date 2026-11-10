@@ -532,7 +532,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           return AlertDialog(
             title: const Text("Izin lokasi masih ditolak"),
             content: const Text(
-              "Buka pengaturan, lalu izinkan bohAntar membaca lokasi supaya titik jemputmu terpasang otomatis."
+              "Buka pengaturan, lalu izinkan BohAntar membaca lokasi supaya titik jemputmu terpasang otomatis."
             ),
             actions: [
               TextButton(
@@ -1015,7 +1015,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         pickup: _pickupController.text,
         dropoff: _destinationController.text,
         service: _selectedService,
-        // Penumpang hanya bayar tunai sejak 24 Okt 2026: bohAntar tidak boleh
+        // Penumpang hanya bayar tunai sejak 24 Okt 2026: BohAntar tidak boleh
         // menampung uang pelanggan (kasus ojol Sintang di Polda Kalbar).
         paymentMethod: "cash",
         pickupLat: _currentLatLng.latitude,
@@ -2604,7 +2604,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  _bayarTunai ? 'Siapkan uang tunai untuk driver' : 'Dipotong dari saldo BohPay',
+                  _bayarTunai ? 'Siapkan uang tunai untuk driver' : 'Dipotong dari saldo',
                   style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
                 ),
               ),
@@ -2700,7 +2700,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            _bayarTunai ? 'Bayar tunai ke driver, ya' : 'Sudah dipotong dari saldo BohPay',
+                            _bayarTunai ? 'Bayar tunai ke driver, ya' : 'Sudah dipotong dari saldo',
                             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                           ),
                         ),

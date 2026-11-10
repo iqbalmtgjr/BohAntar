@@ -63,7 +63,7 @@ const double jarakDekatMeter = 300;
       return switch (jenis) {
         JenisPesanan.orang => (judul: 'Sudah sampai, terima kasih!', keterangan: 'Semoga perjalananmu menyenangkan.'),
         JenisPesanan.makanan => (judul: 'Pesananmu sudah sampai', keterangan: 'Selamat makan! Terima kasih sudah pesan lewat BohFood.'),
-        JenisPesanan.barang => (judul: 'Paket sudah diterima', keterangan: 'Terima kasih sudah kirim lewat bohAntar.'),
+        JenisPesanan.barang => (judul: 'Paket sudah diterima', keterangan: 'Terima kasih sudah kirim lewat BohAntar.'),
       };
     case 'cancelled':
       return (judul: 'Pesanan dibatalkan', keterangan: 'Kamu bisa pesan lagi kapan saja.');

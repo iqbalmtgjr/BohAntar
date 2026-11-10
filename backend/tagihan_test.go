@@ -145,7 +145,7 @@ func TestTagihanQRSekaliBayar(t *testing.T) {
 	}
 }
 
-// Mitra rental ikut bisa menagih, dan potongan bohAntar dikunci saat tagihan
+// Mitra rental ikut bisa menagih, dan potongan BohAntar dikunci saat tagihan
 // dibuat: persen yang diubah sesudahnya tidak boleh menggeser uang yang sudah
 // dijanjikan ke mitra di layar QR.
 func TestTagihanQRPotonganUntukMitraRental(t *testing.T) {

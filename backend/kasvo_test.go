@@ -73,9 +73,9 @@ func TestMenuKasvoDibacaLangsung(t *testing.T) {
 		t.Errorf("menu Kasvo terbaca salah: %+v", m)
 	}
 
-	// Saklar is_open di bohAntar tetap berlaku walau Kasvo bilang buka.
+	// Saklar is_open di BohAntar tetap berlaku walau Kasvo bilang buka.
 	if _, buka, _ := menuWarung(FoodMerchant{ID: "merchant-x", IsOpen: false, KasvoTokoUUID: "toko-1"}); buka {
-		t.Error("warung yang ditutup admin bohAntar dianggap buka")
+		t.Error("warung yang ditutup admin BohAntar dianggap buka")
 	}
 
 	if _, _, err := ambilMenuKasvo("tak-ada"); err == nil {
@@ -109,7 +109,7 @@ func TestTokenKasvoKosongMenolakSemua(t *testing.T) {
 
 // Jalur lengkap tombol "Gabung bohFood": pengajuan → disetujui admin → warung
 // tersambung, menunya dibaca pemesan dari Kasvo, dan edit menu dari portal
-// bohAntar ditolak.
+// BohAntar ditolak.
 func TestGabungKasvoSampaiTersambung(t *testing.T) {
 	bukaDBTes(t)
 	kasvoTiruan(t, kasvoMenuUji)
@@ -246,7 +246,7 @@ func TestGabungKasvoSampaiTersambung(t *testing.T) {
 		t.Fatalf("penumpang membaca menu: %d %s", rec.Code, rec.Body.String())
 	}
 
-	// Pemilik tidak bisa mengubah menu dari portal bohAntar.
+	// Pemilik tidak bisa mengubah menu dari portal BohAntar.
 	b, _ := json.Marshal(map[string]interface{}{"merchant_id": w.ID, "name": "Menu Liar", "price": 1000})
 	r = httptest.NewRequest(http.MethodPost, "/api/food/menus", bytes.NewReader(b))
 	r = r.WithContext(context.WithValue(context.WithValue(r.Context(), ctxPhone, pemilik), ctxRole, "food_merchant"))

@@ -101,7 +101,7 @@ export default function PartnerRegisterPage() {
         <div onClick={() => navigate("/")} className="flex items-center gap-3 cursor-pointer select-none">
           <img
             src={logoImg}
-            alt="bohAntar Logo"
+            alt="BohAntar Logo"
             className="h-10 w-auto object-contain"
           />
         </div>
@@ -131,7 +131,7 @@ export default function PartnerRegisterPage() {
               <div className="space-y-2">
                 <h2 className="text-2xl font-black text-slate-900 leading-none">Pendaftaran Berhasil Dikirim!</h2>
                 <p className="text-sm text-slate-500 leading-relaxed">
-                  Terima kasih telah mengajukan pendaftaran sebagai {getPortalTitle()}. Permohonan Anda saat ini dalam proses peninjauan oleh tim Super Admin bohAntar.
+                  Terima kasih telah mengajukan pendaftaran sebagai {getPortalTitle()}. Permohonan Anda saat ini dalam proses peninjauan oleh tim Super Admin BohAntar.
                 </p>
               </div>
               <div className="bg-slate-50 border border-slate-200/60 p-4 rounded-2xl text-xs text-slate-500 leading-relaxed text-left">
@@ -332,7 +332,7 @@ export default function PartnerRegisterPage() {
 
       {/* Footer */}
       <footer className="py-8 text-center text-xs text-slate-400 border-t border-slate-200/30 relative z-10">
-        &copy; {new Date().getFullYear()} bohAntar. Semua hak cipta dilindungi.
+        &copy; {new Date().getFullYear()} BohAntar. Semua hak cipta dilindungi.
       </footer>
     </div>
   );

@@ -177,7 +177,7 @@ export default function UsersPage() {
       <div className="page">
         <div className="page-header">
           <h1>Pengguna</h1>
-          <p>Kelola semua pengguna dalam sistem bohAntar</p>
+          <p>Kelola semua pengguna dalam sistem BohAntar</p>
         </div>
         <div className="filter-bar">
           <button className={`filter-btn${filter === "" ? " active" : ""}`} onClick={() => { setFilter(""); setPage(1); load("", 1, limit); }}>Semua</button>

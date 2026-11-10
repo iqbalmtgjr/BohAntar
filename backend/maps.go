@@ -68,7 +68,7 @@ const (
 
 	// Layanan gratis berbasis OpenStreetMap minta pemakainya memperkenalkan diri
 	// supaya bisa dihubungi kalau ada yang menyalahgunakan. Jangan dikosongkan.
-	userAgentPeta = "bohAntar/1.0 (https://bohantar.indotechconsulting.com/api/privasi)"
+	userAgentPeta = "BohAntar/1.0 (https://bohantar.indotechconsulting.com/api/privasi)"
 )
 
 // Pusat kota Sintang (lintang, bujur): Jl. A. Yani, di antara RSUD dan kantor

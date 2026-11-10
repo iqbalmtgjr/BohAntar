@@ -55,7 +55,7 @@ export default function PortalMitraPage() {
                     >
                         <img
                             src={logoImg}
-                            alt="bohAntar Logo"
+                            alt="BohAntar Logo"
                             className="h-10 w-auto object-contain"
                         />
                     </div>
@@ -83,7 +83,7 @@ export default function PortalMitraPage() {
                         Masuk ke Dashboard Kemitraan Anda
                     </h2>
                     <p className="text-slate-500 text-sm sm:text-base">
-                        Pilih jenis portal kemitraan bohAntar di bawah ini untuk mengakses dashboard pengelolaan bisnis Anda.
+                        Pilih jenis portal kemitraan BohAntar di bawah ini untuk mengakses dashboard pengelolaan bisnis Anda.
                     </p>
                 </div>
 
@@ -139,13 +139,13 @@ export default function PortalMitraPage() {
 
                 {/* Info Box: Registration Guide */}
                 <div className="mt-12 bg-blue-50/50 border border-blue-100/60 p-6 rounded-3xl text-center max-w-2xl w-full">
-                    <h4 className="text-sm font-bold text-slate-900">Belum menjadi Mitra bohAntar?</h4>
+                    <h4 className="text-sm font-bold text-slate-900">Belum menjadi Mitra BohAntar?</h4>
                     <p className="text-xs text-slate-500 mt-1 leading-relaxed">
                         Bergabunglah dengan ratusan pengusaha kuliner (Mitra Resto) dan pemilik rental mobil (Mitra Rental) di Kalimantan Barat. Hubungi tim kemitraan kami untuk melakukan pendaftaran secara gratis.
                     </p>
                     <div className="mt-4">
                         <a 
-                            href="https://wa.me/628996979079?text=Halo%20Admin%20bohAntar,%20saya%20tertarik%20untuk%20mendaftar%20sebagai%20mitra."
+                            href="https://wa.me/628996979079?text=Halo%20Admin%20BohAntar,%20saya%20tertarik%20untuk%20mendaftar%20sebagai%20mitra."
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-md transition cursor-pointer"
@@ -159,7 +159,7 @@ export default function PortalMitraPage() {
 
             {/* Footer Brand Label */}
             <footer className="py-8 text-center text-xs text-slate-400 border-t border-slate-200/30">
-                &copy; {new Date().getFullYear()} bohAntar. Semua hak cipta dilindungi.
+                &copy; {new Date().getFullYear()} BohAntar. Semua hak cipta dilindungi.
             </footer>
         </div>
     );

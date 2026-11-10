@@ -20,7 +20,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'bohAntar',
+      title: 'BohAntar',
       debugShowCheckedModeBanner: false,
       // Dipakai NotifikasiService untuk membuka layar chat dari notifikasi.
       navigatorKey: NotifikasiService.navigatorKey,
@@ -96,7 +96,7 @@ class _AuthGateState extends State<AuthGate> {
   Widget build(BuildContext context) {
     if (_checkingAuth) {
       // Logo penuh dibalik jadi putih di mode gelap, sama seperti di layar
-      // login: tulisan "boh" berwarna navy dan hilang di atas latar gelap.
+      // login: tulisan "Boh" berwarna navy dan hilang di atas latar gelap.
       final isDark = Theme.of(context).brightness == Brightness.dark;
       return Scaffold(
         body: Center(
@@ -140,7 +140,7 @@ class _LayarPerbarui extends StatelessWidget {
             children: [
               const Icon(Icons.system_update, size: 64, color: AppTheme.primaryBlue),
               const SizedBox(height: 24),
-              const Text('Perbarui bohAntar',
+              const Text('Perbarui BohAntar',
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
               const SizedBox(height: 12),
               const Text(

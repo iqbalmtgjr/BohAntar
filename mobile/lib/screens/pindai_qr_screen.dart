@@ -3,7 +3,7 @@ import 'package:mobile/services/api_service.dart' show pesanGalat;
 import 'package:mobile/theme.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
-/// Layar kamera pemindai QR bohAntar.
+/// Layar kamera pemindai QR BohAntar.
 ///
 /// Satu layar untuk dua peran, karena yang membedakannya cuma apa yang
 /// dikerjakan sesudah QR-nya terbaca:

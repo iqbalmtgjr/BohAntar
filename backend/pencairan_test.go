@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// Pencairan memindahkan uang sungguhan keluar dari bohAntar, jadi yang diuji
+// Pencairan memindahkan uang sungguhan keluar dari BohAntar, jadi yang diuji
 // bukan "berhasil": saldo tertahan tidak ikut cair, ketukan ganda tidak jadi dua
 // transfer, dan penolakan mengembalikan saldo tepat sekali.
 func TestPencairanSaldoManual(t *testing.T) {

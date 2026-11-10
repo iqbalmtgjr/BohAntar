@@ -17,7 +17,7 @@ export default function Topbar({ title }) {
 
         <div style={{ textAlign: "right", lineHeight: 1.3 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-primary)" }}>Super Admin</div>
-          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>bohAntar Control</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>BohAntar Control</div>
         </div>
         <div className="avatar" style={{ background: "linear-gradient(135deg, var(--primary-light), var(--primary-dark))", color: "#fff" }}>
           <ShieldCheck size={16} />

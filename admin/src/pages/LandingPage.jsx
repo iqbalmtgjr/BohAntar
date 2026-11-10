@@ -7,7 +7,7 @@ import { BASE } from '../api';
 import {
     Bike, Car, Package, UtensilsCrossed, KeyRound, ShieldCheck, MapPin, Star,
     ArrowRight, Download, ExternalLink, ChevronDown, Clock, Sparkles, Smartphone,
-    CheckCircle2, Menu, X, Wallet, Percent, Calculator, Users, CreditCard,
+    CheckCircle2, Menu, X, Percent, Calculator, Users, CreditCard,
     Navigation, Zap, Globe, HeartHandshake, Play, ChevronRight, ArrowUpRight,
     Send, MousePointerClick, Grid, Home, FileText, HelpCircle, User
 } from 'lucide-react';
@@ -107,7 +107,7 @@ const staggerItem = {
    berbeda saat salah satunya diubah. */
 const NAV_LINKS = [
     { label: 'Layanan', href: '#layanan', icon: Grid, desc: 'bohFood, bohRide, bohCar & bohRental' },
-    { label: 'Keunggulan', href: '#keunggulan', icon: Sparkles, desc: 'Alasan memilih bohAntar' },
+    { label: 'Keunggulan', href: '#keunggulan', icon: Sparkles, desc: 'Alasan memilih BohAntar' },
     { label: 'Mulai Gabung Mitra', href: '#portal', icon: HeartHandshake, desc: 'Daftarkan usaha atau jadi driver' },
 ];
 
@@ -281,10 +281,10 @@ export default function LandingPage({ onSelectPortal }) {
     ];
 
     const faqs = [
-        { q: 'Bagaimana cara mulai menggunakan aplikasi bohAntar?', a: 'Unduh aplikasi bohAntar di Play Store atau App Store, daftar akun dengan nomor HP aktif, dan langsung pilih layanan Ride, Car, Send, Food, atau Rental sesuai kebutuhan.' },
+        { q: 'Bagaimana cara mulai menggunakan aplikasi BohAntar?', a: 'Unduh aplikasi BohAntar di Play Store atau App Store, daftar akun dengan nomor HP aktif, dan langsung pilih layanan Ride, Car, Send, Food, atau Rental sesuai kebutuhan.' },
         { q: 'Apakah semua mitra pengemudi dan armada terverifikasi?', a: 'Ya, seluruh mitra driver melewati verifikasi identitas resmi (KTP, SIM aktif, SKCK) serta inspeksi kelayakan kendaraan untuk menjamin keamanan perjalanan.' },
         { q: 'Bagaimana cara bergabung menjadi Mitra Resto atau Rental?', a: 'Klik tombol "Portal Mitra" di navigasi atas atau pilih card portal yang sesuai, lalu lakukan login / pendaftaran mitra baru.' },
-        { q: 'Metode pembayaran apa saja yang didukung?', a: 'Pesanan dibayar tunai langsung ke driver atau mitra. bohAntar tidak menyimpan saldo atau dompet digital pelanggan.' }
+        { q: 'Metode pembayaran apa saja yang didukung?', a: 'Pesanan dibayar tunai langsung ke driver atau mitra. BohAntar tidak menyimpan saldo atau dompet digital pelanggan.' }
     ];
 
     // Animated counters
@@ -330,7 +330,7 @@ export default function LandingPage({ onSelectPortal }) {
                     >
                         <img 
                             src={logoImg} 
-                            alt="bohAntar Logo" 
+                            alt="BohAntar Logo" 
                             className="h-10 w-auto object-contain"
                         />
                     </motion.div>
@@ -403,7 +403,7 @@ export default function LandingPage({ onSelectPortal }) {
                         >
                             {/* Kepala panel */}
                             <div className="flex items-center justify-between px-5 h-20 border-b border-slate-100 shrink-0">
-                                <img src={logoImg} alt="bohAntar" className="h-9 w-auto object-contain" />
+                                <img src={logoImg} alt="BohAntar" className="h-9 w-auto object-contain" />
                                 <button
                                     onClick={() => setMobileMenuOpen(false)}
                                     className="w-11 h-11 flex items-center justify-center rounded-2xl text-slate-500 bg-slate-50 border border-slate-200/70 active:scale-95 transition-transform"
@@ -765,7 +765,7 @@ export default function LandingPage({ onSelectPortal }) {
 
                                     {/* 1. App Top Header */}
                                     <div className="px-4 pb-2.5 flex items-center justify-between border-b border-slate-100/60">
-                                        <img src={logoImg} alt="bohAntar" className="h-8 w-auto" />
+                                        <img src={logoImg} alt="BohAntar" className="h-8 w-auto" />
                                         <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-600">
                                             <ArrowRight className="w-3.5 h-3.5" />
                                         </div>
@@ -783,23 +783,7 @@ export default function LandingPage({ onSelectPortal }) {
                                         <div className="text-[11px] text-slate-400 font-medium">Mau antar apa hari ini?</div>
                                     </div>
 
-                                    {/* 3. bohPay Wallet Card */}
-                                    <div className="mx-4 mb-3 p-2.5 bg-white rounded-2xl border border-slate-100 shadow-sm flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <div className="w-8 h-8 rounded-xl bg-blue-50 border border-blue-100 flex items-center justify-center text-blue-600">
-                                                <Wallet className="w-4 h-4" />
-                                            </div>
-                                            <div>
-                                                <div className="text-[9px] font-bold text-blue-600 uppercase tracking-wider">bohPay</div>
-                                                <div className="text-xs font-black text-slate-900">Rp 75.000</div>
-                                            </div>
-                                        </div>
-                                        <button className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white font-bold text-[10px] rounded-lg shadow-sm transition">
-                                            Top Up
-                                        </button>
-                                    </div>
-
-                                    {/* 4. Grid 6 Service Icons */}
+                                    {/* 3. Grid 6 Service Icons */}
                                     <div className="px-4 grid grid-cols-3 gap-y-2.5 gap-x-2 text-center mb-3">
                                         {[
                                             { key: 'ride', name: 'BohRide', icon: Bike, bg: 'bg-blue-600' },
@@ -830,7 +814,7 @@ export default function LandingPage({ onSelectPortal }) {
                                     {/* 5. Promo Banner Card */}
                                     <div className="mx-4 p-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl text-white shadow-sm relative overflow-hidden">
                                         <div className="text-[8px] font-bold uppercase tracking-wider text-blue-200">Promo Spesial</div>
-                                        <div className="text-[11px] font-black leading-tight">DISKON ONGKIR bohAntar</div>
+                                        <div className="text-[11px] font-black leading-tight">DISKON ONGKIR BohAntar</div>
                                         <div className="text-[9px] text-blue-100">Khusus pengguna baru se-Kalbar</div>
                                     </div>
 
@@ -1044,7 +1028,7 @@ export default function LandingPage({ onSelectPortal }) {
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <RevealSection className="text-center max-w-3xl mx-auto mb-16 space-y-3">
                         <div className="text-xs font-bold uppercase tracking-wider text-blue-600">Standar Tertinggi</div>
-                        <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900">Mengapa Memilih bohAntar?</h2>
+                        <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900">Mengapa Memilih BohAntar?</h2>
                         <p className="text-slate-500 text-sm sm:text-base">Standar layanan terbaik untuk mobilitas Anda di Kalimantan Barat.</p>
                     </RevealSection>
 
@@ -1210,7 +1194,7 @@ export default function LandingPage({ onSelectPortal }) {
                                 <span className="text-xs font-bold uppercase tracking-widest text-blue-200">Download Aplikasi Sekarang</span>
                                 <h2 className="text-3xl sm:text-4xl font-black leading-tight">
                                     Mulai Perjalanan <br className="hidden sm:inline" />
-                                    Pertamamu Bersama bohAntar
+                                    Pertamamu Bersama BohAntar
                                 </h2>
                                 <p className="text-blue-200 text-sm leading-relaxed">
                                     Tersedia di Google Play Store dan Apple App Store. Gratis, cepat, dan terpercaya.
@@ -1255,7 +1239,7 @@ export default function LandingPage({ onSelectPortal }) {
                             <div className="bg-white px-3.5 py-1.5 rounded-xl inline-flex items-center shadow-sm">
                                 <img 
                                     src={logoImg} 
-                                    alt="bohAntar Logo" 
+                                    alt="BohAntar Logo" 
                                     className="h-7 w-auto object-contain"
                                 />
                             </div>
@@ -1314,7 +1298,7 @@ export default function LandingPage({ onSelectPortal }) {
 
                     {/* Copyright */}
                     <div className="pt-8 border-t border-slate-800/60 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-slate-600">
-                        <div>&copy; 2026 <strong className="text-slate-400">bohAntar</strong>. Seluruh hak cipta dilindungi.</div>
+                        <div>&copy; 2026 <strong className="text-slate-400">BohAntar</strong>. Seluruh hak cipta dilindungi.</div>
                         <div className="flex items-center gap-1.5">
                             <span>Dibuat dengan</span>
                             <motion.span animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 1.5 }}>❤️</motion.span>

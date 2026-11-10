@@ -45,7 +45,7 @@ export default function ApprovedPartnersPage() {
       <div className="page">
         <div className="page-header">
           <h1>Kemitraan Disetujui</h1>
-          <p>Kelola dan pantau semua Mitra Resto Food & Mitra Rental Mobil yang aktif dalam sistem bohAntar</p>
+          <p>Kelola dan pantau semua Mitra Resto Food & Mitra Rental Mobil yang aktif dalam sistem BohAntar</p>
         </div>
 
         {/* Stats Grid */}

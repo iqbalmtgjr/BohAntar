@@ -108,7 +108,7 @@ ORDER_ID=$(ambil id "$buat")
 fare=$(ambil fare "$buat")
 komisi=$(ambil komisi "$buat")
 # Biaya jasa aplikasi: dibayar penumpang DI ATAS ongkos dan masuk utuh ke
-# bohAntar, jadi ia menambah debit penumpang tanpa mengurangi bagian driver.
+# BohAntar, jadi ia menambah debit penumpang tanpa mengurangi bagian driver.
 biaya_jasa=$(ambil biaya_jasa "$buat")
 [ -n "$biaya_jasa" ] || biaya_jasa=0
 periksa "pesanan lahir" "ada" "$([ -n "$ORDER_ID" ] && echo ada || echo kosong)"

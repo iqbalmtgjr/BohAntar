@@ -1,11 +1,11 @@
 {
-    "name": "bohAntar",
-    "short_name": "bohAntar",
+    "name": "BohAntar",
+    "short_name": "BohAntar",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#FFFFFF",
     "theme_color": "#1E7FFF",
-    "description": "bohAntar — aplikasi ojek, antar barang, dan sewa kendaraan.",
+    "description": "BohAntar — aplikasi ojek, antar barang, dan sewa kendaraan.",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

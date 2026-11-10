@@ -84,7 +84,7 @@ export PRIVACY_CONTACT_EMAIL=""
 
 # ---- Opsional ----
 # Sub-akun xenPlatform. Kalau diisi, invoice diterbitkan atas nama sub-akun lewat
-# header for-user-id. Kosongkan selama bohAntar masih menumpang akun Kasvo.
+# header for-user-id. Kosongkan selama BohAntar masih menumpang akun Kasvo.
 # export XENDIT_SUB_ACCOUNT_ID=""
 
 # Hanya dipakai saat akun admin pertama kali dibuat. Akun admin Anda sudah ada,

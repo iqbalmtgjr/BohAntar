@@ -549,10 +549,10 @@ func main() {
 	mux.HandleFunc("/api/admin/setoran", admin(adminSetoranHandler))
 	mux.HandleFunc("/api/admin/setoran/qr/", admin(adminSetoranQRHandler))
 	mux.HandleFunc("/api/driver/setoran/klaim", requireRole("driver")(driverKlaimSetoranHandler))
-	// Uang hanya boleh MASUK ke bohAntar, tidak keluar lagi (keputusan user
+	// Uang hanya boleh MASUK ke BohAntar, tidak keluar lagi (keputusan user
 	// 31 Okt 2026). Tanpa dompet penumpang, saldo driver hanya berisi
 	// setorannya sendiri: top up QRIS lalu cairkan ke rekening siapa pun
-	// menjadikan rekening bohAntar tempat transit uang — pola yang membuat ojol
+	// menjadikan rekening BohAntar tempat transit uang — pola yang membuat ojol
 	// Sintang diperiksa atas dugaan pencucian uang. Sisa saldo lama dikembalikan
 	// admin secara manual; pengajuan yang sudah menunggu tetap diproses lewat
 	// rute admin di bawah.
@@ -562,7 +562,7 @@ func main() {
 	//
 	// ponytail: pencairanHandler dan handler tagihan dibiarkan (masih dites);
 	// hapus bersama tesnya kalau keputusan ini sudah permanen.
-	mux.HandleFunc("/api/pencairan", ditutup("Pencairan saldo lewat aplikasi sudah ditutup. Hubungi admin bohAntar untuk pengembalian sisa saldo."))
+	mux.HandleFunc("/api/pencairan", ditutup("Pencairan saldo lewat aplikasi sudah ditutup. Hubungi admin BohAntar untuk pengembalian sisa saldo."))
 	mux.HandleFunc("/api/admin/pencairan", admin(adminPencairanHandler))
 	mux.HandleFunc("/api/admin/pencairan/", admin(adminProsesPencairanHandler))
 	mux.HandleFunc("/api/tagihan", ditutup("Bayar pakai saldo sudah tidak tersedia. Bayar tunai langsung, ya."))
@@ -635,7 +635,7 @@ func main() {
 	if !strings.HasPrefix(port, ":") {
 		port = ":" + port
 	}
-	fmt.Printf("Server bohAntar-backend berjalan di http://localhost%s\n", port)
+	fmt.Printf("Server BohAntar-backend berjalan di http://localhost%s\n", port)
 	// Timeout mencegah koneksi menggantung menahan sumber daya (Slowloris).
 	// ReadTimeout dibuat longgar supaya upload 5 MB dari jaringan seluler tetap muat;
 	// ReadHeaderTimeout yang ketatlah yang menutup serangan header lambat. Koneksi
@@ -1169,7 +1169,7 @@ func initDB() {
 	migrasiSkema("ALTER TABLE tarif ADD COLUMN jarak_dasar_km SMALLINT UNSIGNED NOT NULL DEFAULT 0")
 	migrasiSkema("ALTER TABLE tarif ADD COLUMN pembulatan SMALLINT UNSIGNED NOT NULL DEFAULT 100")
 	migrasiSkema("ALTER TABLE tarif ADD COLUMN pembulatan_ke_atas BOOLEAN NOT NULL DEFAULT FALSE")
-	// Potongan bohAntar per tagihan QR, dikunci saat tagihan dibuat. Untuk
+	// Potongan BohAntar per tagihan QR, dikunci saat tagihan dibuat. Untuk
 	// database yang tabelnya sudah lahir sebelum kolom ini ada.
 	migrasiSkema("ALTER TABLE tagihan_qr ADD COLUMN komisi DECIMAL(12,2) NOT NULL DEFAULT 0")
 	// Pesanan lama semuanya dibayar dari dompet, jadi baris yang sudah ada
@@ -2198,7 +2198,7 @@ func homeHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, http.StatusNotFound, map[string]string{"error": "Endpoint tidak ditemukan"})
 		return
 	}
-	writeJSONResponse(w, http.StatusOK, map[string]string{"status": "success", "message": "Selamat datang di API bohAntar!"})
+	writeJSONResponse(w, http.StatusOK, map[string]string{"status": "success", "message": "Selamat datang di API BohAntar!"})
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -2461,7 +2461,7 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 // sampai admin mengetik yang baru.
 //
 // Bukti kepemilikan akunnya token Google yang sudah diverifikasi: siapa yang
-// bisa masuk ke akun Google itu, memegang email akun bohAntar-nya. Tidak perlu
+// bisa masuk ke akun Google itu, memegang email akun BohAntar-nya. Tidak perlu
 // SMTP atau SMS. Akun yang emailnya bukan akun Google tidak bisa lewat sini —
 // aplikasinya mengarahkan mereka ke admin, yang bisa mengganti password lewat
 // halaman Pengguna di dashboard.
@@ -2497,7 +2497,7 @@ func resetPasswordGoogleHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	u, _, found := dbFindUserByEmail(email)
 	if !found {
-		writeJSONResponse(w, 404, map[string]string{"error": "Email Google " + email + " tidak terdaftar di bohAntar. Pilih akun Google yang emailnya sama dengan akun bohAntar Anda, atau hubungi admin."})
+		writeJSONResponse(w, 404, map[string]string{"error": "Email Google " + email + " tidak terdaftar di BohAntar. Pilih akun Google yang emailnya sama dengan akun BohAntar Anda, atau hubungi admin."})
 		return
 	}
 	if err := dbSetPassword(u.PhoneNumber, input.NewPassword); err != nil {
@@ -2644,7 +2644,7 @@ func profileHandler(w http.ResponseWriter, r *http.Request) {
 			// penumpang tidak bisa diganti sendiri (mis. akun dipinjamkan ke
 			// orang lain). Admin membuka kuncinya dari halaman Pengguna.
 			if fotoWajah(phone) != "" {
-				writeJSONResponse(w, 409, map[string]string{"error": "Foto wajahmu sudah terpasang dan dikunci. Hubungi admin bohAntar kalau ingin menggantinya."})
+				writeJSONResponse(w, 409, map[string]string{"error": "Foto wajahmu sudah terpasang dan dikunci. Hubungi admin BohAntar kalau ingin menggantinya."})
 				return
 			}
 			if !fotoGambarSah(*input.FotoWajah) {
@@ -2866,7 +2866,7 @@ func topUpHandler(w http.ResponseWriter, r *http.Request) {
 	xenditKey := getEnv("XENDIT_SECRET_KEY", "mock")
 	if topUpTanpaKunci(isProduction(), xenditKey) {
 		log.Println("Top up ditolak: XENDIT_SECRET_KEY belum diisi di run.sh")
-		writeJSONResponse(w, 503, map[string]string{"error": "Top up sedang tidak tersedia. Hubungi admin bohAntar."})
+		writeJSONResponse(w, 503, map[string]string{"error": "Top up sedang tidak tersedia. Hubungi admin BohAntar."})
 		return
 	}
 
@@ -2919,7 +2919,7 @@ func buatInvoiceQRIS(xenditKey, externalID, email string, nominal float64) (invo
 		"external_id":     externalID,
 		"amount":          total,
 		"fees":            []map[string]interface{}{{"type": "Biaya layanan QRIS", "value": total - nominal}},
-		"description":     "Isi saldo BohPay",
+		"description":     "Isi saldo komisi driver BohAntar",
 		"currency":        "IDR",
 		"payment_methods": []string{"QRIS"},
 		// QR yang sudah basi lebih baik hilang daripada dibayar berjam-jam
@@ -3290,9 +3290,9 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	// Sebelumnya is_driver_active hanya disimpan, tidak pernah jadi syarat —
 	// menonaktifkan driver bermasalah lewat dashboard tidak berefek apa pun.
 	if !driver.IsDriverActive {
-		pesan := "Akun driver Anda sedang dinonaktifkan. Hubungi admin bohAntar."
+		pesan := "Akun driver Anda sedang dinonaktifkan. Hubungi admin BohAntar."
 		if a := alasanNonaktif(dp); a != "" {
-			pesan = "Akun driver Anda sedang dinonaktifkan. Alasan: " + a + ". Hubungi admin bohAntar."
+			pesan = "Akun driver Anda sedang dinonaktifkan. Alasan: " + a + ". Hubungi admin BohAntar."
 		}
 		writeJSONResponse(w, 403, map[string]string{"error": pesan})
 		return
@@ -3939,7 +3939,7 @@ func pickupOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	}
 	bukti, ok := bacaBuktiSerah(r)
 	if !ok {
-		writeJSONResponse(w, 400, map[string]string{"error": "Bukti tidak valid: foto harus hasil unggahan bohAntar, nama penerima maksimal 100 karakter"})
+		writeJSONResponse(w, 400, map[string]string{"error": "Bukti tidak valid: foto harus hasil unggahan BohAntar, nama penerima maksimal 100 karakter"})
 		return
 	}
 	o.Status = "picked_up"
@@ -3990,7 +3990,7 @@ func completeOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	}
 	bukti, ok := bacaBuktiSerah(r)
 	if !ok {
-		writeJSONResponse(w, 400, map[string]string{"error": "Bukti tidak valid: foto harus hasil unggahan bohAntar, nama penerima maksimal 100 karakter"})
+		writeJSONResponse(w, 400, map[string]string{"error": "Bukti tidak valid: foto harus hasil unggahan BohAntar, nama penerima maksimal 100 karakter"})
 		return
 	}
 	o.DeliveryPhotoURL = bukti.PhotoURL
@@ -4030,7 +4030,7 @@ func completeOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	}
 
 	// Selisih kedua angka ini tidak dikreditkan ke mana pun; itulah pendapatan
-	// bohAntar, dan jumlahnya bisa dijumlahkan dari kolom komisi dan biaya_jasa
+	// BohAntar, dan jumlahnya bisa dijumlahkan dari kolom komisi dan biaya_jasa
 	// kapan saja.
 	debitPenumpang, kreditDriver := bagiPembayaran(o.PaymentMethod, o.Fare, o.Komisi, o.FoodTotal, o.BiayaJasa)
 
@@ -4050,7 +4050,7 @@ func completeOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan transaksi"})
 		return
 	}
-	pesanBayar := "Terima kasih sudah pakai bohAntar."
+	pesanBayar := "Terima kasih sudah pakai BohAntar."
 	if o.PaymentMethod != "wallet" {
 		// Ongkir, biaya jasa, dan (makanan) uang yang ditalangi driver. Biaya
 		// jasa dulu tertinggal di sini, sehingga penumpang membayar kurang dan
@@ -4378,7 +4378,7 @@ func adminUserDetailHandler(w http.ResponseWriter, r *http.Request) {
 			} else {
 				log.Printf("Driver %s dinonaktifkan oleh admin %s: %q", phone, callerPhone(r), alasan)
 				notifikasiKe(phone, "Akun driver dinonaktifkan",
-					"Anda tidak bisa menerima orderan sampai akun diaktifkan lagi. Alasan: "+alasan+". Hubungi admin bohAntar.", map[string]string{"tipe": "akun"})
+					"Anda tidak bisa menerima orderan sampai akun diaktifkan lagi. Alasan: "+alasan+". Hubungi admin BohAntar.", map[string]string{"tipe": "akun"})
 			}
 		}
 		// Password hanya diganti bila field-nya benar-benar dikirim dan tidak kosong.
@@ -4518,7 +4518,7 @@ func hapusAkun(u User) (int, string) {
 	// identitas. Saldo penumpang hasil top up; dialog hapus akun di aplikasi
 	// menyebut saldo itu ikut hilang.
 	if u.Balance > 0 && slices.Contains(peranBolehCair, u.Role) {
-		return 409, fmt.Sprintf("Masih ada saldo Rp%.0f. Hubungi admin bohAntar untuk pengembaliannya sebelum menghapus akun.", u.Balance)
+		return 409, fmt.Sprintf("Masih ada saldo Rp%.0f. Hubungi admin BohAntar untuk pengembaliannya sebelum menghapus akun.", u.Balance)
 	}
 	// Pengajuan yang menunggu sudah memotong saldo. Kalau ditolak setelah akunnya
 	// hilang, uangnya dikembalikan ke akun yang tidak ada lagi.
@@ -4991,7 +4991,7 @@ func adminDriverRegisterHandler(w http.ResponseWriter, r *http.Request) {
 	sudahJadiDriver := statusLama == "approved" || (statusLama == "" && pemilik.IsDriverActive)
 	if sudahPunyaAkun && pemilik.Role == "driver" && sudahJadiDriver {
 		if _, peran, _ := parseBearer(r); peran != "admin" {
-			writeJSONResponse(w, 409, map[string]string{"error": "Nomor ini sudah terdaftar sebagai driver. Untuk ganti kendaraan, hubungi admin bohAntar."})
+			writeJSONResponse(w, 409, map[string]string{"error": "Nomor ini sudah terdaftar sebagai driver. Untuk ganti kendaraan, hubungi admin BohAntar."})
 			return
 		}
 	}
@@ -5058,7 +5058,7 @@ func alasanDriverBelumBolehMasuk(phone, role string) string {
 	case "pending":
 		return "Pengajuan driver Anda masih ditinjau admin. Anda bisa masuk setelah disetujui."
 	case "rejected":
-		return "Pengajuan driver Anda ditolak. Hubungi kantor bohAntar."
+		return "Pengajuan driver Anda ditolak. Hubungi kantor BohAntar."
 	}
 	return ""
 }
@@ -7124,7 +7124,7 @@ type LanggananMitra struct {
 }
 
 // adminLanggananRentalHandler: GET = semua mitra rental beserta masa langganannya,
-// POST = perpanjangan manual (mitra bayar tunai/transfer langsung ke bohAntar).
+// POST = perpanjangan manual (mitra bayar tunai/transfer langsung ke BohAntar).
 // Dilindungi admin() di router.
 func adminLanggananRentalHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {

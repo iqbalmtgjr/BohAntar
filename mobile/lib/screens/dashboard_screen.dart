@@ -532,7 +532,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text("Isi saldo BohPay"),
+          title: const Text("Isi saldo komisi"),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -555,14 +555,6 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                           onPressed: () => controller.text = n.toString(),
                         ))
                     .toList(),
-              ),
-              const SizedBox(height: 12),
-              // Biaya QRIS ditanggung pembayar (backend totalBayarQRIS, 0,777%):
-              // tanpa kalimat ini angka di halaman bayar terlihat "kok beda".
-              Text(
-                'Bayar lewat QRIS dari aplikasi bank atau e-wallet apa pun. Saldo masuk otomatis setelah lunas. '
-                'Ada biaya QRIS kecil (sekitar 0,8%) yang ikut ditagih.',
-                style: TextStyle(fontSize: 11.5, height: 1.4, color: AppTheme.teksRedup(dialogContext)),
               ),
             ],
           ),
@@ -677,7 +669,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
   void _toggleOnline(bool online) {
     if (online && _driverDinonaktifkan) {
-      _beriTahu('Akun driver Anda sedang dinonaktifkan admin. Hubungi admin bohAntar.');
+      _beriTahu('Akun driver Anda sedang dinonaktifkan admin. Hubungi admin BohAntar.');
       return;
     }
     SharedPreferences.getInstance().then((p) => p.setBool(_kunciOnline, online));
@@ -1095,7 +1087,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         accuracy: LocationAccuracy.high,
         distanceFilter: 15,
         foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationTitle: 'bohAntar aktif',
+          notificationTitle: 'BohAntar aktif',
           notificationText: 'Berbagi posisi supaya penumpang bisa melihat Anda.',
           notificationChannelName: 'Status driver',
           enableWakeLock: true,
@@ -1158,7 +1150,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       izin = await Geolocator.requestPermission();
     }
     if (izin == LocationPermission.denied || izin == LocationPermission.deniedForever) {
-      _beriTahu('Izin lokasi ditolak. bohAntar tidak bisa mengirim posisi Anda ke penumpang.');
+      _beriTahu('Izin lokasi ditolak. BohAntar tidak bisa mengirim posisi Anda ke penumpang.');
       return false;
     }
     return true;
@@ -1491,7 +1483,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   }
 
   // Spanduk selebar layar ala Gojek. Kartu BohPay yang dulu menumpang di tepi
-  // bawahnya dibuang 24 Okt 2026: penumpang tidak lagi punya saldo (bohAntar
+  // bawahnya dibuang 24 Okt 2026: penumpang tidak lagi punya saldo (BohAntar
   // tidak boleh menampung uang pelanggan), jadi tingginya dipotong 34 itu.
   static const double _tinggiBanner = 166;
 
@@ -1663,7 +1655,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   // BohRental·Lainnya (19 Okt: BohMart yang belum ada diganti BohRental).
   // Empat kolom, ilustrasi di atas ubin warna lembut seperti
   // Gojek (18 Okt). BohAntar sudah dilebur ke BohSend (nama aplikasinya sendiri
-  // bohAntar); pengenal 'BohAntar' tetap dikenali untuk pesanan lama.
+  // BohAntar); pengenal 'BohAntar' tetap dikenali untuk pesanan lama.
   Widget _gridLayanan(bool isDark) {
     return GridView.count(
       crossAxisCount: 4,
@@ -2032,7 +2024,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             if (((o['kasvo_pengantaran_id'] as num?)?.toInt() ?? 0) > 0)
               baris('Pembayaran', 'Ongkir dibayar tunai oleh penerima (${o['receiver_name'] ?? '-'})')
             else
-              baris('Pembayaran', o['payment_method'] == 'wallet' ? 'Saldo BohPay' : 'Tunai'),
+              baris('Pembayaran', o['payment_method'] == 'wallet' ? 'Saldo' : 'Tunai'),
             if (items.isNotEmpty) ...[
               const Divider(height: 24),
               for (final it in items)
@@ -2112,12 +2104,12 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   children: [
                     Text("Butuh bantuan cepat?", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                     SizedBox(height: 2),
-                    Text("Chat CS bohAntar lewat WhatsApp", style: TextStyle(fontSize: 12)),
+                    Text("Chat CS BohAntar lewat WhatsApp", style: TextStyle(fontSize: 12)),
                   ],
                 ),
               ),
               FilledButton(
-                onPressed: () => _bukaWhatsApp(ApiService.waCS, pesan: 'Halo CS bohAntar, saya butuh bantuan.'),
+                onPressed: () => _bukaWhatsApp(ApiService.waCS, pesan: 'Halo CS BohAntar, saya butuh bantuan.'),
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFF128C7E),
                   minimumSize: const Size(0, 38),
@@ -2401,7 +2393,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     if (!mounted) return;
     if (_fotoWajah.isNotEmpty) {
       pesan.showSnackBar(const SnackBar(
-          content: Text("Foto wajah sudah dicek dan dikunci. Hubungi admin bohAntar kalau ingin menggantinya.")));
+          content: Text("Foto wajah sudah dicek dan dikunci. Hubungi admin BohAntar kalau ingin menggantinya.")));
       return;
     }
     try {
@@ -3756,7 +3748,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             Text(
               tunai
                   ? 'Tagih ke pelanggan ${_rupiah(talangan + ongkir + biayaJasa)} (makanan + ongkir${biayaJasa > 0 ? ' + biaya jasa' : ''})'
-                  : 'BohPay: uang makanan + ongkir masuk saldo kamu setelah selesai',
+                  : 'Sudah lunas: uang makanan + ongkir masuk saldo kamu setelah selesai',
               style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)),
             ),
           ],
@@ -3875,7 +3867,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   const SizedBox(height: 6),
                   Text(
                     '${_alasanNonaktif.isEmpty ? '' : 'Alasan: $_alasanNonaktif\n'}'
-                    'Anda belum bisa menerima orderan. Hubungi admin bohAntar untuk mengaktifkan kembali.',
+                    'Anda belum bisa menerima orderan. Hubungi admin BohAntar untuk mengaktifkan kembali.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 13),
                   ),
@@ -4391,14 +4383,14 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       scrolledUnderElevation: 0,
       // Bar ditinggikan supaya logo yang lebih besar tidak mepet ke tepi.
       toolbarHeight: 74,
-      // Logonya sudah memuat tulisan "bohAntar", jadi ikon taksi dan teksnya
+      // Logonya sudah memuat tulisan "BohAntar", jadi ikon taksi dan teksnya
       // tidak perlu lagi. cacheHeight dipasang karena berkasnya 864×288: tanpa
       // itu Flutter mendekode bitmap penuh untuk slot setinggi 46 px.
       title: Image.asset(
         'assets/images/logo.png',
         height: 46,
         cacheHeight: 138,
-        semanticLabel: 'bohAntar',
+        semanticLabel: 'BohAntar',
       ),
       actions: [
         _tombolHeader(

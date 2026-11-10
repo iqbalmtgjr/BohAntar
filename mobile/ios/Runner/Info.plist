@@ -3,9 +3,9 @@
 <plist version="1.0">
 	<dict>
 		<key>NSLocationWhenInUseUsageDescription</key>
-		<string>Aplikasi bohAntar memerlukan akses lokasi untuk menentukan titik penjemputan Anda.</string>
+		<string>Aplikasi BohAntar memerlukan akses lokasi untuk menentukan titik penjemputan Anda.</string>
 		<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-		<string>Aplikasi bohAntar memerlukan akses lokasi untuk menentukan titik penjemputan Anda.</string>
+		<string>Aplikasi BohAntar memerlukan akses lokasi untuk menentukan titik penjemputan Anda.</string>
 		<key>NSCameraUsageDescription</key>
 		<string>Kamera dipakai untuk memotret KTP, SIM, dan STNK saat mendaftar jadi driver.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
@@ -15,7 +15,7 @@
 		<key>CFBundleDevelopmentRegion</key>
 		<string>$(DEVELOPMENT_LANGUAGE)</string>
 		<key>CFBundleDisplayName</key>
-		<string>bohAntar</string>
+		<string>BohAntar</string>
 		<key>CFBundleExecutable</key>
 		<string>$(EXECUTABLE_NAME)</string>
 		<key>CFBundleIdentifier</key>

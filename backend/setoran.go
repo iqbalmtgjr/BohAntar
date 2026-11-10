@@ -152,7 +152,7 @@ func driverKlaimSetoranHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	isi := strings.TrimSpace(input.Token)
 	if !strings.HasPrefix(isi, awalanQRSetoran) {
-		writeJSONResponse(w, 400, map[string]string{"error": "QR ini bukan QR setoran bohAntar"})
+		writeJSONResponse(w, 400, map[string]string{"error": "QR ini bukan QR setoran BohAntar"})
 		return
 	}
 	id := strings.TrimPrefix(isi, awalanQRSetoran)

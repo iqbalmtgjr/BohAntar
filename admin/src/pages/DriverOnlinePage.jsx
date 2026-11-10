@@ -211,7 +211,7 @@ export default function DriverOnlinePage() {
               <div className="input-group">
                 <label>Nomor HP pelanggan</label>
                 <input className="input" type="tel" placeholder="0812…" value={form.hp} onChange={(e) => set("hp", e.target.value)} required />
-                <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>Kalau nomornya punya akun bohAntar, pesanan masuk ke akunnya dan ia bisa melacak driver.</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>Kalau nomornya punya akun BohAntar, pesanan masuk ke akunnya dan ia bisa melacak driver.</div>
               </div>
               <div className="input-group">
                 <label>Layanan</label>

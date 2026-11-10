@@ -1,15 +1,15 @@
 #!/bin/bash
-# Pasang token integrasi Kasvo <-> BohFood di bohAntar DAN Kasvo sekaligus.
+# Pasang token integrasi Kasvo <-> BohFood di BohAntar DAN Kasvo sekaligus.
 #
 # Kedua server saling memanggil dengan satu token rahasia yang sama:
-#   bohAntar run.sh : KASVO_URL, KASVO_INTEGRASI_TOKEN
+#   BohAntar run.sh : KASVO_URL, KASVO_INTEGRASI_TOKEN
 #   Kasvo .env      : BOHANTAR_URL, BOHANTAR_INTEGRASI_TOKEN
 # Token dibangkitkan di sini dan tidak pernah tampil di layar.
 #
 #   bash pasang-integrasi-kasvo.sh          # pasang (dilewati kalau sudah ada)
 #   bash pasang-integrasi-kasvo.sh --ganti  # ganti token lama dengan yang baru
 #
-# Tidak me-restart bohAntar: token baru dibaca saat binary start, jadi jalankan
+# Tidak me-restart BohAntar: token baru dibaca saat binary start, jadi jalankan
 # SEBELUM pkill di langkah tukar binary.
 
 set -euo pipefail
@@ -90,10 +90,10 @@ unset TOK NILAI
 echo
 echo "== Verifikasi =="
 bash -n "$BOH" && echo "  sintaks run.sh sah"
-echo "  bohAntar: $(grep -c '^export KASVO_INTEGRASI_TOKEN=' "$BOH") baris token, sebelum exec: $(awk '/^export KASVO_INTEGRASI_TOKEN=/{t=NR} /^exec /{e=NR} END{print (t && t<e) ? "ya" : "TIDAK"}' "$BOH")"
+echo "  BohAntar: $(grep -c '^export KASVO_INTEGRASI_TOKEN=' "$BOH") baris token, sebelum exec: $(awk '/^export KASVO_INTEGRASI_TOKEN=/{t=NR} /^exec /{e=NR} END{print (t && t<e) ? "ya" : "TIDAK"}' "$BOH")"
 echo "  Kasvo   : $(grep -c '^BOHANTAR_INTEGRASI_TOKEN=' "$KAS") baris token"
 # Sidik jari, bukan isinya. Kedua nilai wajib sama.
-echo "  sidik jari bohAntar: $(grep '^export KASVO_INTEGRASI_TOKEN=' "$BOH" | cut -d'"' -f2 | sidik)"
+echo "  sidik jari BohAntar: $(grep '^export KASVO_INTEGRASI_TOKEN=' "$BOH" | cut -d'"' -f2 | sidik)"
 echo "  sidik jari Kasvo   : $(grep '^BOHANTAR_INTEGRASI_TOKEN=' "$KAS" | cut -d= -f2- | sidik)"
 
 echo
@@ -101,5 +101,5 @@ echo "== Menerapkan di Kasvo =="
 cd "$(dirname "$KAS")" && php artisan config:clear
 
 echo
-echo "bohAntar belum di-restart. Token terbaca begitu binary dinyalakan ulang"
+echo "BohAntar belum di-restart. Token terbaca begitu binary dinyalakan ulang"
 echo "(langkah pkill di runbook). Setelah terbukti jalan: rm -rf $CAD"

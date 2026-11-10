@@ -8,9 +8,9 @@
   <link rel="icon" type="image/png" sizes="192x192" href="/favicon-192.png" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>bohAntar SuperApp Kalbar</title>
+  <title>BohAntar SuperApp Kalbar</title>
   <meta name="description"
-    content="Portal administrasi resmi bohAntar SuperApp. Layanan manajemen untuk Mitra Driver, Mitra Resto bohFood, dan Mitra Rental Mobil bohRental di wilayah Kalimantan Barat." />
+    content="Portal administrasi resmi BohAntar SuperApp. Layanan manajemen untuk Mitra Driver, Mitra Resto bohFood, dan Mitra Rental Mobil bohRental di wilayah Kalimantan Barat." />
   <meta name="keywords"
     content="bohantar, bohrental, bohfood, portal admin, mitra rental, mitra resto, ojek online kalbar, pontianak" />
   <meta name="author" content="PT INDO TECH CONSULTING" />
@@ -18,17 +18,17 @@
   <!-- Open Graph / Facebook / WhatsApp -->
   <meta property="og:type" content="website" />
   <meta property="og:url" content="https://bohantar.indotechconsulting.com/" />
-  <meta property="og:title" content="bohAntar SuperApp Kalbar" />
+  <meta property="og:title" content="BohAntar SuperApp Kalbar" />
   <meta property="og:description"
-    content="Sistem manajemen terintegrasi untuk Mitra Driver, Merchant Food, dan Rental Mobil bohAntar Kalimantan Barat." />
+    content="Sistem manajemen terintegrasi untuk Mitra Driver, Merchant Food, dan Rental Mobil BohAntar Kalimantan Barat." />
   <meta property="og:image" content="/favicon-192.png" />
 
   <!-- Twitter -->
   <meta property="twitter:card" content="summary_large_image" />
   <meta property="twitter:url" content="https://bohantar.indotechconsulting.com/" />
-  <meta property="twitter:title" content="bohAntar SuperApp Kalbar" />
+  <meta property="twitter:title" content="BohAntar SuperApp Kalbar" />
   <meta property="twitter:description"
-    content="Sistem manajemen terintegrasi untuk Mitra Driver, Merchant Food, dan Rental Mobil bohAntar Kalimantan Barat." />
+    content="Sistem manajemen terintegrasi untuk Mitra Driver, Merchant Food, dan Rental Mobil BohAntar Kalimantan Barat." />
   <meta property="twitter:image" content="/favicon-192.png" />
 
   <script>
@@ -41,39 +41,27 @@
 
 <body>
   <div id="root">
-    <!-- Instant Premium Preloader (Unmounts automatically when React loads) -->
-    <div
-      style="position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; background: #0F172A; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #ffffff; z-index: 9999;">
-      <div
-        style="position: relative; width: 60px; height: 60px; display: flex; align-items: center; justify-content: center;">
-        <!-- Spinning blue accent ring -->
-        <div
-          style="position: absolute; inset: 0; border-radius: 18px; border: 3px solid rgba(59, 130, 246, 0.1); border-top-color: #3b82f6; animation: preloader-spin 1s cubic-bezier(0.4, 0, 0.2, 1) infinite;">
-        </div>
-        <!-- Tiny solid blue inner dot -->
-        <div
-          style="width: 12px; height: 12px; border-radius: 50%; bg-color: #3b82f6; background: #3b82f6; box-shadow: 0 0 10px #3b82f6;">
-        </div>
-      </div>
-      <div style="margin-top: 24px; font-size: 18px; font-weight: 800; letter-spacing: 0.05em; color: #ffffff;">
-        boh<span style="color: #3b82f6;">Antar</span>
-      </div>
-      <div
-        style="margin-top: 4px; font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.25em; color: #94a3b8; opacity: 0.8;">
-        SuperApp Kalbar
-      </div>
-    </div>
+    <!-- Preloader logo; hilang sendiri saat React terpasang. Warna = gradasi logo (#0040E8 → #16AAFD). -->
     <style>
-      @keyframes preloader-spin {
-        0% {
-          transform: rotate(0deg);
-        }
-
-        100% {
-          transform: rotate(360deg);
-        }
-      }
+      .boot { position: fixed; inset: 0; z-index: 9999; display: flex; flex-direction: column; align-items: center; justify-content: center; background: radial-gradient(circle at 50% 42%, #13234A 0, #0F172A 60%); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+      .boot-ring { position: relative; width: 96px; height: 96px; border-radius: 50%; box-shadow: inset 0 0 0 3px rgba(22, 170, 253, .12); }
+      .boot-ring::before { content: ""; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(transparent 0 30%, #0040E8 70%, #16AAFD); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px)); mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px)); animation: boot-spin 1s linear infinite; }
+      .boot-ring img { position: absolute; inset: 22px; width: 52px; height: 52px; filter: drop-shadow(0 6px 16px rgba(0, 64, 232, .45)); animation: boot-pulse 1.6s ease-in-out infinite; }
+      .boot-name { margin-top: 22px; font-size: 22px; font-weight: 800; letter-spacing: .01em; color: #F8FAFC; }
+      .boot-name span { background: linear-gradient(90deg, #1366FF, #16AAFD); -webkit-background-clip: text; background-clip: text; color: transparent; }
+      .boot-tag { margin-top: 4px; font-size: 10px; font-weight: 600; letter-spacing: .25em; text-transform: uppercase; color: #94A3B8; }
+      html[data-theme="light"] .boot { background: radial-gradient(circle at 50% 42%, #FFFFFF 0, #F0F4F8 60%); }
+      html[data-theme="light"] .boot-name { color: #021F4A; }
+      html[data-theme="light"] .boot-tag { color: #5B7B9C; }
+      @keyframes boot-spin { to { transform: rotate(360deg); } }
+      @keyframes boot-pulse { 0%, 100% { transform: scale(.92); opacity: .85; } 50% { transform: scale(1); opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) { .boot-ring::before { animation-duration: 2.4s; } .boot-ring img { animation: none; } }
     </style>
+    <div class="boot" role="status" aria-label="Memuat BohAntar">
+      <div class="boot-ring"><img src="/favicon-192.png" alt="" /></div>
+      <div class="boot-name">Boh<span>Antar</span></div>
+      <div class="boot-tag">SuperApp Kalbar</div>
+    </div>
   </div>
   <script type="module" src="/src/main.jsx"></script>
 </body>

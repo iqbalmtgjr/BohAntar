@@ -79,7 +79,7 @@ function ContohTarif({ row }) {
         ongkos {rupiah(hasil.ongkos)} + jasa {rupiah(hasil.biaya_jasa)}
       </div>
       <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-        driver {rupiah(hasil.driver)} &middot; bohAntar {rupiah(hasil.platform)}
+        driver {rupiah(hasil.driver)} &middot; BohAntar {rupiah(hasil.platform)}
       </div>
     </>
   );
@@ -134,7 +134,7 @@ export default function TarifPage() {
       <div className="page">
         <div className="page-header">
           <h1>Tarif &amp; Bagi Hasil</h1>
-          <p>Ongkos per layanan dan pembagian antara driver dan bohAntar</p>
+          <p>Ongkos per layanan dan pembagian antara driver dan BohAntar</p>
         </div>
 
         {pesan && (
@@ -153,7 +153,7 @@ export default function TarifPage() {
                 <th>Jarak Dasar</th>
                 <th>Per Km</th>
                 <th>Pembulatan</th>
-                <th>Komisi bohAntar</th>
+                <th>Komisi BohAntar</th>
                 <th>Biaya Jasa</th>
                 <th>Contoh {CONTOH_KM} km</th>
                 <th></th>
@@ -291,8 +291,8 @@ export default function TarifPage() {
           <div>Jarak dasar 0 km berarti per km dihitung sejak meter pertama, seperti sebelum kolom ini ada.</div>
           <div>Jarak perjalanan dibulatkan ke 100 m terdekat dulu untuk layanan yang membulatkan ongkos ke atas, supaya selisih beberapa meter tidak menaikkan satu langkah tarif penuh.</div>
           <div>Komisi dipotong dari ongkos, bukan ditambahkan di atasnya — driver menerima sisanya.</div>
-          <div>Biaya jasa aplikasi <strong>ditambahkan di atas ongkos</strong> dan masuk utuh ke bohAntar. Bagian driver tidak berkurang karenanya.</div>
-          <div>Pendapatan bohAntar per pesanan = komisi + biaya jasa. Pada pesanan tunai keduanya dipotong dari saldo driver, karena penumpang membayar ke tangan driver.</div>
+          <div>Biaya jasa aplikasi <strong>ditambahkan di atas ongkos</strong> dan masuk utuh ke BohAntar. Bagian driver tidak berkurang karenanya.</div>
+          <div>Pendapatan BohAntar per pesanan = komisi + biaya jasa. Pada pesanan tunai keduanya dipotong dari saldo driver, karena penumpang membayar ke tangan driver.</div>
           <div>Perubahan hanya berlaku untuk pesanan baru. Pesanan yang sudah berjalan memakai komisi yang terkunci saat dibuat.</div>
         </div>
       </div>

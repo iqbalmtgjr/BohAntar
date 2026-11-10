@@ -176,7 +176,7 @@ export default function RentalOrders({ ownerPhone }) {
       <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div>
           <h1>Pesanan Masuk</h1>
-          <p>Permintaan sewa yang dikirim penyewa lewat aplikasi bohAntar. Setujui atau tolak di sini — penolakan wajib disertai catatan alasan.</p>
+          <p>Permintaan sewa yang dikirim penyewa lewat aplikasi BohAntar. Setujui atau tolak di sini — penolakan wajib disertai catatan alasan.</p>
         </div>
         <button onClick={fetchData} className="btn btn-ghost" disabled={loading}>
           <RefreshCw size={16} /> Muat Ulang
@@ -238,7 +238,7 @@ export default function RentalOrders({ ownerPhone }) {
           <ShoppingBag size={48} style={{ margin: "0 auto 16px", color: "var(--border)" }} />
           <h3>Tidak ada pesanan pada filter ini</h3>
           <p style={{ fontSize: 13, marginTop: 4 }}>
-            Pesanan dari aplikasi bohAntar akan muncul di sini begitu penyewa mengirim permintaan sewa.
+            Pesanan dari aplikasi BohAntar akan muncul di sini begitu penyewa mengirim permintaan sewa.
           </p>
         </div>
       ) : (

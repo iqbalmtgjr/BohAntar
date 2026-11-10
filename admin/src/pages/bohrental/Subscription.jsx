@@ -228,7 +228,7 @@ export default function Subscription({ ownerPhone }) {
                   </td>
                   <td data-label="Jumlah"><strong>Rp {inv.amount.toLocaleString("id-ID")}</strong></td>
                   <td data-label="Status">
-                    {/* MANUAL = diperpanjang admin bohAntar setelah bayar tunai/transfer langsung. */}
+                    {/* MANUAL = diperpanjang admin BohAntar setelah bayar tunai/transfer langsung. */}
                     <span className={`badge ${
                       inv.status === "PAID" || inv.status === "MANUAL" ? "badge-success" :
                       inv.status === "PENDING" ? "badge-warning" : "badge-danger"

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Cron daemon bohAntar — dijalankan tiap 1 menit.
+# Cron daemon BohAntar — dijalankan tiap 1 menit.
 #
 # Semua konfigurasi ada di run.sh; script ini sengaja tidak memuat variabel apa pun.
 #

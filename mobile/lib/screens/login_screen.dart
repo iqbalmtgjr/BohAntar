@@ -239,7 +239,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (pilihan == 'admin') {
       final email = _emailController.text.trim();
-      final pesan = 'Halo Admin bohAntar, saya lupa password akun saya'
+      final pesan = 'Halo Admin BohAntar, saya lupa password akun saya'
           '${email.isEmpty ? '' : ' dengan email $email'}. Mohon dibantu atur ulang.';
       final url = Uri.parse('https://wa.me/$_waAdmin?text=${Uri.encodeComponent(pesan)}');
       if (!await launchUrl(url, mode: LaunchMode.externalApplication) && mounted) {
@@ -480,7 +480,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 4),
               const Text(
-                'bohAntar',
+                'BohAntar',
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.w900,
@@ -574,7 +574,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Masuk pakai email dan password akun bohAntar-mu.',
+              'Masuk pakai email dan password akun BohAntar-mu.',
               style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.teksRedup(context)),
             ),
             if (widget.pesanInfo != null) ...[

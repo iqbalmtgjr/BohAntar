@@ -8,7 +8,7 @@ import { terbilangRupiah } from "./schedule";
  * Invoice digambar langsung ke <canvas>. Sengaja tanpa html2canvas/jsPDF:
  * keluaran PNG-nya sama persis di semua perangkat (tidak ikut tema gelap atau
  * font sistem penyewa), ukurannya kecil, dan nol dependensi baru.
- * Tema putih–biru mengikuti warna utama bohAntar.
+ * Tema putih–biru mengikuti warna utama BohAntar.
  */
 
 const W = 760;          // lebar logis; PNG akhir dua kali ini
@@ -417,7 +417,7 @@ async function gambarInvoice(d) {
   }
   ctx.fillStyle = LEMBUT;
   ctx.font = f(11, 500);
-  ctx.fillText("Dibuat dengan bohRental — bohAntar SuperApp Kalbar.", kakiX, H - 28);
+  ctx.fillText("Dibuat dengan bohRental — BohAntar SuperApp Kalbar.", kakiX, H - 28);
 
   return canvas;
 }

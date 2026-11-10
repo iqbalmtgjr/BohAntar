@@ -66,12 +66,12 @@ export default function Sidebar({ onLogout }) {
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <img
             src={logoB}
-            alt="bohAntar"
+            alt="BohAntar"
             className="logo-icon"
             style={{ background: "none", objectFit: "contain" }}
           />
           <div>
-            <div className="brand-name">bohAntar</div>
+            <div className="brand-name">BohAntar</div>
             <div className="brand-sub">Super Admin</div>
           </div>
         </div>
