@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, CheckCircle, User, Building2 } from "lucide-react";
 import { api } from "../api";
 import { Alert } from "../components/Feedback";
@@ -9,7 +9,8 @@ import logoImg from "../assets/logo.png";
 export default function PartnerRegisterPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const type = searchParams.get("type") === "food" ? "food" : "rental";
+  const rawType = searchParams.get("type");
+  const type = rawType === "food" ? "food" : "rental";
 
   const KOSONG = {
     name: "",
@@ -83,6 +84,9 @@ export default function PartnerRegisterPage() {
   const getPortalColor = () => {
     return type === "food" ? "from-amber-500 to-orange-600" : "from-emerald-500 to-teal-600";
   };
+
+  // Tanpa jenis usaha jangan diam-diam jadi Mitra Rental: suruh pilih dulu.
+  if (rawType !== "food" && rawType !== "rental") return <Navigate to="/portal-mitra" replace />;
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans antialiased relative overflow-hidden flex flex-col justify-between">

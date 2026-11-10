@@ -87,4 +87,33 @@ func TestEtalaseMenuBohFood(t *testing.T) {
 	}(); len(ids) != 1 || ids[0] != "etalase-teh" {
 		t.Fatalf("pencarian nama menu harus menyaring menu, bukan warung: %v", ids)
 	}
+	// Nama warung salah ketik: tak ada menu yang cocok, warungnya tetap di atas.
+	var toko []warungPemesan
+	json.Unmarshal(baca("/api/food/merchants?menu=1&q=warng+etalse")["toko"], &toko)
+	if len(toko) == 0 || toko[0].ID != mid {
+		t.Fatalf("warung yang namanya mirip harus muncul paling atas: %+v", toko)
+	}
+	if _, ada := baca("/api/food/merchants?menu=1&q=warng+etalse&limit=10&page=2")["toko"]; ada {
+		t.Fatal("daftar warung mirip cukup di halaman pertama")
+	}
+}
+
+func TestMiripNama(t *testing.T) {
+	for _, c := range []struct {
+		q, nama string
+		cocok   bool
+	}{
+		{"dimsum", "Dimsum Mentai Sintang", true},
+		{"mentai", "Dimsum Mentai Sintang", true},
+		{"dimsun", "Dimsum Mentai Sintang", true},
+		{"baso pak kumis", "Warung Bakso Pak Kumis", true},
+		{"WARUNG  bakso", "Warung Bakso Pak Kumis", true},
+		{"ung", "Warung Bakso Pak Kumis", false}, // potongan tengah kata
+		{"sate", "Warung Soto Pontianak", false},
+		{"kopi", "Warung Bakso Pak Kumis", false},
+	} {
+		if s := miripNama(c.q, c.nama); (s >= 0.6) != c.cocok {
+			t.Errorf("miripNama(%q, %q) = %.2f, harusnya cocok=%v", c.q, c.nama, s, c.cocok)
+		}
+	}
 }

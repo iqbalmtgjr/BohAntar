@@ -9,7 +9,9 @@
 		<key>NSCameraUsageDescription</key>
 		<string>Kamera dipakai untuk memotret KTP, SIM, dan STNK saat mendaftar jadi driver.</string>
 		<key>NSPhotoLibraryUsageDescription</key>
-		<string>Galeri dipakai untuk memilih foto KTP, SIM, dan STNK saat mendaftar jadi driver.</string>
+		<string>Galeri dipakai untuk memilih foto KTP, SIM, dan STNK saat mendaftar jadi driver, dan untuk menyimpan kuitansi perjalanan.</string>
+		<key>NSPhotoLibraryAddUsageDescription</key>
+		<string>Kuitansi perjalanan disimpan ke galeri supaya bisa dikirim ke bendahara.</string>
 		<key>CADisableMinimumFrameDurationOnPhone</key>
 		<true/>
 		<key>CFBundleDevelopmentRegion</key>

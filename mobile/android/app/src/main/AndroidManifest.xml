@@ -20,6 +20,10 @@
     <!-- Memindai QR setoran komisi. Kamera hanya dipakai di layar pindai;
          izinnya diminta sistem saat layar itu dibuka, bukan saat aplikasi mulai. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Unduh kuitansi ke galeri (paket gal). Hanya Android 10 ke bawah yang butuh
+         izin ini; Android 11+ menyimpan lewat MediaStore tanpa izin apa pun.
+         requestLegacyExternalStorage di bawah: menyimpan ke album di Android 10. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <!-- allowBackup="false": token login tersimpan terenkripsi dengan kunci yang
          terikat ke HP ini (flutter_secure_storage). Kalau ikut dicadangkan dan
          dipulihkan ke HP baru, isinya tidak bisa dibuka lagi. Datanya ada di
@@ -28,6 +32,7 @@
         android:label="BohAntar"
         android:name="${applicationName}"
         android:allowBackup="false"
+        android:requestLegacyExternalStorage="true"
         android:usesCleartextTraffic="false"
         android:icon="@mipmap/ic_launcher">
         <!-- Kunci Maps SDK, hanya untuk menggambar peta (tidak ditagih).

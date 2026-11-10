@@ -81,6 +81,7 @@ export default function KomisiPage() {
     { label: "Dari Komisi", value: rp(d.total_komisi), icon: Percent, color: "var(--success)", bg: "var(--success-glow)" },
     { label: "Dari Biaya Jasa", value: rp(d.total_biaya_jasa), icon: Receipt, color: "var(--success)", bg: "var(--success-glow)" },
     { label: "Dari Tagihan QR Mitra", value: rp(d.total_komisi_tagihan), icon: QrCode, color: "var(--success)", bg: "var(--success-glow)" },
+    { label: "Diskon Voucher (mengurangi pendapatan)", value: rp(d.total_diskon), icon: Percent, color: "var(--danger)", bg: "var(--danger-glow)" },
     { label: "Sudah di Kami (dompet)", value: rp(d.komisi_wallet), icon: Smartphone, color: "var(--primary)", bg: "var(--primary-glow)" },
     { label: "Dari Order Tunai", value: rp(d.komisi_tunai), icon: Banknote, color: "var(--warning)", bg: "var(--warning-glow)" },
     { label: "Ongkos Kotor", value: rp(d.total_ongkos), icon: Receipt, color: "var(--info)", bg: "var(--info-glow)" },

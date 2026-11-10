@@ -60,6 +60,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   late String _selectedService;
   double _fare = 0.0;
   double _biayaJasa = 0.0;
+  // Voucher otomatis, ditanggung BohAntar. Dikurangkan dari setiap total bayar.
+  double _diskon = 0.0;
   // Taksiran dari server. Null berarti belum pernah berhasil diambil untuk
   // tujuan yang sekarang.
   EstimasiTarif? _estimasi;
@@ -307,6 +309,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         _selectedService = o['service'] ?? _selectedService;
         _fare = (o['fare'] as num?)?.toDouble() ?? 0;
         _biayaJasa = (o['biaya_jasa'] as num?)?.toDouble() ?? 0;
+        _diskon = (o['diskon'] as num?)?.toDouble() ?? 0;
         _driverName = o['driver_name'] ?? '';
         _driverPhone = o['driver_phone'] ?? '';
         _foodTotal = (o['food_total'] as num?)?.toDouble() ?? 0;
@@ -747,6 +750,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         // tetap sepadan.
         _fare = hasil.ongkos;
         _biayaJasa = hasil.biayaJasa;
+        _diskon = hasil.diskon;
         _estimasiGagal = false;
       });
     } catch (e) {
@@ -755,6 +759,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       setState(() {
         _estimasi = null;
         _fare = 0;
+        _diskon = 0; // jangan bawa diskon taksiran rute sebelumnya
         _estimasiGagal = true;
       });
     }
@@ -1041,6 +1046,9 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           // Angka server yang berlaku, bukan taksiran lokal: super admin bisa
           // saja sudah mengubah biaya jasa sejak aplikasi ini dipasang.
           _biayaJasa = (order['biaya_jasa'] as num?)?.toDouble() ?? _biayaJasa;
+          // Diskon yang benar-benar terkunci: kuota voucher bisa habis di
+          // antara taksiran dan pesanan.
+          _diskon = (order['diskon'] as num?)?.toDouble() ?? 0;
         });
 
         // Start polling order status
@@ -2130,6 +2138,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             // Ditampilkan terpisah, bukan dilebur ke ongkos: penumpang berhak
             // tahu mana yang untuk driver dan mana yang untuk aplikasi.
             if (tarif.biayaJasa > 0) _buildFareRow("Biaya jasa aplikasi", tarif.biayaJasa),
+            // Voucher terpakai otomatis; server yang memilih.
+            if (tarif.diskon > 0) _buildFareRow("Diskon ${tarif.voucher}", -tarif.diskon),
           ],
           // Asuransi dan penanganan khusus tidak muncul di sini karena server
           // tidak menagihnya: keduanya dikirim sebagai permintaan ke driver,
@@ -2141,7 +2151,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
             children: [
               const Text("Total bayar", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
               Text(
-                tarif == null ? "-" : rupiah(tarif.total),
+                tarif == null ? "-" : rupiah(tarif.totalBayar),
                 style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20, color: AppTheme.primaryBlue),
               ),
             ],
@@ -2165,7 +2175,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             ),
             // Total ikut di tombol: yang ditekan sama dengan yang dibayar.
-            child: Text(tarif == null ? "Pesan $_selectedService" : "Pesan $_selectedService · ${rupiah(tarif.total)}"),
+            child: Text(tarif == null ? "Pesan $_selectedService" : "Pesan $_selectedService · ${rupiah(tarif.totalBayar)}"),
           ),
         ],
       ),
@@ -2203,8 +2213,11 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12)),
-          Text(rupiah(cost), style: const TextStyle(fontSize: 12)),
+          Flexible(child: Text(label, style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 12))),
+          // Negatif = diskon: "-Rp 3.000" hijau, bukan "Rp -3.000".
+          cost < 0
+              ? Text('-${rupiah(-cost)}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.green.shade700))
+              : Text(rupiah(cost), style: const TextStyle(fontSize: 12)),
         ],
       ),
     );
@@ -2568,7 +2581,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   /// tunainya di layar selesai. Pada BohFood driver menalangi makanan ke
   /// warung, jadi totalnya termasuk makanan, ongkir, dan biaya jasa.
   Widget _ringkasanBayar(bool isDark) {
-    final total = _fare + _biayaJasa + _foodTotal;
+    final total = _fare + _biayaJasa + _foodTotal - _diskon;
     final warna = AppTheme.teksBerwarna(context, AppTheme.warnaLayanan(_selectedService));
     return Container(
       width: double.infinity,
@@ -2604,7 +2617,10 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  _bayarTunai ? 'Siapkan uang tunai untuk driver' : 'Dipotong dari saldo',
+                  // Voucher 100%: tidak ada yang perlu disiapkan.
+                  _diskon > 0 && total <= 0
+                      ? 'Gratis, ditanggung promo BohAntar'
+                      : _bayarTunai ? 'Siapkan uang tunai untuk driver' : 'Dipotong dari saldo',
                   style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
                 ),
               ),
@@ -2626,7 +2642,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       if (_foodTotal > 0) 'Makanan ${rupiah(_foodTotal)}',
       '${_foodTotal > 0 ? 'Ongkir' : 'Ongkos'} ${rupiah(_fare)}',
       if (_biayaJasa > 0) 'Biaya jasa ${rupiah(_biayaJasa)}',
-    ].join(' · ');
+      if (_diskon > 0) 'Diskon -${rupiah(_diskon)}',
+    ].map((s) => s.replaceAll(' ', ' ')).join(' · '); // pindah baris hanya di antara butir
     const labelBintang = ['', 'Kecewa', 'Kurang', 'Biasa saja', 'Bagus', 'Mantap!'];
 
     return Scaffold(
@@ -2679,7 +2696,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                       children: [
                         Text("Total bayar", style: TextStyle(color: AppTheme.teksRedup(context), fontSize: 13)),
                         Text(
-                          rupiah(_fare + _biayaJasa + _foodTotal),
+                          rupiah(_fare + _biayaJasa + _foodTotal - _diskon),
                           style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 20, color: AppTheme.primaryBlue),
                         ),
                       ],

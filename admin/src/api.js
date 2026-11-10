@@ -131,6 +131,12 @@ export const api = {
     ? json(`/admin/banner/${b.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) })
     : post(`/admin/banner`, b),
   hapusBanner: (id) => json(`/admin/banner/${id}`, { method: "DELETE" }),
+  // Voucher diskon, terpakai otomatis di aplikasi (backend/voucher.go).
+  getVoucher: () => json(`/admin/voucher`),
+  simpanVoucher: (v) => v.id
+    ? json(`/admin/voucher/${v.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(v) })
+    : post(`/admin/voucher`, v),
+  hapusVoucher: (id) => json(`/admin/voucher/${id}`, { method: "DELETE" }),
   getApplications: (status) => json(`/admin/applications${status ? "?status=" + status : ""}`),
   registerDriver: (data) => post(`/admin/drivers/register`, data),
   // Content-Type sengaja tidak diset supaya browser menulis boundary multipart-nya sendiri.

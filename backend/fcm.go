@@ -287,6 +287,97 @@ func notifikasiDriverSiaga(o Order) {
 	}()
 }
 
+// pesananTerlantarSetelah: selama ini pesanan belum diambil driver, admin
+// dikabari — masih ada waktu menelepon driver atau mengalihkannya lewat pesanan
+// manual sebelum kedaluwarsa (batasPesananMenunggu).
+const pesananTerlantarSetelah = 3 * time.Minute
+
+// pesananTerlantar: pesanan yang masih pending dan genap pesananTerlantarSetelah
+// di antara dari dan sampai. Dipanggil tiap menit dengan jendela yang
+// bersambung, jadi tiap pesanan dilaporkan tepat sekali tanpa kolom penanda.
+//
+// ponytail: pesanan yang tenggatnya jatuh saat backend mati tidak dilaporkan;
+// tambah kolom penanda di orders kalau ternyata itu penting.
+func pesananTerlantar(dari, sampai time.Time) ([]Order, error) {
+	rows, err := db.Query(
+		"SELECT id, service, pickup, dropoff, COALESCE(rider_name, ''), COALESCE(rider_phone, '') FROM orders WHERE status = 'pending' AND created_at >= ? AND created_at < ?",
+		dari.Add(-pesananTerlantarSetelah), sampai.Add(-pesananTerlantarSetelah))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var hasil []Order
+	for rows.Next() {
+		var o Order
+		if err := rows.Scan(&o.ID, &o.Service, &o.PickupAddress, &o.DropoffAddress, &o.RiderName, &o.RiderPhone); err != nil {
+			return nil, err
+		}
+		hasil = append(hasil, o)
+	}
+	return hasil, rows.Err()
+}
+
+// laporPesananTerlantar mengabari admin lewat dua jalur, masing-masing mati
+// kalau env-nya kosong:
+//   - NOTIF_ADMIN_HP (nomor dipisah koma): aplikasi BohAntar yang login dengan
+//     nomor itu — hanya Android;
+//   - TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID: chat atau grup Telegram, untuk
+//     admin yang HP-nya iPhone.
+func laporPesananTerlantar(dari, sampai time.Time) {
+	penerima := strings.Split(getEnv("NOTIF_ADMIN_HP", ""), ",")
+	lewatApp := strings.TrimSpace(penerima[0]) != "" && fcmAktif()
+	if !lewatApp && !telegramAktif() {
+		return
+	}
+	daftar, err := pesananTerlantar(dari, sampai)
+	if err != nil {
+		log.Printf("Gagal memeriksa pesanan terlantar: %v", err)
+		return
+	}
+	for _, o := range daftar {
+		judul := "Belum ada driver: " + o.Service
+		isi := fmt.Sprintf("%s → %s · pemesan %s %s. Sudah %.0f menit menunggu.",
+			o.PickupAddress, o.DropoffAddress, o.RiderName, o.RiderPhone, pesananTerlantarSetelah.Minutes())
+		kirimTelegram(judul + "\n" + isi)
+		if lewatApp {
+			for _, hp := range penerima {
+				notifikasiKe(normalizePhone(hp), judul, isi,
+					map[string]string{"tipe": "pesanan_terlantar", "order_id": o.ID})
+			}
+		}
+	}
+}
+
+func telegramAktif() bool {
+	return getEnv("TELEGRAM_BOT_TOKEN", "") != "" && getEnv("TELEGRAM_CHAT_ID", "") != ""
+}
+
+// kirimTelegram mengirim teks ke TELEGRAM_CHAT_ID lewat bot. Di goroutine:
+// pemeriksa tiap menit tidak boleh menunggu jaringan Telegram.
+func kirimTelegram(teks string) {
+	if !telegramAktif() {
+		return
+	}
+	go func() {
+		resp, err := fcmClient.PostForm(
+			"https://api.telegram.org/bot"+getEnv("TELEGRAM_BOT_TOKEN", "")+"/sendMessage",
+			url.Values{"chat_id": {getEnv("TELEGRAM_CHAT_ID", "")}, "text": {teks}})
+		if err != nil {
+			// Bukan err utuh: pesannya memuat URL, dan URL-nya memuat token bot.
+			if ue, ok := err.(*url.Error); ok {
+				err = ue.Err
+			}
+			log.Printf("Telegram gagal dikirim: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			badan, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<10))
+			log.Printf("Telegram menolak pesan (kode %d): %s", resp.StatusCode, badan)
+		}
+	}()
+}
+
 // fcmTokenHandler menyimpan token perangkat milik pemanggil.
 func fcmTokenHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {

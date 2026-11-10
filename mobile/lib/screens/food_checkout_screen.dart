@@ -55,7 +55,11 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   /// ada lagi yang bisa dipesan dari sini, jadi kembali ke menu.
   void _ubahBaris(BarisKeranjang b, int selisih) {
     setState(() => widget.keranjang.ubah(b, selisih));
-    if (widget.keranjang.kosong) Navigator.pop(context);
+    if (widget.keranjang.kosong) {
+      Navigator.pop(context);
+    } else if (_tujuan case final t?) {
+      _ambilEstimasi(t); // diskon voucher bisa bergantung pada subtotal
+    }
   }
 
   Future<void> _pakaiLokasiSaya() async {
@@ -138,15 +142,17 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   /// sekali per pesanan, bukan per porsi.
   Future<void> _ambilEstimasi(LatLng tujuan) async {
     setState(() => _estimasiGagal = false);
+    final subtotal = widget.keranjang.subtotal;
     try {
       final hasil = await ApiService().estimasiTarif(
         layanan: 'BohFood',
+        subtotal: subtotal,
         dariLat: _warung.posisi.latitude,
         dariLng: _warung.posisi.longitude,
         keLat: tujuan.latitude,
         keLng: tujuan.longitude,
       );
-      if (!mounted || _tujuan != tujuan) return;
+      if (!mounted || _tujuan != tujuan || widget.keranjang.subtotal != subtotal) return;
       setState(() => _estimasi = hasil);
     } catch (e) {
       debugPrint('Estimasi ongkir gagal: $e');
@@ -203,7 +209,8 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
     final estimasi = _estimasi;
     final ongkir = estimasi?.ongkos ?? 0;
     final biayaJasa = estimasi?.biayaJasa ?? 0;
-    final total = k.subtotal + ongkir + biayaJasa;
+    final diskon = estimasi?.diskon ?? 0;
+    final total = k.subtotal + ongkir + biayaJasa - diskon;
 
     return Scaffold(
       appBar: AppBar(
@@ -339,6 +346,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                       ),
                     ),
                   if (biayaJasa > 0) _barisHarga('Biaya jasa aplikasi', biayaJasa),
+                  if (diskon > 0) _barisHarga('Diskon ${estimasi!.voucher}', -diskon),
                   const Divider(height: 20),
                   _barisHarga('Total', total, tebal: true),
                   const SizedBox(height: 10),
@@ -412,8 +420,13 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
               Text(keterangan, style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context), fontStyle: FontStyle.italic))
             else
               Text(
-                rupiah(nilai),
-                style: TextStyle(fontSize: tebal ? 18 : 13, fontWeight: tebal ? FontWeight.w900 : FontWeight.w500, color: tebal ? AppTheme.primaryBlue : null),
+                // Negatif = diskon voucher: "-Rp 3.000" hijau.
+                nilai < 0 ? '-${rupiah(-nilai)}' : rupiah(nilai),
+                style: TextStyle(
+                  fontSize: tebal ? 18 : 13,
+                  fontWeight: tebal ? FontWeight.w900 : FontWeight.w500,
+                  color: tebal ? AppTheme.primaryBlue : (nilai < 0 ? Colors.green.shade700 : null),
+                ),
               ),
           ],
         ),

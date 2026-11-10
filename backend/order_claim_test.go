@@ -32,6 +32,7 @@ func bukaDBTes(t *testing.T) {
 	migrasiMenuWarung()
 	migrasiPasswordMitra()
 	migrasiFotoWajah() // dibaca infoDriver dan profil driver
+	migrasiVoucher()   // orders.diskon dibaca semua kueri pesanan
 }
 
 // penggunaUji membuat satu akun sekali pakai dan menghapusnya lagi setelah tes.

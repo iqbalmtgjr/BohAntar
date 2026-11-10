@@ -347,10 +347,22 @@ func tarifEstimasiHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 400, map[string]string{"error": "Titik jemput dan tujuan harus dipilih dari peta"})
 		return
 	}
-	t := ambilTarif(r.URL.Query().Get("layanan"))
+	layanan := r.URL.Query().Get("layanan")
+	rincian := hitungRincian(ambilTarif(layanan), jarakKM(fLat, fLng, tLat, tLng)*1000)
+	// Pratinjau voucher yang akan terpakai otomatis. BohFood mengirim
+	// subtotal keranjangnya supaya syarat min. belanja ikut terhitung; angka
+	// yang mengikat tetap dihitung ulang dari menu saat pesanan dibuat.
+	dasar := rincian.Total
+	if sub, err := strconv.ParseFloat(r.URL.Query().Get("subtotal"), 64); err == nil && sub > 0 && sub < 1e8 && layanan == "BohFood" {
+		dasar += sub
+	}
+	phone, _ := extractPhone(r)
+	v, diskon := pilihVoucher(phone, layanan, dasar, rincian.Total)
 	writeJSONResponse(w, 200, map[string]interface{}{
 		"status":  "success",
-		"rincian": hitungRincian(t, jarakKM(fLat, fLng, tLat, tLng)*1000),
+		"rincian": rincian,
+		"diskon":  diskon,
+		"voucher": v.Judul,
 	})
 }
 
@@ -418,7 +430,8 @@ type barisKomisi struct {
 	TotalOngkos float64 `json:"total_ongkos"`
 	Komisi      float64 `json:"komisi"`
 	BiayaJasa   float64 `json:"biaya_jasa"`   // pendapatan aplikator di luar komisi
-	KomisiTunai float64 `json:"komisi_tunai"` // komisi + biaya jasa dari order tunai: belum di tangan
+	KomisiTunai float64 `json:"komisi_tunai"` // komisi + biaya jasa − diskon dari order tunai: belum di tangan
+	Diskon      float64 `json:"diskon"`       // voucher, ditanggung aplikator
 	SaldoDriver float64 `json:"saldo_driver"`
 }
 
@@ -462,7 +475,8 @@ func adminKomisiHandler(w http.ResponseWriter, r *http.Request) {
 		SELECT o.driver_phone, COALESCE(o.driver_name, ''), COUNT(*),
 		       COALESCE(SUM(o.fare), 0), COALESCE(SUM(o.komisi), 0),
 		       COALESCE(SUM(o.biaya_jasa), 0),
-		       COALESCE(SUM(CASE WHEN o.payment_method = 'cash' THEN o.komisi + o.biaya_jasa ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN o.payment_method = 'cash' THEN o.komisi + o.biaya_jasa - o.diskon ELSE 0 END), 0),
+		       COALESCE(SUM(o.diskon), 0),
 		       COALESCE(MAX(u.balance), 0)
 		FROM orders o
 		LEFT JOIN users u ON u.phone_number = o.driver_phone
@@ -477,11 +491,11 @@ func adminKomisiHandler(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 
 	daftar := make([]barisKomisi, 0)
-	var totalKomisi, totalBiayaJasa, totalTunai, totalOngkos float64
+	var totalKomisi, totalBiayaJasa, totalTunai, totalOngkos, totalDiskon float64
 	totalOrder := 0
 	for rows.Next() {
 		var b barisKomisi
-		if err := rows.Scan(&b.DriverPhone, &b.DriverName, &b.OrderCount, &b.TotalOngkos, &b.Komisi, &b.BiayaJasa, &b.KomisiTunai, &b.SaldoDriver); err != nil {
+		if err := rows.Scan(&b.DriverPhone, &b.DriverName, &b.OrderCount, &b.TotalOngkos, &b.Komisi, &b.BiayaJasa, &b.KomisiTunai, &b.Diskon, &b.SaldoDriver); err != nil {
 			continue
 		}
 		daftar = append(daftar, b)
@@ -489,6 +503,7 @@ func adminKomisiHandler(w http.ResponseWriter, r *http.Request) {
 		totalBiayaJasa += b.BiayaJasa
 		totalTunai += b.KomisiTunai
 		totalOngkos += b.TotalOngkos
+		totalDiskon += b.Diskon
 		totalOrder += b.OrderCount
 	}
 
@@ -504,13 +519,15 @@ func adminKomisiHandler(w http.ResponseWriter, r *http.Request) {
 		"to":               to,
 		"total_komisi":     totalKomisi,
 		"total_biaya_jasa": totalBiayaJasa,
+		// Ditanggung BohAntar, jadi mengurangi pendapatan di bawah.
+		"total_diskon": totalDiskon,
 		// Yang benar-benar jadi pendapatan BohAntar: komisi, biaya jasa, dan
-		// potongan tagihan QR mitra.
-		"total_pendapatan": totalKomisi + totalBiayaJasa + komisiTagihan,
+		// potongan tagihan QR mitra, dikurangi diskon voucher.
+		"total_pendapatan": totalKomisi + totalBiayaJasa + komisiTagihan - totalDiskon,
 		// Dari order tunai, jadi uangnya masih di tangan driver sampai ia setor.
 		"komisi_tunai": totalTunai,
 		// Potongan tagihan QR selalu di sini: tagihannya dibayar pakai saldo.
-		"komisi_wallet":        (totalKomisi + totalBiayaJasa + komisiTagihan) - totalTunai,
+		"komisi_wallet":        (totalKomisi + totalBiayaJasa + komisiTagihan - totalDiskon) - totalTunai,
 		"total_ongkos":         totalOngkos,
 		"total_order":          totalOrder,
 		"drivers":              daftar,

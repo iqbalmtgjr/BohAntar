@@ -335,7 +335,13 @@ func foodMerchantsHandler(w http.ResponseWriter, r *http.Request) {
 				warungHalaman = append(warungHalaman, x)
 			}
 		}
-		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "merchants": warungHalaman, "menus": menus, "ada_lagi": adaLagi})
+		balas := map[string]interface{}{"status": "success", "merchants": warungHalaman, "menus": menus, "ada_lagi": adaLagi}
+		// Warung yang namanya mirip kata cari tampil di atas hasil menu
+		// (permintaan user 10 Nov 2026); cukup di halaman pertama.
+		if page == 1 && len([]rune(q)) >= 3 {
+			balas["toko"] = tokoMirip(daftar, q)
+		}
+		writeJSONResponse(w, 200, balas)
 		return
 	}
 	// Pencarian mencocokkan nama warung, alamat, dan nama menu: "soto" harus
@@ -376,6 +382,82 @@ func foodMerchantsHandler(w http.ResponseWriter, r *http.Request) {
 		return daftar[i].JarakKM < daftar[j].JarakKM
 	})
 	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "merchants": daftar})
+}
+
+// tokoMirip: warung yang namanya ≥60% mirip q, paling mirip dulu, lalu yang
+// buka, lalu yang terdekat. Paling banyak 5.
+func tokoMirip(daftar []warungPemesan, q string) []warungPemesan {
+	type calon struct {
+		w     warungPemesan
+		mirip float64
+	}
+	var cs []calon
+	for _, x := range daftar {
+		if s := miripNama(q, x.Nama); s >= 0.6 {
+			cs = append(cs, calon{x, s})
+		}
+	}
+	sort.SliceStable(cs, func(i, j int) bool {
+		a, b := cs[i], cs[j]
+		switch {
+		case a.mirip != b.mirip:
+			return a.mirip > b.mirip
+		case a.w.Buka != b.w.Buka:
+			return a.w.Buka
+		}
+		return a.w.JarakKM < b.w.JarakKM
+	})
+	hasil := make([]warungPemesan, 0, 5)
+	for _, c := range cs[:min(len(cs), 5)] {
+		hasil = append(hasil, c.w)
+	}
+	return hasil
+}
+
+// miripNama: 0..1 seberapa mirip q dengan nama warung. Nama yang memuat q di
+// awal kata = 1 ("dimsum" → "Dimsum Mentai"; "ung" tidak cocok dengan
+// "Warung"). Selain itu rasio Levenshtein terbaik antara q dan nama utuh atau
+// potongan nama sepanjang jumlah kata q, jadi salah ketik ("dimsun") dan nama
+// sebagian ("baso pak kumis" → "Warung Bakso Pak Kumis") tetap tertangkap.
+func miripNama(q, nama string) float64 {
+	kq, kn := strings.Fields(strings.ToLower(q)), strings.Fields(strings.ToLower(nama))
+	if len(kq) == 0 || len(kn) == 0 {
+		return 0
+	}
+	q, nama = strings.Join(kq, " "), strings.Join(kn, " ")
+	if strings.HasPrefix(nama, q) || strings.Contains(nama, " "+q) {
+		return 1
+	}
+	terbaik := rasioMirip(q, nama)
+	for i := 0; i+len(kq) <= len(kn); i++ {
+		terbaik = max(terbaik, rasioMirip(q, strings.Join(kn[i:i+len(kq)], " ")))
+	}
+	return terbaik
+}
+
+// rasioMirip = 1 - jarak Levenshtein / panjang yang lebih panjang (per huruf).
+func rasioMirip(a, b string) float64 {
+	ra, rb := []rune(a), []rune(b)
+	panjang := max(len(ra), len(rb))
+	if panjang == 0 {
+		return 1
+	}
+	baris := make([]int, len(rb)+1)
+	for j := range baris {
+		baris[j] = j
+	}
+	for i := 1; i <= len(ra); i++ {
+		kiriAtas := baris[0]
+		baris[0] = i
+		for j := 1; j <= len(rb); j++ {
+			biaya := 1
+			if ra[i-1] == rb[j-1] {
+				biaya = 0
+			}
+			kiriAtas, baris[j] = baris[j], min(baris[j]+1, baris[j-1]+1, kiriAtas+biaya)
+		}
+	}
+	return 1 - float64(baris[len(rb)])/float64(panjang)
 }
 
 // menuEtalase adalah satu menu di etalase BohFood plus porsi yang terjual 30

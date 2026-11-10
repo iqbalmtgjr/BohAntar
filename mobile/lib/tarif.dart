@@ -20,14 +20,24 @@ class EstimasiTarif {
   /// Rupiah tetap yang masuk utuh ke BohAntar, ditambahkan di atas ongkos.
   final double biayaJasa;
 
-  /// Yang benar-benar dibayar penumpang.
+  /// Ongkos + biaya jasa, sebelum diskon.
   final double total;
+
+  /// Voucher yang akan terpakai otomatis (dipilih server); 0 dan '' kalau
+  /// tidak ada. Ditanggung BohAntar, bukan driver.
+  final double diskon;
+  final String voucher;
+
+  /// Yang benar-benar dibayar penumpang (non-BohFood; BohFood menambah makanan).
+  double get totalBayar => total - diskon;
 
   const EstimasiTarif({
     required this.km,
     required this.ongkos,
     required this.biayaJasa,
     required this.total,
+    this.diskon = 0,
+    this.voucher = '',
   });
 
   factory EstimasiTarif.dariJson(Map<String, dynamic> json) {
@@ -39,6 +49,8 @@ class EstimasiTarif {
       ongkos: angka('ongkos'),
       biayaJasa: angka('biaya_jasa'),
       total: angka('total'),
+      diskon: (json['diskon'] as num?)?.toDouble() ?? 0,
+      voucher: (json['voucher'] ?? '').toString(),
     );
   }
 }

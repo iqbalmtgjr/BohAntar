@@ -1,15 +1,20 @@
 import 'dart:async';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:gal/gal.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:printing/printing.dart' show Printing;
+import 'package:share_plus/share_plus.dart' show SharePlus, ShareParams;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:mobile/models/food.dart' show urlGambar;
+import 'package:mobile/models/food.dart' show urlGambar, MenuMakanan, Warung;
 import 'package:mobile/screens/cari_screen.dart';
 import 'package:mobile/screens/chat_screen.dart';
 import 'package:mobile/screens/daftar_chat_screen.dart';
+import 'package:mobile/screens/food_menu_screen.dart';
 import 'package:mobile/screens/food_merchants_screen.dart';
 import 'package:mobile/screens/login_screen.dart';
 import 'package:mobile/screens/order_ride_screen.dart';
@@ -321,6 +326,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       _fetchRiderActiveOrder();
       _startRiderActiveOrderPolling();
       _muatBanner();
+      _muatMenuLaris();
       segarkanDaftarChat();
       _pantauDepan = AppLifecycleListener(onResume: () {
         segarkanDaftarChat();
@@ -1156,6 +1162,105 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     return true;
   }
 
+  /// Kuitansi untuk klaim ke bendahara: kirim sebagai PDF (bisa dicetak),
+  /// sebagai gambar (praktis dilihat di WhatsApp), atau simpan ke galeri.
+  void _pilihKuitansi(String orderId) {
+    Widget pilihan(BuildContext lembar, IconData ikon, String judul, String keterangan, String jenis) => ListTile(
+          leading: Icon(ikon, color: AppTheme.primaryBlue),
+          title: Text(judul, style: const TextStyle(fontWeight: FontWeight.w600)),
+          subtitle: Text(keterangan),
+          onTap: () {
+            Navigator.pop(lembar);
+            _kirimKuitansi(orderId, jenis);
+          },
+        );
+    showModalBottomSheet(
+      context: context,
+      useSafeArea: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (lembar) => Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Kuitansi', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+            const SizedBox(height: 8),
+            pilihan(lembar, Icons.picture_as_pdf_outlined, 'Kirim PDF', 'Untuk klaim ke bendahara, bisa dicetak', 'pdf'),
+            pilihan(lembar, Icons.image_outlined, 'Kirim gambar', 'Praktis untuk dilihat di WhatsApp', 'gambar'),
+            pilihan(lembar, Icons.download_outlined, 'Unduh ke galeri', 'Simpan gambar kuitansi di HP', 'galeri'),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// jenis: 'pdf' / 'gambar' = menu bagikan (WhatsApp dll.), 'galeri' = simpan
+  /// gambarnya ke album BohAntar di galeri HP.
+  Future<void> _kirimKuitansi(String orderId, String jenis) async {
+    try {
+      // Izin hanya ditanyakan di Android 10 ke bawah; Android 11+ langsung boleh.
+      if (jenis == 'galeri' && !await Gal.hasAccess(toAlbum: true) && !await Gal.requestAccess(toAlbum: true)) {
+        throw Exception('Izinkan BohAntar menyimpan ke galeri dulu, ya.');
+      }
+      final k = await ApiService().kuitansi(orderId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Menyiapkan kuitansi…'), duration: Duration(seconds: 2)),
+        );
+      }
+      final pdf = await ApiService().unduhKuitansi(k.url);
+      final nama = 'Kuitansi-${k.nomor}';
+      final teks = 'Kuitansi BohAntar No. ${k.nomor}';
+      if (jenis == 'pdf') {
+        await SharePlus.instance.share(ShareParams(files: [XFile.fromData(pdf, mimeType: 'application/pdf', name: '$nama.pdf')], text: teks));
+        return;
+      }
+
+      // Gambar dibuat dari PDF yang sama (bukan digambar ulang di sini), jadi
+      // isinya selalu identik. 150 dpi ≈ 1240×1754 px per halaman A4: tetap
+      // terbaca setelah dikecilkan WhatsApp. Kuitansi panjang = beberapa gambar.
+      final gambar = <Uint8List>[];
+      try {
+        // Batas waktu: printing memanggil kanal native tanpa await, jadi galat di
+        // tingkat kanal (mis. MissingPluginException) tidak pernah sampai ke
+        // stream ini — tanpa batas, "Menyiapkan kuitansi…" menunggu selamanya.
+        await for (final halaman in Printing.raster(pdf, dpi: 150).timeout(const Duration(seconds: 20))) {
+          gambar.add(await halaman.toPng());
+        }
+      } catch (_) {
+        gambar.clear(); // jangan kirim/simpan sebagian halaman
+      }
+      if (gambar.isEmpty) {
+        throw Exception('Gambar kuitansi gagal dibuat di HP ini. Coba "Kirim PDF", ya.');
+      }
+      String namaHalaman(int i) => gambar.length == 1 ? nama : '$nama-${i + 1}';
+
+      if (jenis == 'galeri') {
+        for (var i = 0; i < gambar.length; i++) {
+          await Gal.putImageBytes(gambar[i], album: 'BohAntar', name: namaHalaman(i));
+        }
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: const Text('Kuitansi tersimpan di galeri, album BohAntar.'),
+            action: SnackBarAction(label: 'Lihat', onPressed: Gal.open),
+          ));
+        }
+        return;
+      }
+      await SharePlus.instance.share(ShareParams(
+        files: [for (var i = 0; i < gambar.length; i++) XFile.fromData(gambar[i], mimeType: 'image/png', name: '${namaHalaman(i)}.png')],
+        text: teks,
+      ));
+    } on GalException catch (e) {
+      _beriTahu(e.type == GalExceptionType.notEnoughSpace
+          ? 'Memori HP penuh. Kosongkan sedikit, lalu coba lagi.'
+          : 'Kuitansi belum bisa disimpan ke galeri. Coba "Kirim gambar", ya.');
+    } catch (e) {
+      _beriTahu(pesanGalat(e));
+    }
+  }
+
   void _beriTahu(String pesan) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -1492,7 +1597,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
   Widget _buildRiderHomeBody(ThemeData theme, bool isDark) {
     return RefreshIndicator(
-      onRefresh: () => Future.wait([_fetchUserProfile(), _fetchRiderActiveOrder(), _muatBanner()]),
+      onRefresh: () => Future.wait([_fetchUserProfile(), _fetchRiderActiveOrder(), _muatBanner(), _muatMenuLaris()]),
       child: SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
       padding: const EdgeInsets.only(top: 4, bottom: 24),
@@ -1518,8 +1623,173 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               ],
             ),
           ),
+          // Isi bawah beranda (10 Nov 2026, dulu kosong). Tiap bagian hilang
+          // sendiri kalau datanya kosong, supaya tidak berlubang lagi.
+          ..._bagianMenuLaris(isDark),
+          ..._bagianTerakhirDipesan(isDark),
+          _kartuGabungMitra(isDark),
         ],
       ),
+      ),
+    );
+  }
+
+  Widget _judulBagian(String judul, String sub) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 26, 16, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(judul, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+            const SizedBox(height: 2),
+            Text(sub, style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
+          ],
+        ),
+      );
+
+  /// Tiga pesanan terakhir, kartu yang sama dengan tab Aktivitas (ketuk =
+  /// rincian + "Pesan lagi"). Yang masih berjalan sudah tampil di atas grid.
+  List<Widget> _bagianTerakhirDipesan(bool isDark) {
+    final terakhir = _riwayatPesanan.where((o) => !pesananBerjalan((o['status'] ?? '').toString())).take(3).toList();
+    if (terakhir.isEmpty) return const [];
+    return [
+      Padding(
+        padding: const EdgeInsets.only(right: 4),
+        child: Row(
+          children: [
+            Expanded(child: _judulBagian('Terakhir kamu pesan', 'Ketuk untuk lihat rincian atau pesan lagi')),
+            TextButton(onPressed: () => setState(() => _currentTabIndex = 1), child: const Text('Lihat semua')),
+          ],
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Column(children: [for (final o in terakhir) _kartuRiwayat(Map<String, dynamic>.from(o as Map), isDark)]),
+      ),
+    ];
+  }
+
+  // Halaman pertama etalase BohFood (server mengurutkan: warung buka →
+  // terlaris), hanya dari warung yang sedang buka.
+  // ponytail: tanpa posisi, jadi tanpa jarak; kotanya satu (Sintang). Kirim
+  // lat/lng kalau BohFood melebar ke kota lain.
+  List<(MenuMakanan, Warung)> _menuLaris = const [];
+
+  Future<void> _muatMenuLaris() async {
+    try {
+      final isi = await ApiService().getEtalaseFood(limit: 10);
+      final warung = <String, Warung>{};
+      for (final j in (isi['merchants'] as List?) ?? const []) {
+        final w = Warung.dariJson(Map<String, dynamic>.from(j as Map));
+        warung[w.id] = w;
+      }
+      final laris = <(MenuMakanan, Warung)>[];
+      for (final j in (isi['menus'] as List?) ?? const []) {
+        final m = MenuMakanan.dariJson(Map<String, dynamic>.from(j as Map));
+        final w = warung[m.idWarung];
+        if (w != null && w.buka) laris.add((m, w));
+      }
+      if (mounted) setState(() => _menuLaris = laris);
+    } catch (e) {
+      debugPrint('Menu laris gagal dimuat: $e');
+    }
+  }
+
+  List<Widget> _bagianMenuLaris(bool isDark) {
+    if (_menuLaris.isEmpty) return const [];
+    // Platform baru: belum ada yang terjual → judulnya jangan mengaku laris.
+    final adaLaris = _menuLaris.first.$1.terjual > 0;
+    return [
+      Padding(
+        padding: const EdgeInsets.only(right: 4),
+        child: Row(
+          children: [
+            Expanded(child: _judulBagian(adaLaris ? 'Lagi banyak dipesan' : 'Lapar? Pesan di BohFood', adaLaris ? 'Paling laris 30 hari terakhir' : 'Dari warung yang sedang buka')),
+            TextButton(onPressed: _bukaBohFood, child: const Text('Lihat semua')),
+          ],
+        ),
+      ),
+      SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (i, (m, w)) in _menuLaris.indexed) ...[
+                if (i > 0) const SizedBox(width: 12),
+                SizedBox(width: 150, child: KartuMenu(m, w, isDark: isDark, saatTekan: () => _bukaMenu(m, w))),
+              ],
+            ],
+          ),
+        ),
+      ),
+    ];
+  }
+
+  void _bukaMenu(MenuMakanan m, Warung w) {
+    Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => FoodMenuScreen(warung: w, menuAwal: m.id, riderName: _namaPemesan, riderPhone: widget.phone)),
+    ).then((orderId) {
+      _fetchUserProfile();
+      if (orderId != null && mounted) _lacakBohFood(orderId);
+    });
+  }
+
+  /// Ajakan jadi driver / mitra. Platform baru masih mencari keduanya. Akun
+  /// driver (sedang di mode penumpang) tidak ditawari jadi driver lagi.
+  Widget _kartuGabungMitra(bool isDark) {
+    Widget baris(IconData ikon, Color warna, String judul, String sub, VoidCallback tekan) => ListTile(
+          onTap: tekan,
+          leading: Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(color: warna.withValues(alpha: isDark ? 0.22 : 0.12), borderRadius: BorderRadius.circular(12)),
+            child: Icon(ikon, color: warna, size: 22),
+          ),
+          title: Text(judul, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+          subtitle: Text(sub, style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
+          trailing: Icon(Icons.chevron_right_rounded, color: AppTheme.teksRedup(context)),
+        );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _judulBagian('Gabung bersama BohAntar', 'Tambah penghasilan di Sintang'),
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 16),
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: isDark ? AppTheme.cardObsidianDark : Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: isDark ? Colors.white12 : const Color(0xFFE2E8F0)),
+          ),
+          child: Material(
+            type: MaterialType.transparency,
+            child: Column(
+              children: [
+                if (_peranAkun != 'driver') ...[
+                  baris(Icons.two_wheeler_rounded, AppTheme.warnaLayanan('BohRide'), 'Jadi driver BohAntar', 'Atur waktumu sendiri, pakai motor atau mobilmu', _caraJadiDriver),
+                  Divider(height: 1, indent: 72, color: isDark ? Colors.white12 : const Color(0xFFEDF1F5)),
+                ],
+                // Portal Mitra, bukan langsung formulir: di sana pemilik memilih
+                // warung atau rental (formulir tanpa ?type= jatuh ke rental).
+                baris(Icons.storefront_rounded, AppTheme.warnaFood, 'Daftarkan usahamu', 'Warung di BohFood, sewa kendaraan di BohRental',
+                    () => launchUrl(Uri.parse('${ApiService.prodUrl}/#/portal-mitra'), mode: LaunchMode.externalApplication)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _caraJadiDriver() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Mau jadi driver?'),
+        content: Text(_faq.firstWhere((f) => f.$1 == 'Mau daftar jadi driver?').$2),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Mengerti'))],
       ),
     );
   }
@@ -1890,7 +2160,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 const SizedBox(height: 10),
                 Row(
                   children: [
-                    Text(total > 0 ? _rupiah(total) : '-', style: const TextStyle(fontWeight: FontWeight.w800, color: AppTheme.primaryBlue, fontSize: 14)),
+                    Text(total > 0 ? _rupiah(total) : ((order['diskon'] as num? ?? 0) > 0 ? 'Gratis' : '-'), style: const TextStyle(fontWeight: FontWeight.w800, color: AppTheme.primaryBlue, fontSize: 14)),
                     const Spacer(),
                     Text(
                       berjalan ? 'Lacak' : 'Rincian',
@@ -1965,6 +2235,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     final ongkir = (o['fare'] as num?)?.toDouble() ?? 0;
     final biayaJasa = (o['biaya_jasa'] as num?)?.toDouble() ?? 0;
     final makanan = (o['food_total'] as num?)?.toDouble() ?? 0;
+    final diskon = (o['diskon'] as num?)?.toDouble() ?? 0;
     Widget baris(String label, String nilai, {bool tebal = false}) => Padding(
           padding: const EdgeInsets.symmetric(vertical: 3),
           child: Row(
@@ -2037,7 +2308,24 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             if (makanan > 0) baris('Makanan', _rupiah(makanan)),
             baris(makanan > 0 ? 'Ongkir' : 'Ongkos', _rupiah(ongkir)),
             if (biayaJasa > 0) baris('Biaya jasa', _rupiah(biayaJasa)),
-            baris('Total', _rupiah(ongkir + biayaJasa + makanan), tebal: true),
+            if (diskon > 0) baris('Diskon', '-${_rupiah(diskon)}'),
+            baris('Total', _rupiah(ongkir + biayaJasa + makanan - diskon), tebal: true),
+            // Bukti untuk klaim perjalanan dinas ke bendahara kantor. Lembar
+            // ditutup dulu supaya galatnya (SnackBar) tidak tertutup lembar ini.
+            // Pengantaran kasir Kasvo tidak: ongkirnya dibayar penerima (lihat
+            // bisaDikuitansi di backend/kuitansi.go).
+            if (status == 'completed' && ((o['kasvo_pengantaran_id'] as num?)?.toInt() ?? 0) == 0) ...[
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(sheetContext);
+                  _pilihKuitansi(o['id'].toString());
+                },
+                icon: const Icon(Icons.receipt_long, size: 18),
+                label: const Text('Kuitansi (PDF / gambar)'),
+                style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 46)),
+              ),
+            ],
             if (bisaPesanLagi) ...[
               const SizedBox(height: 16),
               OutlinedButton.icon(
@@ -3467,10 +3755,14 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   /// persis dengan layar penumpang. Dulu driver hanya melihat `fare`, menagih
   /// kurang Rp1.000, lalu biaya jasanya tetap dipotong dari saldonya. Pesanan
   /// kurir toko Kasvo menyimpan food_total 0, jadi rumus ini berlaku juga.
+  ///
+  /// Diskon voucher dikurangkan: pemesan membayar lebih sedikit, dan potongan
+  /// saldo driver ikut berkurang sebesar itu — pendapatan driver tetap.
   double _tagihan(dynamic o) =>
       ((o['fare'] as num?)?.toDouble() ?? 0) +
       ((o['biaya_jasa'] as num?)?.toDouble() ?? 0) +
-      ((o['food_total'] as num?)?.toDouble() ?? 0);
+      ((o['food_total'] as num?)?.toDouble() ?? 0) -
+      ((o['diskon'] as num?)?.toDouble() ?? 0);
 
   static String _caraBayar(Map<String, dynamic> o) => o['payment_method'] == 'wallet' ? 'Lunas lewat saldo' : 'Tagih tunai';
 
@@ -3481,11 +3773,12 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     final ongkos = (o['fare'] as num?)?.toDouble() ?? 0;
     final jasa = (o['biaya_jasa'] as num?)?.toDouble() ?? 0;
     final makanan = (o['food_total'] as num?)?.toDouble() ?? 0;
+    final diskon = (o['diskon'] as num?)?.toDouble() ?? 0;
     final rincian = [
       if (makanan > 0) 'Makanan ${_rupiah(makanan)}',
       '${o['service'] == 'BohFood' ? 'Ongkir' : 'Ongkos'} ${_rupiah(ongkos)}',
       if (jasa > 0) 'biaya jasa ${_rupiah(jasa)}',
-    ].join(' + ');
+    ].join(' + ') + (diskon > 0 ? ' − diskon ${_rupiah(diskon)} (ditanggung BohAntar)' : '');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -3747,7 +4040,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             const SizedBox(height: 4),
             Text(
               tunai
-                  ? 'Tagih ke pelanggan ${_rupiah(talangan + ongkir + biayaJasa)} (makanan + ongkir${biayaJasa > 0 ? ' + biaya jasa' : ''})'
+                  ? 'Tagih ke pelanggan ${_rupiah(_tagihan(o))} (makanan + ongkir${biayaJasa > 0 ? ' + biaya jasa' : ''}${(o['diskon'] as num? ?? 0) > 0 ? ' − diskon' : ''})'
                   : 'Sudah lunas: uang makanan + ongkir masuk saldo kamu setelah selesai',
               style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)),
             ),
@@ -4391,6 +4684,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         height: 46,
         cacheHeight: 138,
         semanticLabel: 'BohAntar',
+        // Putih di mode gelap seperti splash & login: "Boh" navy hilang di latar gelap.
+        color: isDark ? Colors.white : null,
+        colorBlendMode: isDark ? BlendMode.srcIn : null,
       ),
       actions: [
         _tombolHeader(

@@ -41,6 +41,7 @@ class _FoodMerchantsScreenState extends State<FoodMerchantsScreen> {
   final Map<String, Warung> _warung = {}; // terkumpul dari tiap halaman
   List<MenuMakanan> _menu = [];
   List<MenuMakanan> _populer = [];
+  List<Warung> _toko = []; // warung yang namanya mirip kata cari, di atas hasil menu
   int _halaman = 0;
   bool _adaLagi = false;
   bool _memuat = true;
@@ -116,7 +117,7 @@ class _FoodMerchantsScreenState extends State<FoodMerchantsScreen> {
 
   /// Satu halaman etalase. Server yang mengurutkan (warung buka → terlaris →
   /// terdekat) dan mencari, jadi urutan antarhalaman tetap.
-  Future<(List<MenuMakanan>, bool)> _ambil(int halaman, String q) async {
+  Future<(List<MenuMakanan>, bool, List<Warung>)> _ambil(int halaman, String q) async {
     final isi = await ApiService().getEtalaseFood(lat: _posisi?.latitude, lng: _posisi?.longitude, q: q, page: halaman, limit: _perHalaman);
     for (final j in (isi['merchants'] as List?) ?? const []) {
       final w = Warung.dariJson(Map<String, dynamic>.from(j as Map));
@@ -125,7 +126,10 @@ class _FoodMerchantsScreenState extends State<FoodMerchantsScreen> {
     final menu = [
       for (final j in (isi['menus'] as List?) ?? const []) MenuMakanan.dariJson(Map<String, dynamic>.from(j as Map)),
     ].where((m) => _warung.containsKey(m.idWarung)).toList();
-    return (menu, isi['ada_lagi'] == true);
+    final toko = [
+      for (final j in (isi['toko'] as List?) ?? const []) Warung.dariJson(Map<String, dynamic>.from(j as Map)),
+    ];
+    return (menu, isi['ada_lagi'] == true, toko);
   }
 
   /// Dari halaman pertama: dibuka, ditarik ke bawah, atau kata carinya berubah.
@@ -140,10 +144,11 @@ class _FoodMerchantsScreenState extends State<FoodMerchantsScreen> {
     });
     try {
       if (bacaPosisi) await _bacaPosisi();
-      final (menu, adaLagi) = await _ambil(1, q);
+      final (menu, adaLagi, toko) = await _ambil(1, q);
       if (!mounted || generasi != _generasi) return;
       setState(() {
         _menu = menu;
+        _toko = toko;
         _adaLagi = adaLagi;
         _qDimuat = q;
         _halaman = 1;
@@ -169,7 +174,7 @@ class _FoodMerchantsScreenState extends State<FoodMerchantsScreen> {
       _galatLagi = false;
     });
     try {
-      final (baru, adaLagi) = await _ambil(_halaman + 1, _qDimuat);
+      final (baru, adaLagi, _) = await _ambil(_halaman + 1, _qDimuat);
       if (!mounted || generasi != _generasi) return;
       // Urutan bisa bergeser sedikit antarhalaman (warung baru buka/tutup),
       // jadi menu yang sudah tampil tidak digambar dua kali.
@@ -202,11 +207,12 @@ class _FoodMerchantsScreenState extends State<FoodMerchantsScreen> {
     _muat();
   }
 
-  Future<void> _buka(MenuMakanan m) async {
+  /// Halaman menu warung; [menuAwal] langsung membuka lembar pesan menu itu.
+  Future<void> _buka(Warung w, [String? menuAwal]) async {
     final orderId = await Navigator.push<String>(
       context,
       MaterialPageRoute(
-        builder: (_) => FoodMenuScreen(warung: _warung[m.idWarung]!, menuAwal: m.id, riderName: widget.riderName, riderPhone: widget.riderPhone),
+        builder: (_) => FoodMenuScreen(warung: w, menuAwal: menuAwal, riderName: widget.riderName, riderPhone: widget.riderPhone),
       ),
     );
     if (orderId != null && mounted) Navigator.pop(context, orderId);
@@ -397,7 +403,8 @@ class _FoodMerchantsScreenState extends State<FoodMerchantsScreen> {
     }
     final q = _qDimuat;
     final menu = _menu;
-    if (menu.isEmpty) {
+    final toko = q.isEmpty ? const <Warung>[] : _toko;
+    if (menu.isEmpty && toko.isEmpty) {
       if (q.isNotEmpty) {
         return [penuh(PesanKosong(ikon: Icons.search_off, judul: 'Tidak ketemu', teks: 'Tidak ada menu atau warung yang cocok dengan "$q".'))];
       }
@@ -431,26 +438,39 @@ class _FoodMerchantsScreenState extends State<FoodMerchantsScreen> {
           ),
         ),
       ],
-      _judul(q.isEmpty ? 'Semua menu' : 'Hasil untuk "$q"', q.isEmpty ? 'Dari warung di sekitarmu' : '${menu.length}${_adaLagi ? '+' : ''} menu'),
-      // Dua kolom; IntrinsicHeight menyamakan tinggi kartu sebaris walau nama
-      // menunya ada yang dua baris.
-      SliverPadding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
-        sliver: SliverList.separated(
-          itemCount: (menu.length + 1) ~/ 2,
-          separatorBuilder: (_, _) => const SizedBox(height: 12),
-          itemBuilder: (_, i) => IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: _kartu(menu[i * 2], isDark)),
-                const SizedBox(width: 12),
-                Expanded(child: i * 2 + 1 < menu.length ? _kartu(menu[i * 2 + 1], isDark) : const SizedBox()),
-              ],
+      if (toko.isNotEmpty) ...[
+        _judul('Warung', 'Ketuk untuk melihat menunya'),
+        SliverPadding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, menu.isEmpty ? 32 : 0),
+          sliver: SliverList.separated(
+            itemCount: toko.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 10),
+            itemBuilder: (_, i) => _barisWarung(toko[i], isDark),
+          ),
+        ),
+      ],
+      if (menu.isNotEmpty) ...[
+        _judul(q.isEmpty ? 'Semua menu' : 'Hasil untuk "$q"', q.isEmpty ? 'Dari warung di sekitarmu' : '${menu.length}${_adaLagi ? '+' : ''} menu'),
+        // Dua kolom; IntrinsicHeight menyamakan tinggi kartu sebaris walau nama
+        // menunya ada yang dua baris.
+        SliverPadding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+          sliver: SliverList.separated(
+            itemCount: (menu.length + 1) ~/ 2,
+            separatorBuilder: (_, _) => const SizedBox(height: 12),
+            itemBuilder: (_, i) => IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _kartu(menu[i * 2], isDark)),
+                  const SizedBox(width: 12),
+                  Expanded(child: i * 2 + 1 < menu.length ? _kartu(menu[i * 2 + 1], isDark) : const SizedBox()),
+                ],
+              ),
             ),
           ),
         ),
-      ),
+      ],
       if (_memuatLagi || _galatLagi)
         SliverToBoxAdapter(
           child: Padding(
@@ -479,17 +499,68 @@ class _FoodMerchantsScreenState extends State<FoodMerchantsScreen> {
         ),
       );
 
-  Widget _kartu(MenuMakanan m, bool isDark) => _KartuMenu(m, _warung[m.idWarung]!, isDark: isDark, saatTekan: () => _buka(m));
+  Widget _kartu(MenuMakanan m, bool isDark) => KartuMenu(m, _warung[m.idWarung]!, isDark: isDark, saatTekan: () => _buka(_warung[m.idWarung]!, m.id));
+
+  /// Satu baris warung hasil cari: foto, nama, alamat (atau kapan buka lagi),
+  /// jarak. Diketuk → halaman menu warung itu.
+  Widget _barisWarung(Warung w, bool isDark) {
+    final redup = AppTheme.teksRedup(context);
+    final keterangan = !w.buka ? (w.infoBuka.isNotEmpty ? w.infoBuka : 'Sedang tutup') : w.alamat;
+    return Opacity(
+      opacity: w.buka ? 1 : 0.55,
+      child: Material(
+        color: isDark ? AppTheme.cardObsidianDark : Colors.white,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: isDark ? Colors.white12 : const Color(0xFFE2E8F0)),
+        ),
+        child: InkWell(
+          onTap: () => _buka(w),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: SizedBox(width: 56, height: 56, child: GambarJaringan(url: w.gambar, pengganti: Icons.storefront_outlined)),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(w.nama, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      if (keterangan.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(keterangan, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: redup)),
+                      ],
+                    ],
+                  ),
+                ),
+                if (w.jarakKm >= 0) ...[
+                  const SizedBox(width: 8),
+                  Text('${w.jarakKm.toStringAsFixed(1).replaceAll('.', ',')} km', style: TextStyle(fontSize: 12, color: redup)),
+                ],
+                Icon(Icons.chevron_right_rounded, color: redup),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Kartu menu: foto, nama, warung + jarak, harga. Seluruh kartu bisa diketuk;
-/// tombol + hanya penanda bahwa menu ini bisa langsung dipesan.
-class _KartuMenu extends StatelessWidget {
+/// tombol + hanya penanda bahwa menu ini bisa langsung dipesan. Dipakai juga
+/// di beranda.
+class KartuMenu extends StatelessWidget {
   final MenuMakanan m;
   final Warung w;
   final bool isDark;
   final VoidCallback saatTekan;
-  const _KartuMenu(this.m, this.w, {required this.isDark, required this.saatTekan});
+  const KartuMenu(this.m, this.w, {super.key, required this.isDark, required this.saatTekan});
 
   @override
   Widget build(BuildContext context) {

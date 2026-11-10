@@ -91,8 +91,11 @@ class NotifikasiService {
   /// dengan aplikasi terbuka tidak sedang menatap layar, dan SnackBar bisu lima
   /// detik itulah yang dulu membuat chat terasa "tidak ada notifikasinya".
   void _pesanSaatAplikasiTerbuka(RemoteMessage pesan) {
-    if (pesan.data['tipe'] != 'chat') return;
-    segarkanDaftarChat();
+    // pesanan_terlantar: peringatan untuk admin (NOTIF_ADMIN_HP) bahwa ada
+    // pesanan yang belum diambil driver — tidak ada layar yang menggambarnya.
+    final chat = pesan.data['tipe'] == 'chat';
+    if (!chat && pesan.data['tipe'] != 'pesanan_terlantar') return;
+    if (chat) segarkanDaftarChat();
     final isi = pesan.notification?.body ?? '';
     final pengirim = pesan.notification?.title ?? 'Pesan baru';
     if (isi.isEmpty) return;
@@ -103,7 +106,8 @@ class NotifikasiService {
           id: (pesan.data['order_id'] ?? '').hashCode,
           title: pengirim,
           body: isi,
-          payload: pesan.data['order_id'],
+          // Ketukan membuka chat — hanya untuk pesan chat; admin bukan peserta pesanan.
+          payload: chat ? pesan.data['order_id'] : null,
           notificationDetails: NotificationDetails(
             android: AndroidNotificationDetails(
               _kanal.id,

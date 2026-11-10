@@ -95,7 +95,10 @@ export default function OrdersPage() {
                     <td data-label="Layanan"><span className="badge badge-primary">{o.service}</span></td>
                     <td style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-secondary)" }} data-label="Jemput">{o.pickup}</td>
                     <td style={{ maxWidth: 140, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-secondary)" }} data-label="Tujuan">{o.dropoff}</td>
-                    <td data-label="Tarif" style={{ fontWeight: 600, color: "var(--success)" }}>Rp {(o.fare || 0).toLocaleString("id-ID")}</td>
+                    <td data-label="Tarif" style={{ fontWeight: 600, color: "var(--success)" }}>
+                      Rp {(o.fare || 0).toLocaleString("id-ID")}
+                      {o.diskon > 0 && <div style={{ fontSize: 11, fontWeight: 500, color: "var(--text-muted)" }}>diskon Rp {o.diskon.toLocaleString("id-ID")}</div>}
+                    </td>
                     <td data-label="Status">
                       <span className={`badge ${STATUS_BADGE[o.status] || "badge-muted"}`}>{STATUS_LABEL[o.status] || o.status}</span>
                       {o.status === "cancelled" && o.alasan_batal && (

@@ -5,12 +5,19 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:mobile/screens/food_menu_screen.dart';
 import 'package:mobile/screens/food_merchants_screen.dart';
 import 'package:mobile/services/api_service.dart';
 
 // Layar depan BohFood memuat menu per halaman: satu halaman saat dibuka, sisanya
 // hanya ketika digulir ke ujung, dan berhenti begitu server bilang habis.
 // Pencarian menunggu jeda mengetik lalu mulai lagi dari halaman pertama.
+//
+// klienHttp dibuat sekali seumur proses, jadi semua tes berbagi satu
+// MockClient; tiap tes mengganti penjawabnya.
+late Future<http.Response> Function(http.Request) jawab;
+final server = MockClient((req) => jawab(req));
+
 void main() {
   testWidgets('menu BohFood dimuat per halaman sambil digulir', (tester) async {
     final kanal = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -23,7 +30,7 @@ void main() {
     await ApiService().setToken('palsu');
 
     final diminta = <Map<String, String>>[];
-    final server = MockClient((req) async {
+    jawab = (req) async {
       final q = req.url.queryParameters;
       diminta.add(q);
       final page = int.parse(q['page']!);
@@ -42,7 +49,7 @@ void main() {
         }),
         200,
       );
-    });
+    };
 
     await http.runWithClient(() async {
       await tester.pumpWidget(const MaterialApp(home: FoodMerchantsScreen(riderName: 'Uji', riderPhone: '+620')));
@@ -66,6 +73,50 @@ void main() {
       await tester.pumpAndSettle();
       expect(diminta.last['q'], 'soto');
       expect(diminta.last['page'], '1');
+
+      await tester.pumpWidget(const SizedBox());
+    }, () => server);
+  });
+
+  // Nama warung yang dicari (walau salah ketik) tampil di atas hasil menu, dan
+  // diketuk langsung membuka halaman menu warung itu.
+  testWidgets('cari nama warung menampilkan warungnya, diketuk buka menunya', (tester) async {
+    final kanal = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    kanal.setMockMethodCallHandler(const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'), (_) async => null);
+    for (final nama in ['flutter.baseflow.com/geolocator', 'flutter.baseflow.com/geolocator_android']) {
+      kanal.setMockMethodCallHandler(MethodChannel(nama), (_) async => false);
+    }
+    await ApiService().setToken('palsu');
+
+    jawab = (req) async {
+      final cari = (req.url.queryParameters['q'] ?? '').isNotEmpty;
+      return http.Response(
+        jsonEncode({
+          'status': 'success',
+          'merchants': [],
+          'menus': [],
+          'ada_lagi': false,
+          if (cari)
+            'toko': [
+              {'id': 'w9', 'restaurant_name': 'Dimsum Mentai', 'address': 'Jl. Uji', 'is_open': true, 'lat': -0.07, 'lng': 111.49},
+            ],
+        }),
+        200,
+      );
+    };
+
+    await http.runWithClient(() async {
+      await tester.pumpWidget(const MaterialApp(home: FoodMerchantsScreen(riderName: 'Uji', riderPhone: '+620')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), 'dimsun');
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+      expect(find.text('Warung'), findsOneWidget);
+      expect(find.text('Tidak ketemu'), findsNothing, reason: 'menu kosong tapi warungnya ketemu');
+
+      await tester.tap(find.text('Dimsum Mentai'));
+      await tester.pumpAndSettle();
+      expect(find.byType(FoodMenuScreen), findsOneWidget);
 
       await tester.pumpWidget(const SizedBox());
     }, () => server);

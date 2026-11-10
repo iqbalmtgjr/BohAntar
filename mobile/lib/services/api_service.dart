@@ -411,6 +411,8 @@ class ApiService {
     required double dariLng,
     required double keLat,
     required double keLng,
+    // BohFood: subtotal keranjang, supaya syarat min. belanja voucher ikut terhitung.
+    double subtotal = 0,
   }) async {
     if (_token == null) {
       throw Exception(_sesiHabis);
@@ -421,6 +423,7 @@ class ApiService {
       'from_lng': '$dariLng',
       'to_lat': '$keLat',
       'to_lng': '$keLng',
+      if (subtotal > 0) 'subtotal': subtotal.toStringAsFixed(0),
     });
     final response = await klienHttp.get(uri, headers: {
       'Content-Type': 'application/json',
@@ -744,6 +747,31 @@ class ApiService {
       },
     );
     return _handleResponse(response);
+  }
+
+  /// Kuitansi pesanan selesai (klaim perjalanan dinas): alamat PDF-nya dan
+  /// nomornya (dipakai sebagai nama berkas). Jalurnya bertanda tangan server,
+  /// jadi bisa dibuka browser tanpa token.
+  Future<({String url, String nomor})> kuitansi(String orderId) async {
+    if (_token == null) {
+      throw Exception(_sesiHabis);
+    }
+    final response = await klienHttp.get(
+      Uri.parse('$baseUrl/api/orders/$orderId/kuitansi'),
+      headers: {'Authorization': 'Bearer $_token'},
+    );
+    final data = _handleResponse(response);
+    return (url: '$baseUrl${data['path']}', nomor: (data['nomor'] ?? 'BohAntar').toString());
+  }
+
+  /// Isi PDF kuitansi, untuk dibagikan sebagai berkas atau gambar.
+  Future<Uint8List> unduhKuitansi(String url) async {
+    final response = await klienHttp.get(Uri.parse(url));
+    // Cloudflare/nginx bisa membalas halaman galat HTML berstatus 200-an.
+    if (response.statusCode != 200 || String.fromCharCodes(response.bodyBytes.take(4)) != '%PDF') {
+      throw Exception('Kuitansi belum bisa diambil. Coba lagi sebentar, ya.');
+    }
+    return response.bodyBytes;
   }
 
   /// Tab Chat: satu baris per pesanan, pesan terakhir, dan jumlah belum dibaca.
