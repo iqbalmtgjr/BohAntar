@@ -35,6 +35,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
   // Hitungan ongkir gagal: tanpa penanda ini barisnya tertulis "sedang
   // dihitung" selamanya dan tombol Pesan mati tanpa jalan keluar.
   bool _estimasiGagal = false;
+  String _pesanEstimasi = ''; // galat dari server, mis. alamat di luar Sintang
 
   Warung get _warung => widget.keranjang.warung;
 
@@ -160,6 +161,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
       setState(() {
         _estimasi = null;
         _estimasiGagal = true;
+        _pesanEstimasi = pesanGalat(e);
       });
     }
   }
@@ -332,7 +334,7 @@ class _FoodCheckoutScreenState extends State<FoodCheckoutScreen> {
                         : _tujuan == null
                             ? 'pilih titik antar dulu'
                             : _estimasiGagal
-                                ? 'gagal dihitung'
+                                ? 'gagal dihitung. $_pesanEstimasi'
                                 : 'sedang dihitung',
                   ),
                   if (_estimasiGagal && _tujuan != null)

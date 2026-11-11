@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../firebase_config.dart';
 import '../screens/chat_screen.dart';
+import '../screens/chat_sewa_screen.dart';
 import 'api_service.dart';
 import 'chat_service.dart';
 
@@ -94,7 +95,10 @@ class NotifikasiService {
     // pesanan_terlantar: peringatan untuk admin (NOTIF_ADMIN_HP) bahwa ada
     // pesanan yang belum diambil driver — tidak ada layar yang menggambarnya.
     final chat = pesan.data['tipe'] == 'chat';
-    if (!chat && pesan.data['tipe'] != 'pesanan_terlantar') return;
+    // Chat sewa: payload "sewa:<id>" supaya ketukannya membuka layar chat sewa.
+    final sewa = pesan.data['tipe'] == 'chat_sewa' ? pesan.data['booking_id'] : null;
+    if (sewa != null && sewa == ChatSewaScreen.terbuka) return; // sedang dibaca
+    if (!chat && sewa == null && pesan.data['tipe'] != 'pesanan_terlantar') return;
     if (chat) segarkanDaftarChat();
     final isi = pesan.notification?.body ?? '';
     final pengirim = pesan.notification?.title ?? 'Pesan baru';
@@ -103,11 +107,11 @@ class NotifikasiService {
     _lokal
         .show(
           // Satu notifikasi per pesanan: pesan berikutnya menimpa, tidak menumpuk.
-          id: (pesan.data['order_id'] ?? '').hashCode,
+          id: (pesan.data['order_id'] ?? sewa ?? '').hashCode,
           title: pengirim,
           body: isi,
           // Ketukan membuka chat — hanya untuk pesan chat; admin bukan peserta pesanan.
-          payload: chat ? pesan.data['order_id'] : null,
+          payload: chat ? pesan.data['order_id'] : (sewa != null ? 'sewa:$sewa' : null),
           notificationDetails: NotificationDetails(
             android: AndroidNotificationDetails(
               _kanal.id,
@@ -122,6 +126,7 @@ class NotifikasiService {
 
   void _bukaDariPesan(RemoteMessage pesan) {
     if (pesan.data['tipe'] == 'chat') bukaChat(pesan.data['order_id']);
+    if (pesan.data['tipe'] == 'chat_sewa') bukaChat('sewa:${pesan.data['booking_id']}');
   }
 
   /// Aplikasi baru dinyalakan karena notifikasi chat diketuk. Dipanggil
@@ -147,6 +152,17 @@ class NotifikasiService {
     if (orderId == null || orderId.isEmpty || nav == null || ApiService().token == null) return;
     try {
       final saya = (await ApiService().getProfile())['user'] as Map?;
+      if (orderId.startsWith('sewa:')) {
+        if (saya == null) return;
+        nav.push(MaterialPageRoute(
+          builder: (_) => ChatSewaScreen(
+            bookingId: orderId.substring(5),
+            judul: 'Chat sewa',
+            myPhone: (saya['phone_number'] ?? '').toString(),
+          ),
+        ));
+        return;
+      }
       final o = (await ApiService().getOrderStatus(orderId))['order'] as Map?;
       if (saya == null || o == null) return;
       final nomorSaya = (saya['phone_number'] ?? '').toString();

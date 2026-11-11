@@ -2,7 +2,8 @@ import { useState, useEffect, lazy, Suspense } from "react";
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import "./index.css";
 import "./portal-mobile.css";
-import { BASE, authFetch, getToken, setToken, clearToken, loginRouteFor } from "./api";
+import { BASE, authFetch, getToken, setToken, clearToken, loginRouteFor, ADMIN_BALIK_KEY } from "./api";
+import { lepasLangganan } from "./webpush";
 
 // Halaman depan dimuat langsung; halaman lain dipecah jadi berkas sendiri dan
 // baru diunduh saat dibuka. Tanpa ini pengunjung halaman depan ikut mengunduh
@@ -31,6 +32,7 @@ const PencairanPage = lazy(() => import("./pages/PencairanPage"));
 const DriverRegistPage = lazy(() => import("./pages/DriverRegistPage"));
 const ApplicationsPage = lazy(() => import("./pages/ApplicationsPage"));
 const PaymentReportRental = lazy(() => import("./pages/PaymentReportRental"));
+const BeralihAkunPage = lazy(() => import("./pages/BeralihAkunPage"));
 import Sidebar from "./components/Sidebar";
 import PortalTopbar from "./components/PortalTopbar";
 
@@ -41,6 +43,7 @@ const RentalCalendar = lazy(() => import("./pages/bohrental/RentalCalendar"));
 const ServiceManagement = lazy(() => import("./pages/bohrental/ServiceManagement"));
 const RentalOrders = lazy(() => import("./pages/bohrental/RentalOrders"));
 const RentalReports = lazy(() => import("./pages/bohrental/RentalReports"));
+const RentalChat = lazy(() => import("./pages/bohrental/RentalChat"));
 const Subscription = lazy(() => import("./pages/bohrental/Subscription"));
 import SidebarRentalPartner from "./components/SidebarRentalPartner";
 
@@ -51,7 +54,7 @@ import SidebarFoodMerchant from "./components/SidebarFoodMerchant";
 
 const memuat = <div className="loading-overlay" style={{ minHeight: "60vh" }} role="status" aria-label="Memuat"><div className="spinner" /></div>;
 
-function Layout({ children, portalType, onLogout, userPhone }) {
+function Layout({ children, portalType, onLogout, userPhone, onKembali }) {
   // Select which sidebar to show based on portalType
   const renderSidebar = () => {
     if (portalType === "food") {
@@ -70,6 +73,14 @@ function Layout({ children, portalType, onLogout, userPhone }) {
     }`}>
       {renderSidebar()}
       <main className="main-content">
+        {onKembali && (
+          <div role="status" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "8px 16px", background: "#f59e0b", color: "#1f2937", fontSize: 13, fontWeight: 600 }}>
+            <span>Super Admin sedang masuk sebagai mitra {userPhone}. Semua perubahan tersimpan di akun mitra ini.</span>
+            <button className="btn" onClick={onKembali} style={{ padding: "4px 12px", fontSize: 13, height: "auto", background: "#1f2937", color: "#fff" }}>
+              Kembali ke Super Admin
+            </button>
+          </div>
+        )}
         {/* portal mitra tidak memakai Topbar admin, jadi dipasang topbar sendiri */}
         {(portalType === "rental" || portalType === "food") && (
           <PortalTopbar portalType={portalType} userPhone={userPhone} />
@@ -128,7 +139,28 @@ export default function App() {
     setUserPhone(phone);
   };
 
+  // Admin masuk ke akun mitra: sesi admin disimpan dulu supaya bisa kembali.
+  const masukSebagai = (type, phone, token) => {
+    localStorage.setItem(ADMIN_BALIK_KEY, JSON.stringify({ token: getToken(), phone: userPhone }));
+    login(type, phone, token);
+    window.location.hash = "/";
+  };
+
+  const balik = (() => {
+    try { return JSON.parse(localStorage.getItem(ADMIN_BALIK_KEY)); } catch { return null; }
+  })();
+
+  const kembaliKeAdmin = () => {
+    localStorage.removeItem(ADMIN_BALIK_KEY);
+    login("admin", balik.phone, balik.token);
+    window.location.hash = "/";
+  };
+
   const logout = () => {
+    // Keluar dari portal mitra yang dibuka admin = kembali ke Super Admin.
+    if (balik && portalType !== "admin") return kembaliKeAdmin();
+    localStorage.removeItem(ADMIN_BALIK_KEY);
+    lepasLangganan();
     // Rute tujuan ditentukan sebelum portalType dibersihkan.
     const target = loginRouteFor(portalType);
     clearToken();
@@ -191,6 +223,7 @@ export default function App() {
           <Route path="/services" element={<ServiceManagement />} />
           <Route path="/orders" element={<RentalOrders ownerPhone={userPhone} />} />
           <Route path="/reports" element={<RentalReports ownerPhone={userPhone} />} />
+          <Route path="/chat/:id?" element={<RentalChat ownerPhone={userPhone} />} />
           <Route path="/subscription" element={<Subscription ownerPhone={userPhone} />} />
           <Route path="/account" element={<AccountPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
@@ -216,6 +249,7 @@ export default function App() {
         <Route path="/partner-applications" element={<PartnerApplicationsPage />} />
         <Route path="/approved-partners" element={<ApprovedPartnersPage />} />
         <Route path="/payment-reports/rental" element={<PaymentReportRental />} />
+        <Route path="/beralih-akun" element={<BeralihAkunPage onMasuk={masukSebagai} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     );
@@ -223,7 +257,8 @@ export default function App() {
 
   return (
     <HashRouter>
-      <Layout portalType={portalType} onLogout={logout} userPhone={userPhone}>
+      <Layout portalType={portalType} onLogout={logout} userPhone={userPhone}
+        onKembali={balik && portalType !== "admin" ? kembaliKeAdmin : null}>
         <Suspense fallback={memuat}>{renderRoutes()}</Suspense>
       </Layout>
     </HashRouter>

@@ -223,7 +223,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     itemBuilder: (context, i) {
                       final msg = _messages[i];
                       final isMe = msg.senderPhone == widget.myPhone;
-                      return _ChatBubble(msg: msg, isMe: isMe);
+                      return ChatBubble(msg: msg, isMe: isMe);
                     },
                   ),
           ),
@@ -300,11 +300,11 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
   }
 }
 
-class _ChatBubble extends StatelessWidget {
+class ChatBubble extends StatelessWidget {
   final ChatMessage msg;
   final bool isMe;
 
-  const _ChatBubble({required this.msg, required this.isMe});
+  const ChatBubble({super.key, required this.msg, required this.isMe});
 
   @override
   Widget build(BuildContext context) {

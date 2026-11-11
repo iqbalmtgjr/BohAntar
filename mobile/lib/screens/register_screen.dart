@@ -3,6 +3,7 @@ import 'package:mobile/services/api_service.dart';
 import 'package:mobile/services/notifikasi_service.dart';
 import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/decorative_background.dart';
+import 'package:mobile/widgets/verifikasi_wa.dart';
 import 'dashboard_screen.dart';
 import 'driver_register_screen.dart';
 
@@ -44,7 +45,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // setelah daftar sama persis dengan yang tersimpan.
   String get _phone {
     if (widget.phoneNumber.isNotEmpty) return widget.phoneNumber;
-    var raw = _phoneController.text.trim();
+    var raw = _phoneController.text.replaceAll(RegExp(r'[\s\-.]'), '');
     if (raw.startsWith('0')) raw = raw.substring(1);
     if (!raw.startsWith('+62')) raw = '+62$raw';
     return raw;
@@ -60,12 +61,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     try {
       final phone = _phone;
+      final kodeWA = await verifikasiNomorWA(context, phone);
+      if (kodeWA == null) return; // lembar verifikasi ditutup
       final response = await ApiService().register(
         phoneNumber: phone,
         name: _nameController.text.trim(),
         email: _emailController.text.trim(),
         role: _role,
         password: _passwordController.text,
+        kodeWA: kodeWA,
       );
 
       if (response['status'] == 'success') {

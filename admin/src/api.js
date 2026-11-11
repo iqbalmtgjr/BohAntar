@@ -6,6 +6,10 @@ export const getToken = () => localStorage.getItem(TOKEN_KEY);
 export const setToken = (t) => localStorage.setItem(TOKEN_KEY, t);
 export const clearToken = () => localStorage.removeItem(TOKEN_KEY);
 
+// Sesi super admin yang disimpan saat admin masuk ke akun mitra ({token, phone}),
+// supaya bisa kembali tanpa login ulang.
+export const ADMIN_BALIK_KEY = "admin_balik";
+
 // Rute login yang sesuai dengan portal yang sedang dipakai, supaya setelah keluar
 // pengguna kembali ke pintu masuk portalnya sendiri, bukan ke landing page umum.
 export const loginRouteFor = (portalType) =>
@@ -27,6 +31,7 @@ function sessionExpired() {
   localStorage.removeItem("admin_auth");
   localStorage.removeItem("portal_type");
   localStorage.removeItem("user_phone");
+  localStorage.removeItem(ADMIN_BALIK_KEY);
   window.location.hash = loginRouteFor(portalType);
   window.location.reload();
 }
@@ -153,6 +158,9 @@ export const api = {
     const q = new URLSearchParams(params).toString();
     return json(`/admin/partner-applications${q ? "?" + q : ""}`);
   },
+  masukSebagai: (phone) => post(`/admin/masuk-sebagai`, { phone }),
+  webPushKunci: () => json(`/webpush/kunci`),
+  webPushLangganan: (sub) => post(`/webpush/langganan`, sub),
   approvePartner: (id) => json(`/admin/partner-applications/${id}/approve`, { method: "POST" }),
   rejectPartner: (id) => json(`/admin/partner-applications/${id}/reject`, { method: "POST" }),
   login: (email, password) => post(`/auth/login`, { email, password }),

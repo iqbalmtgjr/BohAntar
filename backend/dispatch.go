@@ -111,6 +111,8 @@ func pesananManual(nama, hp, layanan, jemput, tujuan string, jLat, jLng, tLat, t
 		return Order{}, "Alamat jemput dan tujuan wajib diisi (maks. 500 karakter)"
 	case !koordinatValid(jLat, jLng) || !koordinatValid(tLat, tLng):
 		return Order{}, "Titik jemput dan tujuan harus dipilih di peta"
+	case !dalamWilayahLayanan(jLat, jLng) || !dalamWilayahLayanan(tLat, tLng):
+		return Order{}, pesanLuarWilayah
 	}
 
 	// Pelanggan yang punya akun: pesanan tercatat atas akunnya, jadi ia ikut

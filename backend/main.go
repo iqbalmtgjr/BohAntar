@@ -285,6 +285,11 @@ type RentalBooking struct {
 	VehicleType string `json:"vehicle_type"`
 	OwnerPhone  string `json:"owner_phone"`
 	OwnerName   string `json:"owner_name"`
+	ChatBelum   int    `json:"chat_belum"` // chat_sewa.go
+	// Pesan terakhir, untuk daftar Chat di portal mitra. Kosong = belum ada chat.
+	ChatTerakhir string `json:"chat_terakhir,omitempty"`
+	ChatWaktu    string `json:"chat_waktu,omitempty"`
+	ChatDariSaya bool   `json:"chat_dari_saya,omitempty"`
 }
 
 type RentalCarSchedule struct {
@@ -350,6 +355,7 @@ type RegisterInput struct {
 	Email       string `json:"email"`
 	Role        string `json:"role"`
 	Password    string `json:"password"`
+	KodeWA      string `json:"kode_wa"` // verifikasi_wa.go
 }
 type TopUpInput struct {
 	Amount float64 `json:"amount"`
@@ -462,6 +468,7 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 	initAuth()
 	initDB()
+	initWebPush()
 	go pruneOTPs()
 	go kedaluwarsakanPesanan()
 	go func() {
@@ -481,6 +488,8 @@ func main() {
 	// mux.HandleFunc("/api/auth/request-otp", requestOTPHandler)
 	// mux.HandleFunc("/api/auth/verify-otp", verifyOTPHandler)
 	mux.HandleFunc("/api/auth/register", registerHandler)
+	mux.HandleFunc("/api/auth/verifikasi-wa", verifikasiWAHandler)
+	mux.HandleFunc("/api/webhook/whatsapp", waWebhookHandler)
 	mux.HandleFunc("/api/auth/google", googleLoginHandler)
 	mux.HandleFunc("/api/auth/reset-password-google", resetPasswordGoogleHandler)
 	mux.HandleFunc("/api/users/profile", profileHandler)
@@ -513,6 +522,7 @@ func main() {
 	mux.HandleFunc("/api/maps/place", requireAuth(mapsPlaceHandler))
 	mux.HandleFunc("/api/maps/reverse", requireAuth(mapsReverseHandler))
 	mux.HandleFunc("/api/maps/route", requireAuth(mapsRouteHandler))
+	mux.HandleFunc("/api/maps/cari-publik", mapsCariPublikHandler) // halaman depan, tanpa login, Photon saja
 	// Estimasi ongkos untuk layar pemesanan. Wajib bertoken seperti rute peta:
 	// balasannya memuat seluruh isi baris tarif, termasuk persentase komisi.
 	mux.HandleFunc("/api/tarif/estimasi", requireAuth(tarifEstimasiHandler))
@@ -539,6 +549,9 @@ func main() {
 	admin := requireRole("admin")
 	mux.HandleFunc("/api/admin/users", admin(adminUsersHandler))
 	mux.HandleFunc("/api/admin/users/", admin(adminUserDetailHandler))
+	mux.HandleFunc("/api/admin/masuk-sebagai", admin(adminMasukSebagaiHandler))
+	mux.HandleFunc("/api/webpush/kunci", webPushKunciHandler)
+	mux.HandleFunc("/api/webpush/langganan", requireRole("rental_partner", "food_merchant")(webPushLanggananHandler))
 	mux.HandleFunc("/api/admin/orders", admin(adminOrdersHandler))
 	mux.HandleFunc("/api/admin/analytics", admin(adminAnalyticsHandler))
 	mux.HandleFunc("/api/admin/tarif", admin(adminTarifHandler))
@@ -614,6 +627,7 @@ func main() {
 	mux.HandleFunc("/api/rental/schedules/", rental(rentalScheduleDetailHandler))
 	mux.HandleFunc("/api/rental/settings", rental(rentalSettingsHandler))
 	mux.HandleFunc("/api/rental/lunas", rental(rentalLunasHandler))
+	mux.HandleFunc("/api/rental/chat/", rental(chatSewaHandler))
 	mux.HandleFunc("/api/rental/services", rental(rentalServicesHandler))
 	mux.HandleFunc("/api/rental/services/", rental(rentalServiceDetailHandler))
 	mux.HandleFunc("/api/auth/login", loginHandler)
@@ -1211,6 +1225,8 @@ func initDB() {
 	migrasiSkema("ALTER TABLE orders ADD INDEX idx_orders_kasvo_pengantaran (kasvo_pengantaran_id)")
 	migrasiAlasanBatal()
 	migrasiVoucher()
+	migrasiChatSewa()
+	migrasiWebPush()
 	// Posisi driver terakhir. Satu baris per driver, ditimpa terus — riwayat
 	// perjalanan tidak disimpan karena tidak ada yang membacanya, dan menyimpan
 	// jejak lokasi orang tanpa alasan justru menambah yang harus dijaga.
@@ -1523,10 +1539,13 @@ func dbGetUsers(roleFilter string, page, limit int) ([]User, int, error) {
 
 	var rows *sql.Rows
 	offset := (page - 1) * limit
+	// Pengguna terbaru di atas; phone_number memecah seri supaya halaman tidak
+	// saling tumpang tindih saat beberapa akun lahir di detik yang sama.
+	const urut = " ORDER BY created_at DESC, phone_number"
 	if roleFilter != "" {
-		rows, err = db.Query("SELECT phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users WHERE role = ? LIMIT ? OFFSET ?", roleFilter, limit, offset)
+		rows, err = db.Query("SELECT phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users WHERE role = ?"+urut+" LIMIT ? OFFSET ?", roleFilter, limit, offset)
 	} else {
-		rows, err = db.Query("SELECT phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users LIMIT ? OFFSET ?", limit, offset)
+		rows, err = db.Query("SELECT phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users"+urut+" LIMIT ? OFFSET ?", limit, offset)
 	}
 	if err != nil {
 		return nil, 0, err
@@ -2289,7 +2308,8 @@ func verifyOTPHandler(w http.ResponseWriter, r *http.Request) {
 // normalizePhone menyeragamkan nomor HP ke bentuk +62 supaya satu orang tidak
 // berakhir punya dua akun hanya karena mengetik 0812 dan +62812.
 func normalizePhone(raw string) string {
-	phone := strings.TrimSpace(raw)
+	// "0812 3456-7890" ditulis orang apa adanya; yang disimpan cuma angkanya.
+	phone := strings.NewReplacer(" ", "", "-", "", ".", "", "(", "", ")", "").Replace(strings.TrimSpace(raw))
 	if strings.HasPrefix(phone, "0") {
 		phone = "+62" + phone[1:]
 	}
@@ -2324,6 +2344,19 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	input.PhoneNumber = normalizePhone(input.PhoneNumber)
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
+	if !nomorHPValid(input.PhoneNumber) {
+		writeJSONResponse(w, 400, map[string]string{"error": pesanNomorTidakValid})
+		return
+	}
+	ip := alamatPemanggil(r)
+	if kuotaDaftarHabis(ip) {
+		writeJSONResponse(w, 429, map[string]string{"error": pesanKuotaDaftar})
+		return
+	}
+	if pesan := cekVerifWA(input.KodeWA, input.PhoneNumber); pesan != "" {
+		writeJSONResponse(w, 400, map[string]string{"error": pesan})
+		return
+	}
 
 	// Endpoint ini publik, jadi wajib menolak nomor dan email yang sudah dipakai.
 	// Tanpa ini siapa pun bisa mendaftar ulang memakai nomor orang lain, menimpa
@@ -2346,6 +2379,8 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan password"})
 		return
 	}
+	habiskanVerifWA(input.KodeWA)
+	catatPendaftaran(ip)
 	// Tidak ada alamat bawaan. Dulu setiap akun baru lahir dengan alamat contoh
 	// di Pontianak, padahal layanannya di Sintang — dan baris itulah yang jadi
 	// alamat yatim saat akunnya dihapus.
@@ -2368,6 +2403,7 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 		Nonce       string `json:"nonce"`
 		PhoneNumber string `json:"phone_number"`
 		Role        string `json:"role"`
+		KodeWA      string `json:"kode_wa"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.IDToken == "" {
 		writeJSONResponse(w, 400, map[string]string{"error": "id_token Google diperlukan"})
@@ -2421,6 +2457,26 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 	if input.Role == "rental_partner" || input.Role == "food_merchant" {
 		targetRole = input.Role
 	}
+	// Penumpang dari aplikasi diperiksa seperti registerHandler.
+	// ponytail: mitra yang daftar Google dari dashboard web belum diverifikasi
+	// WhatsApp-nya (nomor usaha bisa telepon rumah); tambahkan bila disalahgunakan.
+	ip := alamatPemanggil(r)
+	if targetRole == "rider" {
+		pesan := ""
+		switch {
+		case !nomorHPValid(phone):
+			pesan = pesanNomorTidakValid
+		case kuotaDaftarHabis(ip):
+			writeJSONResponse(w, 429, map[string]string{"error": pesanKuotaDaftar})
+			return
+		default:
+			pesan = cekVerifWA(input.KodeWA, phone)
+		}
+		if pesan != "" {
+			writeJSONResponse(w, 400, map[string]string{"error": pesan})
+			return
+		}
+	}
 
 	// Buat pengguna baru
 	u = User{
@@ -2434,6 +2490,10 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 		IsDriverActive: false,
 	}
 	dbSaveUser(u)
+	if targetRole == "rider" {
+		habiskanVerifWA(input.KodeWA)
+		catatPendaftaran(ip)
+	}
 	// Tanpa alamat bawaan — lihat catatan di registerHandler.
 
 	// Inisialisasi data pendukung spesifik role
@@ -3088,6 +3148,11 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 	// Ongkos dihitung dari koordinat, jadi koordinatnya wajib sungguhan.
 	if !koordinatValid(input.PickupLat, input.PickupLng) || !koordinatValid(input.DropoffLat, input.DropoffLng) {
 		writeJSONResponse(w, 400, map[string]string{"error": "Titik jemput dan tujuan harus dipilih dari peta"})
+		return
+	}
+	// Untuk BohFood titik jemputnya lokasi warung (ditulis ulang di atas).
+	if !dalamWilayahLayanan(input.PickupLat, input.PickupLng) || !dalamWilayahLayanan(input.DropoffLat, input.DropoffLng) {
+		writeJSONResponse(w, 400, map[string]string{"error": pesanLuarWilayah})
 		return
 	}
 	// Angka fare kiriman aplikasi sengaja diabaikan: lihat tarif.go.
@@ -4585,6 +4650,10 @@ func hapusAkun(u User) (int, string) {
 	// beda collation yang dibandingkan ditolak MySQL/MariaDB (galat 1267).
 	if kode, pesan := kosongkanAlasanLepas(tx, phone); kode != 200 {
 		return kode, pesan
+	}
+	if err := hapusChatSewa(tx, phone); err != nil {
+		log.Printf("hapus akun %s: chat sewa: %v", phone, err)
+		return 500, "Gagal menghapus percakapan sewa"
 	}
 
 	langkah := []struct{ sql, gagal string }{
@@ -6165,6 +6234,9 @@ func rentalBookingsHandler(w http.ResponseWriter, r *http.Request) {
 				bookings = append(bookings, b)
 			}
 		}
+		if !isAdmin(r) {
+			isiChatBelum(bookings, callerPhone(r))
+		}
 		writeJSONResponse(w, 200, bookings)
 	} else if r.Method == http.MethodPost {
 		var b RentalBooking
@@ -6231,6 +6303,20 @@ func rentalBookingsHandler(w http.ResponseWriter, r *http.Request) {
 		if err := tx.Commit(); err != nil {
 			galatServer(w, r, err)
 			return
+		}
+		// Kabari mitra (browser dashboard lewat web push + HP kalau ada token FCM):
+		// booking baru menunggu disetujui. Tanpa booking_id supaya tag notifikasinya
+		// (sw.js) tidak ditimpa notifikasi chat sewa yang sama.
+		var pemilik, kendaraan string
+		// Mitra yang memesan armadanya sendiri tidak perlu dikabari aksinya sendiri.
+		if db.QueryRow("SELECT owner_phone, CONCAT(brand, ' ', model) FROM rental_cars WHERE id = ?", b.CarID).Scan(&pemilik, &kendaraan) == nil && pemilik != b.CustomerPhone {
+			nama := "Penyewa"
+			if u, ok := dbGetUser(b.CustomerPhone); ok && u.Name != "" {
+				nama = u.Name
+			}
+			notifikasiKe(pemilik, "Booking baru · "+kendaraan,
+				fmt.Sprintf("%s mau sewa %s – %s. Setujui atau tolak di Pesanan Masuk.", nama, tglPendek(start), tglPendek(end)),
+				map[string]string{"tipe": "sewa_baru"})
 		}
 		writeJSONResponse(w, 200, b)
 	} else {

@@ -1,57 +1,27 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, useInView, useScroll, useTransform, AnimatePresence, useMotionValue, useSpring } from 'motion/react';
 import { useNavigate } from 'react-router-dom';
-import bgImage from '../assets/bg.webp';
 import logoImg from '../assets/logo.png';
+import playBadge from '../assets/google-play-badge.png';
+// Layar beranda app yang sesungguhnya (render widget test DashboardScreen, 11 Nov 2026),
+// bukan tiruan HTML: tiruannya dulu sempat beda isi dengan app aslinya.
+import layarBeranda from '../assets/layar-beranda.webp';
+import bukitKelam from '../assets/bukit-kelam.webp'; // dari bukit_kelam.jpg, diperkecil ke 1920 px
+import ikonRide from '../assets/layanan/layanan_bohride.png';
+import ikonCar from '../assets/layanan/layanan_bohcar.png';
+import ikonFood from '../assets/layanan/layanan_bohfood.png';
+import ikonSend from '../assets/layanan/layanan_bohsend.png';
+import ikonRental from '../assets/layanan/layanan_bohrental.png';
+
+const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.bohantar.mobile';
 import { BASE } from '../api';
 import {
-    Bike, Car, Package, UtensilsCrossed, KeyRound, ShieldCheck, MapPin, Star,
-    ArrowRight, Download, ExternalLink, ChevronDown, Clock, Sparkles, Smartphone,
+    Bike, Car, Package, UtensilsCrossed, KeyRound, ShieldCheck, MapPin,
+    ArrowRight, Download, ExternalLink, ChevronDown, Clock, Sparkles,
     CheckCircle2, Menu, X, Percent, Calculator, Users, CreditCard,
-    Navigation, Zap, Globe, HeartHandshake, Play, ChevronRight, ArrowUpRight,
-    Send, MousePointerClick, Grid, Home, FileText, HelpCircle, User
+    Navigation, Zap, Globe, HeartHandshake, ChevronRight, ArrowUpRight,
+    Send, MousePointerClick, Grid, HelpCircle, Banknote
 } from 'lucide-react';
-
-/* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-   REUSABLE HOOKS
-   â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-
-// Animated counter hook
-function useAnimatedCounter(target, duration = 2000, startOnView = true) {
-    const [count, setCount] = useState(0);
-    const ref = useRef(null);
-    const isInView = useInView(ref, { once: true, margin: '0px' });
-
-    useEffect(() => {
-        const shouldStart = startOnView ? isInView : true;
-        if (!shouldStart) return;
-
-        const startTime = performance.now();
-        let rafId;
-        let cancelled = false;
-
-        const animate = (now) => {
-            if (cancelled) return;
-            const elapsed = now - startTime;
-            const progress = Math.min(elapsed / duration, 1);
-            const eased = 1 - Math.pow(1 - progress, 3);
-            setCount(Math.floor(eased * target));
-            if (progress < 1) {
-                rafId = requestAnimationFrame(animate);
-            } else {
-                setCount(target);
-            }
-        };
-
-        rafId = requestAnimationFrame(animate);
-        return () => {
-            cancelled = true;
-            cancelAnimationFrame(rafId);
-        };
-    }, [isInView, target, duration, startOnView]);
-
-    return { count, ref };
-}
 
 // Section reveal wrapper
 function RevealSection({ children, className = '', delay = 0 }) {
@@ -106,16 +76,16 @@ const staggerItem = {
 /* Dipakai bersama oleh nav desktop dan drawer mobile supaya isinya tidak pernah
    berbeda saat salah satunya diubah. */
 const NAV_LINKS = [
-    { label: 'Layanan', href: '#layanan', icon: Grid, desc: 'bohFood, bohRide, bohCar & bohRental' },
+    { label: 'Layanan', href: '#layanan', icon: Grid, desc: 'BohFood, BohRide, BohCar & BohRental' },
     { label: 'Keunggulan', href: '#keunggulan', icon: Sparkles, desc: 'Alasan memilih BohAntar' },
     { label: 'Mulai Gabung Mitra', href: '#portal', icon: HeartHandshake, desc: 'Daftarkan usaha atau jadi driver' },
 ];
 
 const NAV_SERVICES = [
-    { label: 'bohFood', icon: UtensilsCrossed, cls: 'bg-amber-50 text-amber-600' },
-    { label: 'bohRide', icon: Bike, cls: 'bg-blue-50 text-blue-600' },
-    { label: 'bohCar', icon: Car, cls: 'bg-cyan-50 text-cyan-600' },
-    { label: 'bohRental', icon: KeyRound, cls: 'bg-emerald-50 text-emerald-600' },
+    { label: 'BohFood', icon: UtensilsCrossed, cls: 'bg-amber-50 text-amber-600' },
+    { label: 'BohRide', icon: Bike, cls: 'bg-blue-50 text-blue-600' },
+    { label: 'BohCar', icon: Car, cls: 'bg-cyan-50 text-cyan-600' },
+    { label: 'BohRental', icon: KeyRound, cls: 'bg-emerald-50 text-emerald-600' },
 ];
 
 function MagneticButton({ children, className = '', ...props }) {
@@ -154,13 +124,85 @@ function MagneticButton({ children, className = '', ...props }) {
     );
 }
 
+/* Kolom alamat kalkulator tarif: ketik ≥3 huruf → saran tempat di Sintang
+   (GET /api/maps/cari-publik, Photon) → pilih satu = koordinat. Mengetik lagi
+   membuang pilihan, supaya harga tidak pernah dihitung dari teks yang tidak
+   cocok dengan titiknya. */
+function KolomTempat({ icon: Icon, label, placeholder, nilai, ubah }) {
+    const [teks, setTeks] = useState('');
+    const [saran, setSaran] = useState([]);
+    const [buka, setBuka] = useState(false);
+    const [status, setStatus] = useState(''); // '' | 'memuat' | pesan galat / kosong
+
+    useEffect(() => {
+        const q = teks.trim();
+        if (nilai || q.length < 3) { setSaran([]); setStatus(''); return; }
+        let batal = false;
+        const jeda = setTimeout(() => {
+            setStatus('memuat');
+            fetch(`${BASE}/maps/cari-publik?q=${encodeURIComponent(q)}`)
+                .then(r => r.json())
+                .then(d => {
+                    if (batal) return;
+                    const daftar = d.suggestions || [];
+                    setSaran(daftar);
+                    setStatus(d.error || (daftar.length ? '' : 'Tidak ketemu di Sintang. Coba nama jalan atau tempat lain.'));
+                })
+                .catch(() => { if (!batal) { setSaran([]); setStatus('Pencarian sedang bermasalah. Coba lagi sebentar.'); } });
+        }, 350);
+        return () => { batal = true; clearTimeout(jeda); };
+    }, [teks, nilai]);
+
+    const pilih = (s) => {
+        setTeks(s.name);
+        setBuka(false);
+        ubah(s);
+    };
+
+    return (
+        <div className="relative">
+            <div className="bg-white border border-slate-200 rounded-2xl p-3 flex items-center gap-3 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all shadow-sm">
+                <Icon className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                <div className="w-full min-w-0">
+                    <label className="block text-[9px] font-bold text-slate-400 uppercase">{label}</label>
+                    <input type="text" value={teks} placeholder={placeholder} autoComplete="off"
+                        onChange={(e) => { setTeks(e.target.value); setBuka(true); if (nilai) ubah(null); }}
+                        onFocus={() => setBuka(true)}
+                        onBlur={() => setBuka(false)}
+                        className="w-full bg-transparent text-xs font-semibold text-slate-800 focus:outline-none placeholder:text-slate-400 placeholder:font-normal" />
+                </div>
+                {nilai && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" aria-label="Titik sudah dipilih" />}
+            </div>
+            {buka && (saran.length > 0 || status) && (
+                <ul className="absolute z-30 left-0 right-0 mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-xl shadow-slate-900/10 overflow-hidden max-h-72 overflow-y-auto">
+                    {status === 'memuat' && <li className="px-4 py-3 text-xs text-slate-400">Mencari…</li>}
+                    {status && status !== 'memuat' && <li className="px-4 py-3 text-xs text-slate-500">{status}</li>}
+                    {saran.map((s) => (
+                        <li key={`${s.lat},${s.lng}`}>
+                            {/* onMouseDown, bukan onClick: onClick datang setelah input kehilangan
+                                fokus dan daftarnya keburu tertutup. */}
+                            <button type="button" onMouseDown={(e) => { e.preventDefault(); pilih(s); }}
+                                className="w-full text-left px-4 py-2.5 hover:bg-blue-50 focus:bg-blue-50 focus:outline-none flex items-start gap-2.5 cursor-pointer">
+                                <MapPin className="w-4 h-4 text-slate-400 mt-0.5 flex-shrink-0" />
+                                <span className="min-w-0">
+                                    <span className="block text-xs font-semibold text-slate-800 truncate">{s.name}</span>
+                                    {s.address && <span className="block text-[11px] text-slate-500 truncate">{s.address}</span>}
+                                </span>
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
+
 
 /* â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
    MAIN COMPONENT
    â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 export default function LandingPage({ onSelectPortal }) {
     const navigate = useNavigate();
-    const [activeTab, setActiveTab] = useState('ride');
     const [activeFaq, setActiveFaq] = useState(null);
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
     const [scrolled, setScrolled] = useState(false);
@@ -173,19 +215,17 @@ export default function LandingPage({ onSelectPortal }) {
         return () => window.removeEventListener('resize', checkMobile);
     }, []);
 
-    // Fare estimator state
-    const [pickup, setPickup] = useState('Jl. Gajah Mada, Pontianak');
-    const [dropoff, setDropoff] = useState('Kantor Gubernur Kalbar');
+    // Kalkulator tarif: titik dipilih dari saran ({name, address, lat, lng}),
+    // harga dari server dengan rumus yang sama dengan aplikasi.
+    const [jemput, setJemput] = useState(null);
+    const [tujuan, setTujuan] = useState(null);
     const [selectedFleet, setSelectedFleet] = useState('ride');
-    const [distanceKm] = useState(6.5);
-    const [estimatedPrice, setEstimatedPrice] = useState(null);
+    const [taksiran, setTaksiran] = useState(null); // {total, km} | {error}
 
     // Parallax refs
     const heroRef = useRef(null);
     const { scrollYProgress } = useScroll({ target: heroRef, offset: ['start start', 'end start'] });
     const heroY = useTransform(scrollYProgress, [0, 1], [0, isMobile ? 0 : 150]);
-    const bgY = useTransform(scrollYProgress, [0, 1], [0, isMobile ? 0 : 80]);
-    const bgScale = useTransform(scrollYProgress, [0, 1], [1, isMobile ? 1 : 1.05]);
     const heroOpacity = useTransform(scrollYProgress, [0, 0.8], [1, 0]);
 
     // Scroll detection for navbar
@@ -216,90 +256,65 @@ export default function LandingPage({ onSelectPortal }) {
 
 
     // Harga diminta dari server, bukan dihitung di sini: angka yang dulu tertulis
-    // di halaman ini tertinggal begitu tarif diubah lewat dashboard super admin.
-    const muatHarga = (armada) => {
-        const layanan = { ride: 'BohRide', car: 'BohCar', send: 'BohSend' }[armada];
-        if (!layanan) return;
-        fetch(`${BASE}/tarif/publik?layanan=${layanan}&km=${distanceKm}`)
+    // di halaman ini tertinggal begitu tarif diubah lewat dashboard super admin,
+    // lalu jaraknya sempat terkunci 6,5 km apa pun alamat yang diketik.
+    useEffect(() => {
+        if (!jemput || !tujuan) { setTaksiran(null); return; }
+        let batal = false;
+        const q = new URLSearchParams({
+            layanan: { ride: 'BohRide', car: 'BohCar', send: 'BohSend' }[selectedFleet],
+            from_lat: jemput.lat, from_lng: jemput.lng, to_lat: tujuan.lat, to_lng: tujuan.lng,
+        });
+        fetch(`${BASE}/tarif/publik?${q}`)
             .then(r => r.json())
-            .then(d => setEstimatedPrice(typeof d.total === 'number' ? d.total : null))
-            .catch(() => setEstimatedPrice(null));
-    };
-    useEffect(() => { muatHarga('ride'); }, []);
-
-    const handleCalculateFare = (e) => {
-        e.preventDefault();
-        muatHarga(selectedFleet);
-    };
+            .then(d => { if (!batal) setTaksiran(typeof d.total === 'number' ? d : { error: d.error || 'Tarif belum bisa dihitung.' }); })
+            .catch(() => { if (!batal) setTaksiran({ error: 'Tarif belum bisa dihitung. Coba lagi sebentar.' }); });
+        return () => { batal = true; };
+    }, [jemput, tujuan, selectedFleet]);
 
     /* â”€â”€â”€â”€ DATA â”€â”€â”€â”€ */
+    // Hanya klaim yang memang ada di app. Dulu tertulis "asuransi proteksi",
+    // "promo voucher harian", "Avanza, Innova, Fortuner" — tidak satu pun benar.
     const services = [
         {
-            key: 'food', name: 'bohFood', tagline: 'Pesan makanan kuliner khas Kalbar, dari warung legendaris hingga resto hits.',
-            icon: UtensilsCrossed, color: 'from-amber-500 to-orange-500', iconBg: 'bg-amber-50 text-amber-600 border-amber-100',
-            img: 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&w=800&q=80',
-            features: ['Ratusan resto & UMKM pilihan', 'Promo voucher harian', 'Pengantaran higienis'],
+            key: 'food', name: 'BohFood', tagline: 'Pesan makanan dari warung dan rumah makan di Sintang, diantar driver BohAntar.',
+            icon: UtensilsCrossed, iconBg: 'bg-amber-50 text-amber-600 border-amber-100', img: ikonFood, imgBg: 'bg-orange-50',
+            features: ['Harga sama dengan di warung', 'Lacak pesanan di peta', 'Bayar tunai'],
         },
         {
-            key: 'ride', name: 'bohRide', tagline: 'Ojek motor cepat tembus kemacetan dengan tarif transparan & driver terverifikasi.',
-            icon: Bike, color: 'from-blue-500 to-blue-600', iconBg: 'bg-blue-50 text-blue-600 border-blue-100',
-            img: 'https://images.unsplash.com/photo-1558981806-ec527fa84c39?auto=format&fit=crop&w=800&q=80',
-            features: ['Tarif transparan', 'Mitra terlatih', 'Pelacakan GPS real-time'],
+            key: 'ride', name: 'BohRide', tagline: 'Ojek motor untuk antar jemput sehari-hari. Tarif terlihat sebelum pesan.',
+            icon: Bike, iconBg: 'bg-blue-50 text-blue-600 border-blue-100', img: ikonRide, imgBg: 'bg-blue-50',
+            features: ['Tarif tampil di depan', 'Driver terverifikasi', 'Lacak driver di peta'],
         },
         {
-            key: 'car', name: 'bohCar', tagline: 'Taksi mobil sejuk & nyaman berkapasitas hingga 6 penumpang.',
-            icon: Car, color: 'from-blue-500 to-blue-600', iconBg: 'bg-blue-50 text-blue-600 border-blue-100',
-            img: 'https://images.unsplash.com/photo-1549317661-bd32c8ce0db2?auto=format&fit=crop&w=800&q=80',
-            features: ['Kabin bersih & wangi', 'Reguler & Eksekutif', 'Hingga 6 penumpang'],
+            key: 'car', name: 'BohCar', tagline: 'Antar jemput dengan mobil, pas untuk keluarga, barang bawaan, atau saat hujan.',
+            icon: Car, iconBg: 'bg-blue-50 text-blue-600 border-blue-100', img: ikonCar, imgBg: 'bg-emerald-50',
+            features: ['Tarif tampil di depan', 'Driver terverifikasi', 'Bayar tunai'],
         },
         {
-            key: 'send', name: 'bohSend', tagline: 'Kurir on-demand kilat, kirim dokumen, paket & barang dalam hitungan menit.',
-            icon: Package, color: 'from-cyan-500 to-blue-600', iconBg: 'bg-sky-50 text-sky-600 border-sky-100',
-            img: 'https://images.unsplash.com/photo-1586528116311-ad8dd3c8310d?auto=format&fit=crop&w=800&q=80',
-            features: ['Same-day delivery', 'Asuransi proteksi', 'Tanda terima digital'],
+            key: 'send', name: 'BohSend', tagline: 'Kirim dokumen, paket, dan barang di dalam kota, langsung diantar driver.',
+            icon: Package, iconBg: 'bg-sky-50 text-sky-600 border-sky-100', img: ikonSend, imgBg: 'bg-violet-50',
+            features: ['Foto bukti serah terima', 'Nama penerima tercatat', 'Lacak kurir di peta'],
         },
         {
-            key: 'rental', name: 'bohRental', tagline: 'Sewa mobil lepas kunci atau dengan driver berpengalaman.',
-            icon: KeyRound, color: 'from-emerald-500 to-teal-600', iconBg: 'bg-emerald-50 text-emerald-600 border-emerald-100',
-            img: 'https://images.unsplash.com/photo-1503376780353-7e6692767b70?auto=format&fit=crop&w=800&q=80',
-            features: ['Avanza, Innova, Fortuner', 'Lepas kunci / dengan driver', 'Konfirmasi instan'],
+            key: 'rental', name: 'BohRental', tagline: 'Sewa mobil harian dari mitra rental di Sintang, lepas kunci atau dengan sopir.',
+            icon: KeyRound, iconBg: 'bg-emerald-50 text-emerald-600 border-emerald-100', img: ikonRental, imgBg: 'bg-cyan-50',
+            features: ['Cek armada yang tersedia', 'Chat dengan mitra', 'Invoice & kuitansi'],
         }
     ];
 
-    const mockupData = {
-        ride: { label: 'BOHRIDE', status: 'Driver Menuju Titik Jemput', time: '3 Menit lagi', driver: 'Pak Hendra (Yamaha NMAX)', plate: 'KB 4821 QA', from: 'Jl. Gajah Mada No. 12', to: 'Kantor Gubernur Kalbar', price: 'Rp 14.000' },
-        food: { label: 'BOHFOOD', status: 'Resto Menyiapkan Pesanan', time: 'Tiba pukul 12:40', driver: 'Driver Andre (bohFood)', plate: 'KB 5190 WP', from: 'Kwetiau Apollo Pontianak', to: 'Jl. Ahmad Yani No. 42', price: 'Rp 48.500' },
-        car: { label: 'BOHCAR', status: 'Mobil Siap Menjemput', time: '5 Menit lagi', driver: 'Bpk. Ridwan (Toyota Avanza)', plate: 'KB 1902 XX', from: 'Bandara Supadio', to: 'Hotel Mercure Pontianak', price: 'Rp 65.000' },
-        send: { label: 'BOHSEND', status: 'Kurir Sedang Antar Paket', time: 'Estimasi 15 Menit', driver: 'Kurir Anton (Express)', plate: 'KB 3312 LK', from: 'Ayani Megamal', to: 'Kubu Raya Sentral', price: 'Rp 16.000' },
-        rental: { label: 'BOHRENTAL', status: 'Booking Terkonfirmasi', time: 'Durasi: 3 Hari', driver: 'All New Avanza 2024', plate: 'KB 1001 WZ', from: 'Garasi Mitra Kalbar', to: 'Tour Kota Singkawang', price: 'Rp 450.000/Hari' }
-    };
-    const currentMockup = mockupData[activeTab];
-
     const portals = [
-        { roleKey: 'food', title: 'Portal Mitra Resto', badge: 'bohFood Merchant', desc: 'Kelola katalog menu, update harga & stok, aktifkan promo, dan pantau pesanan.', icon: UtensilsCrossed, color: 'from-amber-500 to-orange-600', btnClass: 'bg-amber-600 hover:bg-amber-700 shadow-amber-200', path: '/login-resto' },
+        { roleKey: 'food', title: 'Portal Mitra Resto', badge: 'BohFood Merchant', desc: 'Kelola katalog menu, update harga & stok, aktifkan promo, dan pantau pesanan.', icon: UtensilsCrossed, color: 'from-amber-500 to-orange-600', btnClass: 'bg-amber-600 hover:bg-amber-700 shadow-amber-200', path: '/login-resto' },
         { roleKey: 'rental', title: 'Portal Mitra Rental', badge: 'Fleet Owner', desc: 'Kelola inventaris armada, kalender booking, penetapan tarif, dan status unit.', icon: KeyRound, color: 'from-emerald-500 to-teal-600', btnClass: 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-200', path: '/login-rental' }
     ];
 
     const faqs = [
-        { q: 'Bagaimana cara mulai menggunakan aplikasi BohAntar?', a: 'Unduh aplikasi BohAntar di Play Store atau App Store, daftar akun dengan nomor HP aktif, dan langsung pilih layanan Ride, Car, Send, Food, atau Rental sesuai kebutuhan.' },
-        { q: 'Apakah semua mitra pengemudi dan armada terverifikasi?', a: 'Ya, seluruh mitra driver melewati verifikasi identitas resmi (KTP, SIM aktif, SKCK) serta inspeksi kelayakan kendaraan untuk menjamin keamanan perjalanan.' },
+        { q: 'Bagaimana cara mulai menggunakan aplikasi BohAntar?', a: 'Unduh aplikasi BohAntar di Google Play Store, daftar akun dengan nomor HP aktif, dan langsung pilih layanan Ride, Car, Send, Food, atau Rental sesuai kebutuhan.' },
+        { q: 'Apakah semua driver terverifikasi?', a: 'Ya. Setiap driver mendaftar dengan KTP, SIM, STNK, dan foto wajah, lalu diperiksa admin sebelum akunnya bisa menerima pesanan. Foto wajah driver juga tampil di aplikasi saat menjemput.' },
         { q: 'Bagaimana cara bergabung menjadi Mitra Resto atau Rental?', a: 'Klik tombol "Portal Mitra" di navigasi atas atau pilih card portal yang sesuai, lalu lakukan login / pendaftaran mitra baru.' },
         { q: 'Metode pembayaran apa saja yang didukung?', a: 'Pesanan dibayar tunai langsung ke driver atau mitra. BohAntar tidak menyimpan saldo atau dompet digital pelanggan.' }
     ];
 
-    // Animated counters
-    const downloads = useAnimatedCounter(10000, 2000, false);
-    const rating = useAnimatedCounter(49, 1500, false); // will display as 4.9
-    const partners = useAnimatedCounter(500, 2000, false);
-
-    // Phone service tab icons
-    const serviceTabIcons = [
-        { key: 'ride', Icon: Bike, label: 'Ride' },
-        { key: 'car', Icon: Car, label: 'Car' },
-        { key: 'send', Icon: Package, label: 'Send' },
-        { key: 'food', Icon: UtensilsCrossed, label: 'Food' },
-        { key: 'rental', Icon: KeyRound, label: 'Rental' },
-    ];
 
     return (
         <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans antialiased overflow-x-hidden relative">
@@ -469,8 +484,8 @@ export default function LandingPage({ onSelectPortal }) {
                                 </p>
                                 <div className="rounded-2xl border border-slate-100 overflow-hidden">
                                     {[
-                                        { label: 'Login Mitra bohFood', icon: UtensilsCrossed, run: () => navigate('/login-resto') },
-                                        { label: 'Login Mitra bohRental', icon: KeyRound, run: () => navigate('/login-rental') },
+                                        { label: 'Login Mitra BohFood', icon: UtensilsCrossed, run: () => navigate('/login-resto') },
+                                        { label: 'Login Mitra BohRental', icon: KeyRound, run: () => navigate('/login-rental') },
                                         { label: 'FAQ & Pusat Bantuan', icon: HelpCircle, run: () => { window.location.hash = '#faq'; } },
                                     ].map((r, i) => (
                                         <button
@@ -521,15 +536,15 @@ export default function LandingPage({ onSelectPortal }) {
             <section ref={heroRef} className="relative pt-28 pb-20 lg:pt-36 lg:pb-28 z-10 overflow-hidden">
 
                 {/* ── Beautiful Hero Background ── */}
+                {/* Bukit Kelam, Sintang (11 Nov 2026) — ganti foto jalanan Amerika (bg.webp).
+                    Lapisan putih: di HP menutup rata karena teks melebar selebar layar;
+                    di desktop hanya sisi kiri, supaya bukitnya tetap terlihat jelas di kanan. */}
                 <div className="absolute inset-0 pointer-events-none">
-                    {/* Background image from assets with parallax scroll and zoom */}
-                    <motion.div
-                        style={{ y: bgY, scale: bgScale, backgroundImage: `url(${bgImage})` }}
-                        className="absolute inset-0 bg-cover bg-center bg-no-repeat opacity-100"
+                    <div
+                        style={{ backgroundImage: `url(${bukitKelam})` }}
+                        className="absolute inset-0 bg-cover bg-center bg-no-repeat"
                     />
-                    {/* Main gradient overlay to keep text readable on the left and show the image on the right */}
-                    <div className="absolute inset-0 bg-gradient-to-r from-white via-white/90 via-white/60 to-transparent" />
-                    <div className="absolute inset-0 bg-gradient-to-b from-white/10 via-transparent to-[#f8fafc]" />
+                    <div className="absolute inset-0 bg-[#f8fafc]/85 lg:bg-transparent lg:bg-gradient-to-r lg:from-[#f8fafc] lg:from-30% lg:via-[#f8fafc]/75 lg:via-50% lg:to-transparent" />
 
                     {/* Animated gradient orbs (Disabled on mobile for performance) */}
                     {!isMobile && (
@@ -596,10 +611,8 @@ export default function LandingPage({ onSelectPortal }) {
                                 transition={{ duration: 0.6, delay: 0.2 }}
                                 className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-blue-50/80 border border-blue-100 text-blue-600 text-xs font-semibold backdrop-blur-sm"
                             >
-                                <motion.div animate={{ rotate: [0, 15, -15, 0] }} transition={{ repeat: Infinity, duration: 3, ease: 'easeInOut' }}>
-                                    <Sparkles className="w-3.5 h-3.5" />
-                                </motion.div>
-                                <span>SuperApp Mobilitas Kalbar v2.0</span>
+                                <MapPin className="w-3.5 h-3.5" />
+                                <span>Kini melayani Sintang, Kalimantan Barat</span>
                             </motion.div>
 
                             {/* Animated Title */}
@@ -636,14 +649,18 @@ export default function LandingPage({ onSelectPortal }) {
                                 initial={{ opacity: 0, y: 20 }}
                                 animate={{ opacity: 1, y: 0 }}
                                 transition={{ duration: 0.7, delay: 1 }}
-                                className="flex flex-wrap gap-4 pt-2"
+                                className="flex flex-wrap items-center gap-4 pt-2"
                             >
-                                <MagneticButton
-                                    className="group px-7 py-4 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold text-sm rounded-2xl shadow-xl shadow-blue-500/25 transition-all duration-300 flex items-center gap-2.5 cursor-pointer"
+                                {/* Lencana resmi Google Play. PNG-nya berbingkai transparan ±17%,
+                                    jadi tinggi 84px + margin negatif = kotak hitam setinggi tombol (56px). */}
+                                <a
+                                    href={PLAY_STORE_URL}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="-my-[14px] -ml-[14px] transition-transform hover:scale-105"
                                 >
-                                    <Download className="w-4.5 h-4.5 transition-transform group-hover:-translate-y-0.5" />
-                                    <span>Unduh Aplikasi</span>
-                                </MagneticButton>
+                                    <img src={playBadge} alt="Dapatkan di Google Play" className="h-[84px] w-auto" />
+                                </a>
 
                                 <MagneticButton
                                     onClick={() => navigate('/portal-mitra')}
@@ -654,7 +671,9 @@ export default function LandingPage({ onSelectPortal }) {
                                 </MagneticButton>
                             </motion.div>
 
-                            {/* ── Stats Row ── */}
+                            {/* ── Fakta, bukan angka karangan ── (dulu "10K+ unduhan, 4.9/5,
+                                500+ mitra" padahal app baru tayang 2 Nov 2026). Isi angka
+                                sungguhan di sini kalau sudah ada dan bisa dicek di Play. */}
                             <motion.div
                                 initial={{ opacity: 0, y: 30 }}
                                 animate={{ opacity: 1, y: 0 }}
@@ -662,16 +681,16 @@ export default function LandingPage({ onSelectPortal }) {
                                 className="bg-white/80 backdrop-blur-xl border border-slate-100 rounded-3xl p-5 shadow-xl shadow-slate-200/50 grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-xl"
                             >
                                 {[
-                                    { ref: downloads.ref, value: `${Math.floor(downloads.count / 1000)}K+`, label: 'Unduhan', icon: Download, iconBg: 'bg-blue-50 text-blue-600' },
-                                    { ref: rating.ref, value: `${(rating.count / 10).toFixed(1)}/5`, label: 'Rating Pengguna', icon: Star, iconBg: 'bg-amber-50 text-amber-500', fill: true },
-                                    { ref: partners.ref, value: `${partners.count}+`, label: 'Mitra Aktif', icon: Users, iconBg: 'bg-emerald-50 text-emerald-600' }
+                                    { value: 'Tarif jelas', label: 'Tampil sebelum pesan', icon: Calculator, iconBg: 'bg-blue-50 text-blue-600' },
+                                    { value: 'Bayar tunai', label: 'Langsung ke driver', icon: Banknote, iconBg: 'bg-emerald-50 text-emerald-600' },
+                                    { value: 'Driver dicek', label: 'KTP, SIM & wajah', icon: ShieldCheck, iconBg: 'bg-amber-50 text-amber-600' }
                                 ].map((stat, i) => (
-                                    <div key={i} ref={stat.ref} className={`flex items-center gap-3 ${i > 0 ? 'pl-1 border-t pt-4 border-slate-100 sm:pt-0 sm:border-t-0 sm:pl-4 sm:border-l' : 'pl-1'}`}>
+                                    <div key={i} className={`flex items-center gap-3 ${i > 0 ? 'pl-1 border-t pt-4 border-slate-100 sm:pt-0 sm:border-t-0 sm:pl-4 sm:border-l' : 'pl-1'}`}>
                                         <div className={`w-10 h-10 rounded-xl ${stat.iconBg} flex items-center justify-center flex-shrink-0`}>
-                                            <stat.icon className={`w-4.5 h-4.5 ${stat.fill ? 'fill-amber-400' : ''}`} />
+                                            <stat.icon className="w-4.5 h-4.5" />
                                         </div>
                                         <div>
-                                            <div className="text-lg font-black text-slate-900 leading-none tabular-nums">{stat.value}</div>
+                                            <div className="text-base font-black text-slate-900 leading-none">{stat.value}</div>
                                             <div className="text-[10px] font-medium text-slate-400 mt-0.5">{stat.label}</div>
                                         </div>
                                     </div>
@@ -679,12 +698,14 @@ export default function LandingPage({ onSelectPortal }) {
                             </motion.div>
                         </div>
 
-                        {/* ── Right Column: Interactive Phone (Flutter / Gojek Light Style) ── */}
+                        {/* ── Kolom kanan: layar beranda app yang asli ──
+                            Dulu HP tiruan dari HTML (alamat Pontianak, menu "Bantuan", promo
+                            diskon yang tidak ada). Perbarui layar-beranda.webp bila beranda berubah. */}
                         <motion.div
-                            initial={{ opacity: 0, x: 80, rotateY: -8 }}
-                            animate={{ opacity: 1, x: 0, rotateY: 0 }}
+                            initial={{ opacity: 0, x: 80 }}
+                            animate={{ opacity: 1, x: 0 }}
                             transition={{ duration: 1, delay: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                            className="lg:col-span-5 flex justify-center items-center relative perspective-[1200px]"
+                            className="lg:col-span-5 flex justify-center items-center relative"
                         >
                             {/* Glow behind phone */}
                             <motion.div
@@ -693,155 +714,27 @@ export default function LandingPage({ onSelectPortal }) {
                                 className="absolute inset-0 bg-gradient-to-tr from-blue-400/25 via-cyan-300/20 to-blue-500/25 blur-[90px] rounded-full pointer-events-none"
                             />
 
-                            {/* Floating Card 1: Live Status Driver */}
+                            {/* Floor shadow */}
                             <motion.div
-                                animate={{ y: [0, -8, 0] }}
-                                transition={{ repeat: Infinity, duration: 3.5, ease: 'easeInOut' }}
-                                className="absolute -left-6 top-24 z-30 hidden sm:flex items-center gap-3 bg-white/95 backdrop-blur-md p-3.5 rounded-2xl shadow-xl shadow-slate-900/10 border border-slate-100"
-                            >
-                                <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-500/30">
-                                    <Bike className="w-5 h-5" />
-                                </div>
-                                <div>
-                                    <div className="flex items-center gap-1.5">
-                                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
-                                        <span className="text-[11px] font-bold text-slate-800">Driver Ditemukan</span>
-                                    </div>
-                                    <div className="text-[10px] text-slate-500 font-medium">Pak Hendra (Yamaha NMAX)</div>
-                                </div>
-                            </motion.div>
-
-                            {/* Floating Card 2: Promo Diskon */}
-                            <motion.div
-                                animate={{ y: [0, 8, 0] }}
-                                transition={{ repeat: Infinity, duration: 4, ease: 'easeInOut', delay: 0.5 }}
-                                className="absolute -right-6 bottom-16 z-30 hidden sm:flex items-center gap-2.5 bg-white/95 backdrop-blur-md px-4 py-3 rounded-2xl shadow-xl shadow-slate-900/10 border border-slate-100"
-                            >
-                                <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center text-amber-600 font-black text-xs">
-                                    %
-                                </div>
-                                <div>
-                                    <div className="text-[11px] font-bold text-slate-800">Diskon Ongkir 30%</div>
-                                    <div className="text-[10px] text-emerald-600 font-semibold">Otomatis Terpasang</div>
-                                </div>
-                            </motion.div>
-
-                            {/* 3D Realistic Floor Shadow (Disabled animation on mobile) */}
-                            <motion.div
-                                animate={isMobile ? {} : { 
-                                    scale: [0.85, 1.02, 0.85],
-                                    opacity: [0.55, 0.28, 0.55] 
-                                }}
+                                animate={isMobile ? {} : { scale: [0.85, 1.02, 0.85], opacity: [0.55, 0.28, 0.55] }}
                                 transition={{ repeat: Infinity, duration: 5, ease: 'easeInOut' }}
                                 className="absolute -bottom-8 left-12 right-12 h-6 bg-slate-950/40 blur-xl rounded-full pointer-events-none z-0"
                             />
 
-                            {/* Smartphone Container with floating motion (Disabled on mobile) */}
                             <motion.div
                                 animate={isMobile ? { y: 0 } : { y: [0, -12, 0] }}
                                 transition={{ repeat: Infinity, duration: 5, ease: 'easeInOut' }}
-                                className="relative z-10 flex justify-center items-center"
+                                className="relative z-10 w-[270px] sm:w-[290px] bg-slate-900 p-2.5 rounded-[44px] shadow-[0_25px_50px_-12px_rgba(0,0,0,0.4)] ring-1 ring-slate-700"
                             >
-                                {/* Smartphone Frame with 3D Hover Tilt (Disabled on mobile) */}
-                                <motion.div
-                                    whileHover={isMobile ? {} : { rotateY: 18, rotateX: -12, scale: 1.04 }}
-                                    transition={{ type: 'spring', stiffness: 180, damping: 18 }}
-                                    className="relative w-[320px] bg-slate-900 p-3.5 rounded-[48px] shadow-[0_25px_50px_-12px_rgba(0,0,0,0.4)] border-[6px] border-slate-800 ring-1 ring-white/10 z-10 cursor-pointer"
-                                    style={{ transformStyle: 'preserve-3d', perspective: '1000px' }}
-                                >
-                                    {/* 3D Glassmorphic Backdrop Card (Simplified bg & disabled backdrop filter on mobile for performance) */}
-                                    <div 
-                                        className="absolute inset-y-1 left-8 -right-8 bg-white/95 md:bg-white/25 border border-white/35 backdrop-blur-none md:backdrop-blur-md rounded-[48px] shadow-lg shadow-slate-900/10 pointer-events-none"
-                                        style={{ transform: 'translateZ(-35px)', zIndex: -1 }}
-                                    />
-                                {/* Dynamic Island */}
-                                <div className="w-28 h-5 bg-black mx-auto rounded-full mb-3 flex items-center justify-between px-3 border border-slate-800/50">
-                                    <div className="w-2 h-2 rounded-full bg-slate-700" />
-                                    <motion.div animate={{ opacity: [1, 0.3, 1] }} transition={{ repeat: Infinity, duration: 2 }} className="w-2 h-2 rounded-full bg-blue-500" />
-                                </div>
-
-                                {/* Screen (Light App SuperApp UI) */}
-                                <div className="bg-gradient-to-b from-blue-50/80 via-white to-white rounded-[36px] overflow-hidden text-slate-800 font-sans shadow-inner pt-2 pb-3">
-
-                                    {/* 1. App Top Header */}
-                                    <div className="px-4 pb-2.5 flex items-center justify-between border-b border-slate-100/60">
-                                        <img src={logoImg} alt="BohAntar" className="h-8 w-auto" />
-                                        <div className="w-7 h-7 rounded-full bg-slate-100 flex items-center justify-center text-slate-600">
-                                            <ArrowRight className="w-3.5 h-3.5" />
-                                        </div>
-                                    </div>
-
-                                    {/* 2. User & Location Greeting */}
-                                    <div className="px-4 pt-2 pb-2.5">
-                                        <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-500">
-                                            <MapPin className="w-3 h-3 text-blue-600 flex-shrink-0" />
-                                            <span className="truncate">Jl. Merdeka No. 10, Pontianak</span>
-                                        </div>
-                                        <div className="text-base font-extrabold text-slate-900 mt-0.5">
-                                            Halo, Aloy 👋
-                                        </div>
-                                        <div className="text-[11px] text-slate-400 font-medium">Mau antar apa hari ini?</div>
-                                    </div>
-
-                                    {/* 3. Grid 6 Service Icons */}
-                                    <div className="px-4 grid grid-cols-3 gap-y-2.5 gap-x-2 text-center mb-3">
-                                        {[
-                                            { key: 'ride', name: 'BohRide', icon: Bike, bg: 'bg-blue-600' },
-                                            { key: 'car', name: 'BohCar', icon: Car, bg: 'bg-emerald-500' },
-                                            { key: 'food', name: 'BohFood', icon: UtensilsCrossed, bg: 'bg-rose-500' },
-                                            { key: 'send', name: 'BohSend', icon: Package, bg: 'bg-cyan-500' },
-                                            { key: 'rental', name: 'BohRental', icon: KeyRound, bg: 'bg-amber-500' },
-                                            { key: 'rental', name: 'Lainnya', icon: Grid, bg: 'bg-slate-600' }
-                                        ].map((item, idx) => {
-                                            const Icon = item.icon;
-                                            const isSelected = activeTab === item.key;
-                                            return (
-                                                <motion.div
-                                                    key={idx}
-                                                    whileTap={{ scale: 0.95 }}
-                                                    onClick={() => setActiveTab(item.key)}
-                                                    className="flex flex-col items-center gap-1 cursor-pointer group"
-                                                >
-                                                    <div className={`w-11 h-11 ${item.bg} rounded-2xl flex items-center justify-center text-white shadow-sm transition group-hover:scale-105 ${isSelected ? 'ring-2 ring-blue-600 ring-offset-2' : ''}`}>
-                                                        <Icon className="w-5 h-5" />
-                                                    </div>
-                                                    <span className="text-[10px] font-bold text-slate-700">{item.name}</span>
-                                                </motion.div>
-                                            );
-                                        })}
-                                    </div>
-
-                                    {/* 5. Promo Banner Card */}
-                                    <div className="mx-4 p-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl text-white shadow-sm relative overflow-hidden">
-                                        <div className="text-[8px] font-bold uppercase tracking-wider text-blue-200">Promo Spesial</div>
-                                        <div className="text-[11px] font-black leading-tight">DISKON ONGKIR BohAntar</div>
-                                        <div className="text-[9px] text-blue-100">Khusus pengguna baru se-Kalbar</div>
-                                    </div>
-
-                                    {/* 6. Bottom Navigation Bar */}
-                                    <div className="mt-3 pt-2 px-5 border-t border-slate-100 flex justify-between items-center text-[9px] font-bold text-slate-400">
-                                        <div className="flex flex-col items-center gap-0.5 text-blue-600">
-                                            <Home className="w-3.5 h-3.5" />
-                                            <span>Home</span>
-                                        </div>
-                                        <div className="flex flex-col items-center gap-0.5 hover:text-slate-700">
-                                            <FileText className="w-3.5 h-3.5" />
-                                            <span>Aktivitas</span>
-                                        </div>
-                                        <div className="flex flex-col items-center gap-0.5 hover:text-slate-700">
-                                            <HelpCircle className="w-3.5 h-3.5" />
-                                            <span>Bantuan</span>
-                                        </div>
-                                        <div className="flex flex-col items-center gap-0.5 hover:text-slate-700">
-                                            <User className="w-3.5 h-3.5" />
-                                            <span>Akun</span>
-                                        </div>
-                                    </div>
-
-                                </div>
+                                <img
+                                    src={layarBeranda}
+                                    alt="Beranda aplikasi BohAntar: kolom cari, layanan BohRide, BohCar, BohFood, BohSend, BohRental, dan menu yang lagi banyak dipesan"
+                                    width={390}
+                                    height={844}
+                                    className="block w-full h-auto rounded-[34px]"
+                                />
                             </motion.div>
                         </motion.div>
-                    </motion.div>
                     </div>
                 </motion.div>
 
@@ -867,7 +760,8 @@ export default function LandingPage({ onSelectPortal }) {
             {/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
                 FARE ESTIMATOR
             â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */}
-            <RevealSection>
+            {/* z-20: daftar saran alamat menjulur ke bawah, melewati bagian Layanan (z-10). */}
+            <RevealSection className="relative z-20">
                 <section id="estimasi" className="py-16 bg-white/60 backdrop-blur-sm border-y border-slate-100 relative z-10">
                     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                         <div className="bg-gradient-to-br from-slate-50 to-white p-6 sm:p-10 rounded-3xl border border-slate-100 shadow-lg shadow-slate-200/40">
@@ -879,7 +773,7 @@ export default function LandingPage({ onSelectPortal }) {
                                         <span>Simulasi Cepat</span>
                                     </div>
                                     <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900">Cek Perkiraan Tarif Perjalanan</h2>
-                                    <p className="text-sm text-slate-500 mt-1">Transparan dan tanpa biaya tersembunyi.</p>
+                                    <p className="text-sm text-slate-500 mt-1">Ketik lalu pilih titik jemput dan tujuan di Sintang. Rumusnya sama dengan di aplikasi.</p>
                                 </div>
                                 <motion.div
                                     layout
@@ -887,19 +781,17 @@ export default function LandingPage({ onSelectPortal }) {
                                 >
                                     <div>
                                         <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
-                                            Perkiraan Tarif{selectedFleet !== 'rental' && ` · ${distanceKm.toLocaleString('id-ID')} km`}
+                                            Perkiraan Tarif{taksiran?.km != null && ` · ${taksiran.km.toLocaleString('id-ID', { maximumFractionDigits: 1 })} km`}
                                         </div>
                                         <AnimatePresence mode="wait">
                                             <motion.div
-                                                key={estimatedPrice}
+                                                key={taksiran?.total ?? 'kosong'}
                                                 initial={{ opacity: 0, y: 10 }}
                                                 animate={{ opacity: 1, y: 0 }}
                                                 exit={{ opacity: 0, y: -10 }}
                                                 className="text-xl sm:text-2xl font-black text-blue-600"
                                             >
-                                                {selectedFleet === 'rental' ? 'Rp 450.000/Hari'
-                                                    : estimatedPrice == null ? '—'
-                                                    : `Rp ${estimatedPrice.toLocaleString('id-ID')}`}
+                                                {taksiran?.total == null ? '—' : `Rp ${taksiran.total.toLocaleString('id-ID')}`}
                                             </motion.div>
                                         </AnimatePresence>
                                     </div>
@@ -909,44 +801,26 @@ export default function LandingPage({ onSelectPortal }) {
                                 </motion.div>
                             </div>
 
-                            <form onSubmit={handleCalculateFare} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                                {[
-                                    { icon: MapPin, label: 'Titik Jemput', value: pickup, onChange: setPickup, placeholder: 'Lokasi jemput' },
-                                    { icon: Navigation, label: 'Titik Tujuan', value: dropoff, onChange: setDropoff, placeholder: 'Lokasi tujuan' }
-                                ].map((field, i) => (
-                                    <motion.div
-                                        key={i}
-                                        whileFocus={{ scale: 1.02 }}
-                                        className="bg-white border border-slate-200 rounded-2xl p-3 flex items-center gap-3 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all shadow-sm"
-                                    >
-                                        <field.icon className="w-5 h-5 text-blue-600 flex-shrink-0" />
-                                        <div className="w-full">
-                                            <label className="block text-[9px] font-bold text-slate-400 uppercase">{field.label}</label>
-                                            <input type="text" value={field.value} onChange={(e) => field.onChange(e.target.value)}
-                                                className="w-full bg-transparent text-xs font-semibold text-slate-800 focus:outline-none placeholder:text-slate-400"
-                                                placeholder={field.placeholder} />
-                                        </div>
-                                    </motion.div>
-                                ))}
+                            {/* Tanpa tombol: tarif dihitung begitu kedua titik dipilih. */}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                <KolomTempat icon={MapPin} label="Titik Jemput" placeholder="Ketik nama jalan atau tempat" nilai={jemput} ubah={setJemput} />
+                                <KolomTempat icon={Navigation} label="Titik Tujuan" placeholder="Ketik nama jalan atau tempat" nilai={tujuan} ubah={setTujuan} />
                                 <div className="bg-white border border-slate-200 rounded-2xl p-3 flex items-center gap-3 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition-all shadow-sm">
                                     <Car className="w-5 h-5 text-blue-600 flex-shrink-0" />
                                     <div className="w-full">
                                         <label className="block text-[9px] font-bold text-slate-400 uppercase">Armada</label>
                                         <select value={selectedFleet} onChange={(e) => setSelectedFleet(e.target.value)}
                                             className="w-full bg-transparent text-xs font-semibold text-slate-800 focus:outline-none cursor-pointer">
-                                            <option value="ride">bohRide (Motor)</option>
-                                            <option value="car">bohCar (Mobil)</option>
-                                            <option value="send">bohSend (Kurir)</option>
-                                            <option value="rental">bohRental (Sewa)</option>
+                                            <option value="ride">BohRide (Motor)</option>
+                                            <option value="car">BohCar (Mobil)</option>
+                                            <option value="send">BohSend (Kurir)</option>
+                                            {/* BohRental tidak di sini: harganya ditentukan tiap mitra,
+                                                angka "Rp 450.000/Hari" yang dulu tertulis cuma karangan. */}
                                         </select>
                                     </div>
                                 </div>
-                                <MagneticButton type="submit"
-                                    className="w-full py-3.5 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold text-sm rounded-2xl shadow-lg shadow-blue-200 transition-all flex items-center justify-center gap-2 cursor-pointer">
-                                    <span>Hitung Estimasi</span>
-                                    <ArrowRight className="w-4 h-4" />
-                                </MagneticButton>
-                            </form>
+                            </div>
+                            {taksiran?.error && <p className="text-xs text-rose-600 mt-3">{taksiran.error}</p>}
                         </div>
                     </div>
                 </section>
@@ -959,8 +833,8 @@ export default function LandingPage({ onSelectPortal }) {
             <section id="layanan" className="py-20 lg:py-28 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
                 <RevealSection className="text-center max-w-3xl mx-auto mb-16 space-y-3">
                     <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-blue-600">
-                        <Sparkles className="w-3.5 h-3.5" />
-                        <span>Ekosistem Terlengkap</span>
+                        <Grid className="w-3.5 h-3.5" />
+                        <span>Layanan</span>
                     </div>
                     <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900 tracking-tight">
                         Layanan Kami untuk Anda
@@ -1000,19 +874,19 @@ export default function LandingPage({ onSelectPortal }) {
                                         ))}
                                     </div>
 
-                                    <button className="px-4 py-2 text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 rounded-xl hover:bg-blue-100 transition-all duration-300 group-hover:bg-blue-600 group-hover:text-white group-hover:border-blue-600 group-hover:shadow-lg group-hover:shadow-blue-200">
+                                    <button onClick={() => window.open(PLAY_STORE_URL, '_blank', 'noopener')} className="px-4 py-2 text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 rounded-xl hover:bg-blue-100 transition-all duration-300 group-hover:bg-blue-600 group-hover:text-white group-hover:border-blue-600 group-hover:shadow-lg group-hover:shadow-blue-200">
                                         Pesan Sekarang
                                     </button>
                                 </div>
 
-                                <div className="h-36 bg-slate-50 overflow-hidden border-t border-slate-100 relative">
-                                    <motion.img
+                                {/* Ikon layanan yang sama dengan grid di app, ganti foto stok Unsplash. */}
+                                <div className={`h-36 ${item.imgBg} overflow-hidden border-t border-slate-100 flex items-center justify-center`}>
+                                    <img
                                         src={item.img}
-                                        alt={item.name}
-                                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                                        alt=""
+                                        className="h-24 w-auto object-contain transition-transform duration-700 group-hover:scale-110"
                                         loading="lazy"
                                     />
-                                    <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                                 </div>
                             </motion.div>
                         );
@@ -1027,16 +901,16 @@ export default function LandingPage({ onSelectPortal }) {
             <section id="keunggulan" className="py-20 bg-white/60 backdrop-blur-sm border-y border-slate-100 relative z-10">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <RevealSection className="text-center max-w-3xl mx-auto mb-16 space-y-3">
-                        <div className="text-xs font-bold uppercase tracking-wider text-blue-600">Standar Tertinggi</div>
+                        <div className="text-xs font-bold uppercase tracking-wider text-blue-600">Keunggulan</div>
                         <h2 className="text-3xl sm:text-4xl font-extrabold text-slate-900">Mengapa Memilih BohAntar?</h2>
-                        <p className="text-slate-500 text-sm sm:text-base">Standar layanan terbaik untuk mobilitas Anda di Kalimantan Barat.</p>
+                        <p className="text-slate-500 text-sm sm:text-base">Yang Anda dapat setiap kali memesan.</p>
                     </RevealSection>
 
                     <StaggerContainer className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8">
                         {[
-                            { title: 'Aman & Terverifikasi', desc: 'Seluruh mitra pengemudi melewati inspeksi fisik, SIM sah, dan kelayakan jalan resmi.', icon: ShieldCheck, color: 'text-emerald-600 bg-emerald-50 border-emerald-200', glow: 'group-hover:shadow-emerald-200/50' },
-                            { title: 'Navigasi Akurat', desc: 'Penentuan titik jemput dan rute tercepat berbasis koordinat GPS satelit real-time.', icon: MapPin, color: 'text-blue-600 bg-blue-50 border-blue-200', glow: 'group-hover:shadow-blue-200/50' },
-                            { title: 'Rating Prima', desc: 'Komitmen pelayanan berkualitas tinggi untuk kenyamanan dan keamanan optimal Anda.', icon: Star, color: 'text-amber-500 bg-amber-50 border-amber-200', glow: 'group-hover:shadow-amber-200/50' }
+                            { title: 'Driver Terverifikasi', desc: 'KTP, SIM, STNK, dan foto wajah driver diperiksa admin sebelum akunnya aktif. Wajah driver tampil di aplikasi saat menjemput.', icon: ShieldCheck, color: 'text-emerald-600 bg-emerald-50 border-emerald-200', glow: 'group-hover:shadow-emerald-200/50' },
+                            { title: 'Lacak di Peta', desc: 'Posisi driver terlihat di peta sejak menuju titik jemput sampai tiba di tujuan.', icon: MapPin, color: 'text-blue-600 bg-blue-50 border-blue-200', glow: 'group-hover:shadow-blue-200/50' },
+                            { title: 'Tarif Jelas, Bayar Tunai', desc: 'Harga muncul sebelum memesan dan dibayar tunai langsung ke driver. Tanpa saldo atau dompet digital.', icon: Banknote, color: 'text-amber-500 bg-amber-50 border-amber-200', glow: 'group-hover:shadow-amber-200/50' }
                         ].map((feat, idx) => {
                             const Icon = feat.icon;
                             return (
@@ -1197,31 +1071,21 @@ export default function LandingPage({ onSelectPortal }) {
                                     Pertamamu Bersama BohAntar
                                 </h2>
                                 <p className="text-blue-200 text-sm leading-relaxed">
-                                    Tersedia di Google Play Store dan Apple App Store. Gratis, cepat, dan terpercaya.
+                                    Tersedia di Google Play Store. Gratis, cepat, dan terpercaya.
                                 </p>
                             </div>
 
-                            <div className="flex flex-wrap justify-center gap-4">
-                                <MagneticButton className="group px-6 py-4 bg-white text-slate-900 rounded-2xl text-sm font-bold flex items-center gap-3 shadow-xl hover:shadow-2xl transition-all cursor-pointer">
-                                    <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center">
-                                        <Play className="w-4 h-4 text-slate-700 fill-slate-700" />
-                                    </div>
-                                    <div className="text-left">
-                                        <div className="text-[9px] text-slate-500 font-medium uppercase tracking-wider">Dapatkan di</div>
-                                        <div className="text-sm font-black">Google Play</div>
-                                    </div>
-                                </MagneticButton>
-
-                                <MagneticButton className="group px-6 py-4 bg-slate-900 text-white rounded-2xl text-sm font-bold flex items-center gap-3 shadow-xl hover:shadow-2xl transition-all cursor-pointer border border-white/10">
-                                    <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center">
-                                        <Smartphone className="w-4 h-4 text-white" />
-                                    </div>
-                                    <div className="text-left">
-                                        <div className="text-[9px] text-slate-400 font-medium uppercase tracking-wider">Unduh dari</div>
-                                        <div className="text-sm font-black">App Store</div>
-                                    </div>
-                                </MagneticButton>
-                            </div>
+                            {/* Lencana resmi Google Play (play.google.com/intl/en_us/badges) — jangan
+                                digambar ulang; pedoman merek Google melarang lencana tiruan.
+                                App Store belum ada: aplikasi iOS belum dirilis. */}
+                            <a
+                                href={PLAY_STORE_URL}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="shrink-0 transition-transform hover:scale-105"
+                            >
+                                <img src={playBadge} alt="Dapatkan di Google Play" className="h-20 w-auto" />
+                            </a>
                         </div>
                     </motion.div>
                 </section>
@@ -1244,7 +1108,7 @@ export default function LandingPage({ onSelectPortal }) {
                                 />
                             </div>
                             <p className="text-slate-500 leading-relaxed text-xs">
-                                Platform mobilitas, ekspedisi instan, dan logistik digital terdepan di Kalimantan Barat.
+                                Aplikasi ojek, kurir, pesan makanan, dan sewa mobil untuk warga Sintang, Kalimantan Barat.
                             </p>
                         </div>
 
@@ -1252,11 +1116,11 @@ export default function LandingPage({ onSelectPortal }) {
                         {[
                             {
                                 title: 'Layanan', links: [
-                                    { label: 'bohRide (Ojek Motor)', href: '#layanan' },
-                                    { label: 'bohCar (Taksi Mobil)', href: '#layanan' },
-                                    { label: 'bohSend (Kurir Instan)', href: '#layanan' },
-                                    { label: 'bohFood (Kuliner Kalbar)', href: '#layanan' },
-                                    { label: 'bohRental (Sewa Mobil)', href: '#layanan' },
+                                    { label: 'BohRide (Ojek Motor)', href: '#layanan' },
+                                    { label: 'BohCar (Taksi Mobil)', href: '#layanan' },
+                                    { label: 'BohSend (Kurir Instan)', href: '#layanan' },
+                                    { label: 'BohFood (Pesan Makanan)', href: '#layanan' },
+                                    { label: 'BohRental (Sewa Mobil)', href: '#layanan' },
                                 ]
                             },
                             {
@@ -1298,7 +1162,14 @@ export default function LandingPage({ onSelectPortal }) {
 
                     {/* Copyright */}
                     <div className="pt-8 border-t border-slate-800/60 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-slate-600">
-                        <div>&copy; 2026 <strong className="text-slate-400">BohAntar</strong>. Seluruh hak cipta dilindungi.</div>
+                        {/* Badan usaha pengelola — dicocokkan Meta saat verifikasi bisnis
+                            (WhatsApp Cloud API), jadi harus sama dengan dokumen resmi. */}
+                        <div className="text-center sm:text-left space-y-1">
+                            <div>&copy; 2026 <strong className="text-slate-400">BohAntar</strong>. Seluruh hak cipta dilindungi.</div>
+                            <div>
+                                BohAntar dikelola oleh <strong className="text-slate-400">PT Indo Tech Consulting</strong> · Jalan Mensiku Jaya, Sintang, Kalimantan Barat 78616 · +62 899-6979-079
+                            </div>
+                        </div>
                         <div className="flex items-center gap-1.5">
                             <span>Dibuat dengan</span>
                             <motion.span animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 1.5 }}>❤️</motion.span>

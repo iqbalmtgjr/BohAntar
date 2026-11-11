@@ -198,7 +198,11 @@ func kirimNotifikasi(tokenPerangkat, judul, isi string, data map[string]string) 
 // notifikasiKe mengirim ke satu pengguna berdasarkan nomornya.
 // Dijalankan di goroutine: pemesanan tidak boleh menunggu jaringan Google.
 func notifikasiKe(phone, judul, isi string, data map[string]string) {
-	if phone == "" || !fcmAktif() {
+	if phone == "" {
+		return
+	}
+	go kirimWebPush(phone, judul, isi, data) // browser dashboard mitra (webpush.go)
+	if !fcmAktif() {
 		return
 	}
 	go func() {

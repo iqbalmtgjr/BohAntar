@@ -207,7 +207,7 @@ export default function RentalDashboard({ ownerPhone }) {
         </div>
 
         {/* Menu cepat ala e-wallet: tab bar bawah cuma muat 5 slot,
-            sisanya (Armada, Jasa, Langganan) hanya bisa dijangkau dari sini di HP. */}
+            sisanya (Armada, Jasa, Laporan, Langganan) hanya bisa dijangkau dari sini di HP. */}
         <div className="card" style={{ marginBottom: 22, padding: "18px 14px 14px", borderRadius: 20 }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, padding: "0 4px" }}>Semua Menu</div>
           <div style={{ fontSize: 11, color: "var(--text-muted)", margin: "2px 4px 16px" }}>

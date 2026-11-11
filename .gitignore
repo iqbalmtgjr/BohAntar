@@ -7,3 +7,6 @@ rilis.env
 
 # Cache build Kotlin, lahir sendiri saat flutter pub get
 mobile/android/.kotlin/
+
+# Kunci VAPID Web Push, dibuat backend saat pertama jalan (webpush.go)
+backend/vapid.pem

@@ -16,6 +16,7 @@ const TITLES = {
     "/services": "Jasa & Denda",
     "/calendar": "Kalender Rental",
     "/reports": "Laporan Lengkap",
+    "/chat": "Chat Penyewa",
     "/subscription": "Langganan & Billing",
     "/account": "Akun Saya"
   },
@@ -28,7 +29,7 @@ const TITLES = {
 
 export default function PortalTopbar({ portalType, userPhone }) {
   const { pathname } = useLocation();
-  const title = TITLES[portalType]?.[pathname] || "Dashboard";
+  const title = TITLES[portalType]?.[pathname.replace(/^\/chat\/.+/, "/chat")] || "Dashboard";
   const roleLabel = portalType === "food" ? "Mitra bohFood" : "Mitra bohRental";
 
   return (

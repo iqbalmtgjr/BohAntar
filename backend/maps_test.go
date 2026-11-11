@@ -164,3 +164,64 @@ func TestJatahHarianPlaces(t *testing.T) {
 		t.Fatal("batas 0 berarti Google tidak pernah dipanggil")
 	}
 }
+
+// Pesanan uji dari emulator berlokasi kantor Google (AS) sempat lolos seharga
+// Rp32 juta. Taksiran ditolak untuk titik di luar Sintang, di dalamnya tidak.
+func TestTaksiranDiLuarSintangDitolak(t *testing.T) {
+	bukaDBTes(t) // taksiran yang lolos membaca tabel tarif
+	tanya := func(q string) int {
+		w := httptest.NewRecorder()
+		tarifEstimasiHandler(w, httptest.NewRequest("GET", "/api/tarif/estimasi?layanan=BohRide&"+q, nil))
+		return w.Code
+	}
+	if c := tanya("from_lat=0.0785&from_lng=111.494&to_lat=0.06&to_lng=111.51"); c != 200 {
+		t.Errorf("dalam kota Sintang: kode %d, mau 200", c)
+	}
+	if c := tanya("from_lat=37.4220&from_lng=-122.0841&to_lat=0.06&to_lng=111.51"); c != 400 {
+		t.Errorf("jemput di Mountain View: kode %d, mau 400", c)
+	}
+	if c := tanya("from_lat=0.0785&from_lng=111.494&to_lat=-0.0263&to_lng=109.3425"); c != 400 {
+		t.Errorf("tujuan Pontianak: kode %d, mau 400", c)
+	}
+}
+
+// Kalkulator halaman depan sempat memakai jarak tetap 6,5 km apa pun alamatnya.
+// Dengan koordinat, angkanya wajib sama dengan rumus yang menagih penumpang.
+func TestTarifPublikDariKoordinat(t *testing.T) {
+	bukaDBTes(t)
+	tanya := func(q string) (int, map[string]float64) {
+		w := httptest.NewRecorder()
+		tarifPublikHandler(w, httptest.NewRequest("GET", "/api/tarif/publik?layanan=BohRide&"+q, nil))
+		var b map[string]float64
+		json.Unmarshal(w.Body.Bytes(), &b)
+		return w.Code, b
+	}
+	kode, b := tanya("from_lat=0.0785&from_lng=111.494&to_lat=0.06&to_lng=111.51")
+	mau := hitungRincian(ambilTarif("BohRide"), jarakKM(0.0785, 111.494, 0.06, 111.51)*1000)
+	if kode != 200 || b["total"] != mau.Total || b["km"] != mau.KM {
+		t.Errorf("dalam Sintang: kode %d, total %v km %v; mau 200, %v, %v", kode, b["total"], b["km"], mau.Total, mau.KM)
+	}
+	if kode, _ := tanya("from_lat=0.0785&from_lng=111.494&to_lat=-0.0263&to_lng=109.3425"); kode != 400 {
+		t.Errorf("tujuan Pontianak: kode %d, mau 400", kode)
+	}
+	if kode, _ := tanya("from_lat=0.0785&from_lng=111.494"); kode != 400 {
+		t.Errorf("tujuan belum dipilih: kode %d, mau 400", kode)
+	}
+	if kode, _ := tanya("km=6.5"); kode != 200 {
+		t.Errorf("halaman versi lama (?km=): kode %d, mau 200", kode)
+	}
+}
+
+func TestJatahCariPublik(t *testing.T) {
+	for i := 0; i < batasCariPublik; i++ {
+		if jatahCariPublikHabis("10.0.0.1") {
+			t.Fatalf("pencarian ke-%d sudah ditolak, batasnya %d", i+1, batasCariPublik)
+		}
+	}
+	if !jatahCariPublikHabis("10.0.0.1") {
+		t.Error("lewat batas harus ditolak")
+	}
+	if jatahCariPublikHabis("10.0.0.2") {
+		t.Error("IP lain tidak boleh ikut kena")
+	}
+}

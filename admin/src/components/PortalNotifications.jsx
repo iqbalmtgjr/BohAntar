@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import { Bell } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api";
+import { toast } from "./Feedback";
+import { pushDidukung, sedangDimasukiAdmin, nyalakanNotifikasi, segarkanLangganan } from "../webpush";
 
 /* Lonceng notifikasi panel web. Dipakai Super Admin dan portal mitra rental;
    bentuk dropdown-nya sama, sumber datanya yang berbeda.
@@ -37,6 +39,11 @@ async function loadAdmin(next) {
 }
 
 async function loadRental(next) {
+  // Izin belum pernah ditanya di perangkat ini. Yang sudah menolak tidak dikejar terus.
+  if (pushDidukung() && Notification.permission === "default" && !sedangDimasukiAdmin()) {
+    next.push({ id: "push", text: "Nyalakan notifikasi chat", sub: "Dapat kabar chat penyewa walau dashboard ditutup", aksi: "push", tone: "info", count: "!" });
+  }
+
   try {
     const sub = await api.getSubscriptionStatus();
     const sisa = Math.ceil((new Date(sub.valid_until) - Date.now()) / DAY);
@@ -49,9 +56,14 @@ async function loadRental(next) {
 
   try {
     const bookings = await api.getRentalBookings();
-    const pending = Array.isArray(bookings) ? bookings.filter(b => b.status === "pending").length : 0;
+    const daftar = Array.isArray(bookings) ? bookings : [];
+    const pending = daftar.filter(b => b.status === "pending").length;
     if (pending > 0) {
-      next.push({ id: "booking", text: `${pending} booking baru dari aplikasi`, sub: "Cek jadwal dan konfirmasi penyewa", to: "/calendar", tone: "info", count: pending });
+      next.push({ id: "booking", text: `${pending} booking baru dari aplikasi`, sub: "Setujui atau tolak di Pesanan Masuk", to: "/orders", state: { filter: "pending" }, tone: "info", count: pending });
+    }
+    const chat = daftar.reduce((n, b) => n + (b.chat_belum || 0), 0);
+    if (chat > 0) {
+      next.push({ id: "chat", text: `${chat} chat penyewa belum dibaca`, sub: "Buka Chat untuk membalas", to: "/chat", tone: "warning", count: chat });
     }
   } catch { /* daftar booking gagal dimuat */ }
 }
@@ -76,9 +88,19 @@ export default function PortalNotifications({ portalType, className = "theme-tog
     };
 
     load();
+    if (portalType === "rental") segarkanLangganan();
     const t = setInterval(load, 60000);
     return () => { alive = false; clearInterval(t); };
   }, [portalType]);
+
+  const klik = (item) => {
+    setOpen(false);
+    if (item.aksi !== "push") return navigate(item.to, { state: item.state });
+    nyalakanNotifikasi()
+      .then(() => toast.success("Notifikasi menyala di perangkat ini"))
+      .catch((e) => toast.error(e.message))
+      .finally(() => setItems((xs) => xs.filter((x) => x.id !== "push")));
+  };
 
   if (!SUPPORTED.includes(portalType)) return null;
 
@@ -121,7 +143,7 @@ export default function PortalNotifications({ portalType, className = "theme-tog
           ) : items.map(item => (
             <button
               key={item.id}
-              onClick={() => { setOpen(false); navigate(item.to); }}
+              onClick={() => klik(item)}
               style={{ width: "100%", padding: "12px 16px", textAlign: "left", background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 10 }}
               onMouseEnter={e => e.currentTarget.style.backgroundColor = "var(--bg-hover)"}
               onMouseLeave={e => e.currentTarget.style.backgroundColor = "transparent"}

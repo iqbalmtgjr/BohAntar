@@ -1,5 +1,7 @@
+import { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { LayoutDashboard, Car, Calendar, LogOut, BarChart3, UserCog, ConciergeBell, ShoppingBag } from "lucide-react";
+import { api } from "../api";
+import { LayoutDashboard, Car, Calendar, LogOut, BarChart3, UserCog, ConciergeBell, ShoppingBag, MessageCircle } from "lucide-react";
 import logoB from "../assets/logo_b_icon.png";
 import ThemeToggle from "./ThemeToggle";
 import PortalNotifications from "./PortalNotifications";
@@ -17,8 +19,12 @@ const navItems = [
   // "Semua Menu" di Dashboard saat dibuka dari HP.
   { to: "/cars", icon: Car, label: "Kelola Armada", short: "Armada", desktopOnly: true },
   { to: "/services", icon: ConciergeBell, label: "Jasa & Denda", short: "Jasa", desktopOnly: true },
+  // Chat menempati slot tab bawah bekas Laporan: paling sering dibuka mitra.
+  // Laporan di HP kini lewat grid "Semua Menu".
+  { section: "Chat" },
+  { to: "/chat", icon: MessageCircle, label: "Chat Penyewa", short: "Chat" },
   { section: "Laporan" },
-  { to: "/reports", icon: BarChart3, label: "Laporan Lengkap", short: "Laporan" },
+  { to: "/reports", icon: BarChart3, label: "Laporan Lengkap", short: "Laporan", desktopOnly: true },
   // Langganan pindah ke halaman Akun: nav bawah mobile hanya simetris pada jumlah
   // ganjil (2 | tombol tengah | 2), dan billing bukan menu harian.
   { section: "Akun" },
@@ -27,6 +33,25 @@ const navItems = [
 
 export default function SidebarRentalPartner({ onLogout }) {
   const { pathname } = useLocation();
+  const [lencana, setLencana] = useState({});
+
+  // Lencana tab: Chat = pesan penyewa belum dibaca, Pesanan = booking menunggu
+  // konfirmasi. Dihitung ulang tiap pindah halaman (keluar dari percakapan
+  // langsung memadamkannya) dan tiap 30 dtk.
+  // ponytail: polling; web push yang membangunkan mitra, lencana cuma penanda.
+  useEffect(() => {
+    const muat = () => api.getRentalBookings()
+      .then(d => Array.isArray(d) && setLencana({
+        "/chat": d.reduce((n, b) => n + (b.chat_belum || 0), 0),
+        "/orders": d.filter(b => b.status === "pending").length
+      }))
+      .catch(() => {});
+    // Ditunda sedetik: membuka /chat/{id} menandai pesannya terbaca, hitungan
+    // yang berangkat bersamaan bisa masih melihat pesan itu belum dibaca.
+    const awal = setTimeout(muat, 1000);
+    const t = setInterval(() => !document.hidden && muat(), 30000);
+    return () => { clearTimeout(awal); clearInterval(t); };
+  }, [pathname]);
 
   return (
     <aside className="sidebar">
@@ -63,11 +88,14 @@ export default function SidebarRentalPartner({ onLogout }) {
             <Link
               key={item.to}
               to={item.to}
-              className={`nav-item${pathname === item.to ? " active" : ""}${item.center ? " nav-center" : ""}${item.desktopOnly ? " nav-desktop-only" : ""}`}
+              className={`nav-item${pathname === item.to || pathname.startsWith(`${item.to}/`) ? " active" : ""}${item.center ? " nav-center" : ""}${item.desktopOnly ? " nav-desktop-only" : ""}`}
             >
               <item.icon size={19} />
               <span className="nav-label-full">{item.label}</span>
               <span className="nav-label-short">{item.short}</span>
+              {lencana[item.to] > 0 && (
+                <span className="nav-badge" aria-label={`${lencana[item.to]} baru`}>{lencana[item.to] > 99 ? "99+" : lencana[item.to]}</span>
+              )}
             </Link>
           )
         )}

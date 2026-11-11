@@ -76,6 +76,16 @@ const (
 // ponytail: satu kota; jadikan daftar wilayah saat buka di kota kedua.
 var pusatLayanan = [2]float64{0.0785, 111.4940}
 
+// Pencarian alamat saja tidak cukup membatasi wilayah: titik jemput bawaan
+// datang dari GPS HP, dan HP/emulator di luar kota mengirim posisinya sendiri
+// (pesanan uji dari "Charlie's Cafe, Amphitheatre" — kantor Google di AS —
+// sempat tercatat seharga Rp32 juta). Jadi pesanan dan taksirannya dicek di sini.
+func dalamWilayahLayanan(lat, lng float64) bool {
+	return jarakKM(pusatLayanan[0], pusatLayanan[1], lat, lng) <= radiusLayananKM
+}
+
+const pesanLuarWilayah = "BohAntar baru melayani wilayah Sintang. Titik jemput dan tujuan harus di dalam Sintang."
+
 var mapsClient = &http.Client{Timeout: 12 * time.Second}
 
 func mapsAPIKey() string { return getEnv("GOOGLE_MAPS_API_KEY", "") }
@@ -292,6 +302,15 @@ func mapsAutocompleteHandler(w http.ResponseWriter, r *http.Request) {
 // belum ada. Bentuk balasannya sama persis dengan jalur Google, jadi aplikasi
 // tidak tahu — dan tidak perlu tahu — penyedia mana yang menjawab.
 func cariTempatGratis(w http.ResponseWriter, r *http.Request, q string) {
+	saran, err := cariPhoton(r, q)
+	if err != nil {
+		writeJSONResponse(w, 502, map[string]string{"error": "Pencarian alamat sedang bermasalah. Geser peta ke titik tujuan."})
+		return
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "suggestions": saran})
+}
+
+func cariPhoton(r *http.Request, q string) ([]map[string]string, error) {
 	catatPlaces(func(p *pemakaianPlaces) { p.Photon++ })
 	// bbox menyaring di sisi Photon; tanpa itu 15 hasilnya bisa semuanya dari
 	// luar Sintang lalu habis dibuang saranPhoton. Di khatulistiwa satu derajat
@@ -306,15 +325,83 @@ func cariTempatGratis(w http.ResponseWriter, r *http.Request, q string) {
 	}
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, urlPhotonCari+"?"+v.Encode(), nil)
 	if err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyiapkan permintaan"})
-		return
+		return nil, err
 	}
 	hasil, err := kirimPermintaan(req)
 	if err != nil {
-		writeJSONResponse(w, 502, map[string]string{"error": "Pencarian alamat sedang bermasalah. Geser peta ke titik tujuan."})
+		return nil, err
+	}
+	return saranPhoton(hasil, &pusatLayanan), nil
+}
+
+// ---------- CARI ALAMAT UNTUK HALAMAN DEPAN ----------
+
+// mapsCariPublikHandler: GET /api/maps/cari-publik?q=
+//
+// Untuk kalkulator tarif di halaman depan, yang dibuka tanpa login. Sengaja
+// HANYA Photon: jatah harian Google dipakai bersama aplikasi, dan endpoint
+// tanpa login bisa dihabiskan siapa saja. Saran Photon sudah membawa
+// koordinat, jadi tidak perlu /api/maps/place.
+func mapsCariPublikHandler(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(q) < 3 || len(q) > 100 {
+		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "suggestions": []interface{}{}})
 		return
 	}
-	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "suggestions": saranPhoton(hasil, &pusatLayanan)})
+	// Photon gratis tapi minta dipakai wajar; kalau server ini diblokir karena
+	// disalahgunakan lewat endpoint ini, cadangan pencarian aplikasi ikut mati.
+	if jatahCariPublikHabis(alamatPemanggil(r)) {
+		writeJSONResponse(w, 429, map[string]string{"error": "Terlalu banyak pencarian. Coba lagi beberapa menit lagi."})
+		return
+	}
+	saran, err := cariPhoton(r, q)
+	if err != nil {
+		writeJSONResponse(w, 502, map[string]string{"error": "Pencarian alamat sedang bermasalah. Coba lagi sebentar."})
+		return
+	}
+	hasil := []map[string]interface{}{}
+	for _, s := range saran {
+		if lat, lng, ok := koordinatDariIDPhoton(s["place_id"]); ok {
+			hasil = append(hasil, map[string]interface{}{"name": s["name"], "address": s["address"], "lat": lat, "lng": lng})
+		}
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "suggestions": hasil})
+}
+
+// ponytail: di memori seperti rem login, kembali nol saat restart. Longgar
+// karena banyak pelanggan seluler di Sintang berbagi satu IP publik (CGNAT);
+// halaman depan baru mencari setelah 3 huruf dan jeda ketik.
+const batasCariPublik = 60 // per 10 menit per IP
+
+var (
+	cariPublikMu sync.Mutex
+	cariPublik   = map[string][]time.Time{}
+)
+
+// jatahCariPublikHabis mencatat satu pencarian dan menjawab apakah IP ini
+// sudah melewati batas. Catatan yang lewat jendela dibuang sekalian.
+func jatahCariPublikHabis(ip string) bool {
+	cariPublikMu.Lock()
+	defer cariPublikMu.Unlock()
+	batas := time.Now().Add(-10 * time.Minute)
+	for k, riwayat := range cariPublik {
+		hidup := riwayat[:0]
+		for _, t := range riwayat {
+			if t.After(batas) {
+				hidup = append(hidup, t)
+			}
+		}
+		if len(hidup) == 0 {
+			delete(cariPublik, k)
+		} else {
+			cariPublik[k] = hidup
+		}
+	}
+	if len(cariPublik[ip]) >= batasCariPublik {
+		return true
+	}
+	cariPublik[ip] = append(cariPublik[ip], time.Now())
+	return false
 }
 
 // saranPhoton mengubah balasan Photon jadi daftar saran: yang lebih jauh dari

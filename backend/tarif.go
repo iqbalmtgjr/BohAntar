@@ -347,6 +347,10 @@ func tarifEstimasiHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 400, map[string]string{"error": "Titik jemput dan tujuan harus dipilih dari peta"})
 		return
 	}
+	if !dalamWilayahLayanan(fLat, fLng) || !dalamWilayahLayanan(tLat, tLng) {
+		writeJSONResponse(w, 400, map[string]string{"error": pesanLuarWilayah})
+		return
+	}
 	layanan := r.URL.Query().Get("layanan")
 	rincian := hitungRincian(ambilTarif(layanan), jarakKM(fLat, fLng, tLat, tLng)*1000)
 	// Pratinjau voucher yang akan terpakai otomatis. BohFood mengirim
@@ -366,15 +370,33 @@ func tarifEstimasiHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// tarifPublikHandler: GET /api/tarif/publik?layanan=&km=
+// tarifPublikHandler: GET /api/tarif/publik?layanan=&from_lat=&from_lng=&to_lat=&to_lng=
+// (atau ?layanan=&km= untuk halaman depan versi lama yang masih tersimpan di peramban)
 //
 // Untuk kalkulator di halaman depan, yang dibuka tanpa login. Kalkulator itu
 // dulu menyimpan angkanya sendiri dan langsung tertinggal begitu tarif diubah
-// di dashboard. Yang dikirim cuma total yang dibayar penumpang — pembagian
-// dengan driver bukan urusan pengunjung.
+// di dashboard, lalu sempat memakai jarak tetap 6,5 km apa pun alamatnya.
+// Dengan koordinat, jarak dan rumusnya sama dengan tarifEstimasiHandler di
+// aplikasi. Yang dikirim cuma total yang dibayar penumpang — pembagian dengan
+// driver bukan urusan pengunjung — tanpa voucher, karena pengunjung tanpa akun.
 func tarifPublikHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
+		return
+	}
+	if r.URL.Query().Has("from_lat") {
+		fLat, fLng, ok1 := bacaKoordinat(r, "from_lat", "from_lng")
+		tLat, tLng, ok2 := bacaKoordinat(r, "to_lat", "to_lng")
+		if !ok1 || !ok2 {
+			writeJSONResponse(w, 400, map[string]string{"error": "Pilih titik jemput dan tujuan dari daftar saran"})
+			return
+		}
+		if !dalamWilayahLayanan(fLat, fLng) || !dalamWilayahLayanan(tLat, tLng) {
+			writeJSONResponse(w, 400, map[string]string{"error": pesanLuarWilayah})
+			return
+		}
+		rincian := hitungRincian(ambilTarif(r.URL.Query().Get("layanan")), jarakKM(fLat, fLng, tLat, tLng)*1000)
+		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "km": rincian.KM, "total": rincian.Total})
 		return
 	}
 	km, err := strconv.ParseFloat(r.URL.Query().Get("km"), 64)

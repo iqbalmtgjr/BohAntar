@@ -68,6 +68,17 @@ export KASVO_INTEGRASI_TOKEN=""
 # kirimNotifikasi jadi no-op — aplikasi tetap normal, cuma senyap.
 export FCM_SERVICE_ACCOUNT="/www/wwwroot/bohantar-backend/fcm-service-account.json"
 
+# ---- Verifikasi nomor lewat WhatsApp (verifikasi_wa.go) ----
+# Pendaftar mengirim kode lewat WhatsApp ke nomor BohAntar; Meta meneruskannya
+# ke /api/webhook/whatsapp. Verifikasi WAJIB hanya kalau WA_NOMOR DAN
+# WA_APP_SECRET terisi. Dua baris pertama aman diisi kapan saja (untuk
+# menyambungkan webhook di Meta); WA_NOMOR baru diisi setelah AAB yang punya
+# lembar verifikasi tayang di Play — APK lama tidak bisa daftar sesudahnya.
+# Mematikan lagi: beri # di depan WA_NOMOR lalu restart.
+export WA_APP_SECRET=""      # Meta: App settings → Basic → App secret
+export WA_VERIFY_TOKEN=""    # teks bebas (openssl rand -hex 16), sama dengan "Verify token" di Meta
+# export WA_NOMOR="628xxxxxxxxxx"  # nomor WhatsApp BohAntar, tanpa + dan tanpa spasi
+
 # ---- Kepatuhan Google Play ----
 # Ditampilkan di halaman /privasi sebagai alamat permintaan hapus akun. Google Play
 # memverifikasi permintaan itu benar-benar sampai, jadi harus email yang dibaca orang.

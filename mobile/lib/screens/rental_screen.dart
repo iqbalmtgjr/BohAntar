@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:mobile/ketersediaan_sewa.dart';
 import 'package:mobile/models/food.dart' show rupiah;
+import 'package:mobile/screens/chat_sewa_screen.dart';
 import 'package:mobile/services/api_service.dart';
 import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/food_widgets.dart' show GambarJaringan, PesanKosong;
-import 'package:url_launcher/url_launcher.dart';
 
 /// BohRental untuk penyewa: pilih kendaraan dari armada mitra, ajukan sewa,
 /// lalu pantau di "Sewa saya". Mitra menyetujui dari dashboard web-nya;
@@ -497,6 +497,7 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
     final plat = (b['plate_number'] ?? '').toString();
     final bisaBatal = status == 'pending' || status == 'confirmed';
     final adaMitra = (b['owner_phone'] ?? '').toString().isNotEmpty;
+    final belum = (b['chat_belum'] as num? ?? 0).toInt();
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -563,9 +564,13 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
               children: [
                 if (adaMitra)
                   OutlinedButton.icon(
-                    onPressed: () => _hubungiMitra(b),
-                    icon: const Icon(Icons.chat_outlined, size: 18),
-                    label: const Text('Hubungi mitra'),
+                    onPressed: () => _chatMitra(b),
+                    icon: Badge(
+                      isLabelVisible: belum > 0,
+                      label: Text('$belum'),
+                      child: const Icon(Icons.chat_outlined, size: 18),
+                    ),
+                    label: const Text('Chat mitra'),
                   ),
                 const Spacer(),
                 if (bisaBatal)
@@ -582,17 +587,21 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
     );
   }
 
-  /// Lewat WhatsApp, seperti chat driver: wa.me menuntut 62…, bukan 08….
-  Future<void> _hubungiMitra(Map<String, dynamic> b) async {
-    var nomor = (b['owner_phone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
-    if (nomor.startsWith('0')) nomor = '62${nomor.substring(1)}';
-    final mulai = DateTime.tryParse('${b['start_time']}');
-    final teks = 'Halo, saya penyewa ${b['car_name'] ?? 'kendaraan'} lewat BohRental'
-        '${mulai == null ? '' : ' untuk ${_waktu(mulai)}'}.';
-    final bisa = await launchUrl(Uri.parse('https://wa.me/$nomor?text=${Uri.encodeComponent(teks)}'), mode: LaunchMode.externalApplication);
-    if (!bisa && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('WhatsApp tidak bisa dibuka')));
-    }
+  /// Chat di aplikasi; WhatsApp mitra tetap ada lewat ikon di layar chatnya.
+  Future<void> _chatMitra(Map<String, dynamic> b) async {
+    final mitra = (b['owner_name'] ?? '').toString();
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ChatSewaScreen(
+          bookingId: b['id'].toString(),
+          judul: mitra.isEmpty ? '${b['car_name'] ?? 'Chat mitra'}' : mitra,
+          myPhone: widget.myPhone,
+          nomorLawan: (b['owner_phone'] ?? '').toString(),
+        ),
+      ),
+    );
+    _muatSewa(); // lencana belum dibaca padam
   }
 
   Future<void> _batalkan(Map<String, dynamic> b) async {

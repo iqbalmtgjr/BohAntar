@@ -539,3 +539,25 @@ html[data-theme="dark"] .portal-ui .filter-btn.active {
   .portal-ui .table-wrap td[data-label="Tarif"],
   .portal-ui .table-wrap td[data-label="Jumlah Bayar"] { white-space: nowrap; }
 }
+
+/* Halaman percakapan chat penyewa: setinggi layar supaya kolom tulis selalu
+   terlihat dan hanya daftar pesan yang bergulir.
+   Desktop: topbar 64px + padding .page 32px×2. HP: app bar + tab bar 74px + padding. */
+.portal-ui .chat-room { height: calc(100vh - 128px); }
+@media (max-width: 1024px) {
+  .portal-ui .chat-room { height: calc(100dvh - var(--brandbar-h) - 74px - 40px - env(safe-area-inset-bottom)); }
+}
+
+/* Lencana angka di menu (tab Chat). Desktop: di ujung kanan baris sidebar;
+   HP: titik merah di pojok kanan atas ikon tab. */
+.portal-ui .nav-badge {
+  margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px;
+  background: #EF4444; color: #fff; font-size: 10.5px; font-weight: 800; line-height: 18px; text-align: center;
+}
+@media (max-width: 1024px) {
+  .portal-ui .sidebar-nav .nav-item { position: relative; }
+  .portal-ui .nav-badge {
+    position: absolute; top: 2px; left: calc(50% + 4px); margin: 0;
+    border: 2px solid var(--bg-card); line-height: 14px;
+  }
+}

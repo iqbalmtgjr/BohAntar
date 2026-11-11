@@ -143,6 +143,7 @@ class ApiService {
     required String email,
     required String role,
     required String password,
+    String kodeWA = '',
   }) async {
     final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/auth/register'),
@@ -153,6 +154,7 @@ class ApiService {
         'email': email,
         'role': role,
         'password': password,
+        if (kodeWA.isNotEmpty) 'kode_wa': kodeWA,
       }),
     );
 
@@ -209,13 +211,14 @@ class ApiService {
 
   // Google Login
   // id_token dikirim mentah; verifikasi tanda tangan dilakukan di backend.
-  Future<Map<String, dynamic>> googleLogin(String idToken, {String? phoneNumber}) async {
+  Future<Map<String, dynamic>> googleLogin(String idToken, {String? phoneNumber, String kodeWA = ''}) async {
     final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/auth/google'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'id_token': idToken,
         if (phoneNumber != null) 'phone_number': phoneNumber,
+        if (kodeWA.isNotEmpty) 'kode_wa': kodeWA,
       }),
     );
     final data = _handleResponse(response);
@@ -223,6 +226,23 @@ class ApiService {
       await setToken(data['token']);
     }
     return data;
+  }
+
+  /// Verifikasi nomor saat daftar: {wajib, kode, wa, teks}. wajib=false berarti
+  /// server belum menyalakan verifikasi WhatsApp — langsung daftar saja.
+  Future<Map<String, dynamic>> mintaVerifikasiWA(String phoneNumber) async {
+    return _handleResponse(await klienHttp.post(
+      Uri.parse('$baseUrl/api/auth/verifikasi-wa'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'phone_number': phoneNumber}),
+    ));
+  }
+
+  Future<bool> cekVerifikasiWA(String kode) async {
+    final data = _handleResponse(await klienHttp.get(
+      Uri.parse('$baseUrl/api/auth/verifikasi-wa').replace(queryParameters: {'kode': kode}),
+    ));
+    return data['terverifikasi'] == true;
   }
 
   // Lupa password: token Google membuktikan pemilik email akun, lalu password
@@ -829,6 +849,25 @@ class ApiService {
       Uri.parse('$baseUrl/api/rental/bookings'),
       headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $_token'},
       body: jsonEncode({'car_id': carId, 'start_time': mulai, 'end_time': selesai}),
+    ));
+  }
+
+  /// Chat penyewa ↔ mitra rental. Membaca sekaligus menandai pesan lawan terbaca.
+  Future<List<Map<String, dynamic>>> getChatSewa(String bookingId) async {
+    if (_token == null) throw Exception(_sesiHabis);
+    final data = _handleResponse(await klienHttp.get(
+      Uri.parse('$baseUrl/api/rental/chat/$bookingId'),
+      headers: {'Authorization': 'Bearer $_token'},
+    ));
+    return [for (final m in (data['messages'] as List?) ?? const []) Map<String, dynamic>.from(m as Map)];
+  }
+
+  Future<void> kirimChatSewa(String bookingId, String isi) async {
+    if (_token == null) throw Exception(_sesiHabis);
+    _handleResponse(await klienHttp.post(
+      Uri.parse('$baseUrl/api/rental/chat/$bookingId'),
+      headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $_token'},
+      body: jsonEncode({'content': isi}),
     ));
   }
 

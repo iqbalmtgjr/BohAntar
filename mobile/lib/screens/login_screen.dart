@@ -5,6 +5,7 @@ import 'package:mobile/services/api_service.dart';
 import 'package:mobile/services/notifikasi_service.dart';
 import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/decorative_background.dart';
+import 'package:mobile/widgets/verifikasi_wa.dart';
 import 'register_screen.dart';
 import 'dashboard_screen.dart';
 
@@ -146,13 +147,13 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _authenticateGoogle(String idToken, {String? phoneNumber}) async {
+  Future<void> _authenticateGoogle(String idToken, {String? phoneNumber, String kodeWA = ''}) async {
     setState(() {
       _isLoading = true;
       _errorMessage = '';
     });
     try {
-      final response = await ApiService().googleLogin(idToken, phoneNumber: phoneNumber);
+      final response = await ApiService().googleLogin(idToken, phoneNumber: phoneNumber, kodeWA: kodeWA);
       if (response['status'] == 'success') {
         NotifikasiService().daftarkanPerangkat();
         final user = response['user'] as Map<String, dynamic>;
@@ -172,8 +173,9 @@ class _LoginScreenState extends State<LoginScreen> {
       } else if (response['status'] == 'need_phone') {
         if (mounted) {
           final String? inputPhone = await _showPhoneInputDialog(context);
-          if (inputPhone != null && inputPhone.isNotEmpty) {
-            await _authenticateGoogle(idToken, phoneNumber: inputPhone);
+          if (inputPhone != null && inputPhone.isNotEmpty && mounted) {
+            final kode = await verifikasiNomorWA(context, inputPhone);
+            if (kode != null) await _authenticateGoogle(idToken, phoneNumber: inputPhone, kodeWA: kode);
           }
         }
       }

@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
   ShoppingBag, Search, RefreshCw, CheckCircle2, XCircle, PlayCircle,
-  Flag, Clock, Phone, User, CalendarDays, StickyNote
+  Flag, Clock, Phone, User, CalendarDays, StickyNote, MessageCircle
 } from "lucide-react";
 import { BASE, authFetch } from "../../api";
 import { toast, Alert } from "../../components/Feedback";
@@ -22,6 +23,7 @@ const STATUS = {
 
 const FILTERS = [
   { key: "all", label: "Semua" },
+  { key: "chat", label: "Chat Baru" },
   { key: "pending", label: "Perlu Ditindak" },
   { key: "confirmed", label: "Disetujui" },
   { key: "ongoing", label: "Berjalan" },
@@ -59,7 +61,10 @@ export default function RentalOrders({ ownerPhone }) {
   const [bookings, setBookings] = useState([]);
   const [cars, setCars] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState("pending");
+  // Lonceng "chat penyewa belum dibaca" membuka halaman ini dengan filter chat
+  // (juga saat halamannya sudah terbuka: lokasi.key berganti tiap navigate).
+  const lokasi = useLocation();
+  const [filter, setFilter] = useState(lokasi.state?.filter || "pending");
   const [query, setQuery] = useState("");
   const [busyId, setBusyId] = useState(null);
   const [errorMsg, setErrorMsg] = useState("");
@@ -84,20 +89,26 @@ export default function RentalOrders({ ownerPhone }) {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { fetchData(); }, [ownerPhone]);
+  useEffect(() => {
+    if (lokasi.state?.filter) setFilter(lokasi.state.filter);
+    fetchData();
+  }, [ownerPhone, lokasi.key]);
 
   const carOf = (id) => cars.find(c => c.id === id);
 
   const counts = useMemo(() => {
     const c = { all: bookings.length };
-    for (const b of bookings) c[b.status] = (c[b.status] || 0) + 1;
+    for (const b of bookings) {
+      c[b.status] = (c[b.status] || 0) + 1;
+      if (b.chat_belum > 0) c.chat = (c.chat || 0) + 1;
+    }
     return c;
   }, [bookings]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return bookings
-      .filter(b => filter === "all" || b.status === filter)
+      .filter(b => filter === "all" || (filter === "chat" ? b.chat_belum > 0 : b.status === filter))
       .filter(b => {
         if (!q) return true;
         const car = cars.find(c => c.id === b.car_id);
@@ -317,6 +328,12 @@ export default function RentalOrders({ ownerPhone }) {
                 )}
 
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end", padding: "0 18px 18px" }}>
+                  <Link to={`/chat/${b.id}`} className="btn btn-ghost btn-sm" style={{ position: "relative", textDecoration: "none" }}>
+                    <MessageCircle size={15} /> Chat Penyewa
+                    {b.chat_belum > 0 && (
+                      <span className="badge badge-danger" style={{ margin: 0, marginLeft: 4, padding: "1px 7px", fontSize: 11 }}>{b.chat_belum}</span>
+                    )}
+                  </Link>
                   <TombolDokumen doc={bookingInvoice(b, car, rental)} onBuka={setInvoice} />
                   {actions.map(a => (
                     <button key={a.label} className={a.className} onClick={a.run} disabled={busyId === b.id}>

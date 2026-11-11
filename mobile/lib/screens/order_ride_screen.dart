@@ -66,6 +66,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // tujuan yang sekarang.
   EstimasiTarif? _estimasi;
   bool _estimasiGagal = false;
+  String _pesanEstimasi = ''; // galat dari server, mis. titik di luar Sintang
 
   int _inputStep = 0; // 0 = address picker, 1 = item details (BohAntar/BohSend), 2 = estimate
   
@@ -761,6 +762,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         _fare = 0;
         _diskon = 0; // jangan bawa diskon taksiran rute sebelumnya
         _estimasiGagal = true;
+        _pesanEstimasi = pesanGalat(e);
       });
     }
   }
@@ -2122,7 +2124,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
               children: [
                 Expanded(
                   child: Text(
-                    _estimasiGagal ? "Ongkos belum bisa dihitung. Cek koneksi internetmu." : "Menghitung ongkos…",
+                    _estimasiGagal ? "Ongkos belum bisa dihitung. $_pesanEstimasi" : "Menghitung ongkos…",
                     style: TextStyle(fontSize: 13, color: _estimasiGagal ? AppTheme.errorColor : AppTheme.teksRedup(context)),
                   ),
                 ),
