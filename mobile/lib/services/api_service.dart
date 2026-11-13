@@ -182,6 +182,7 @@ class ApiService {
     required String simPhotoPath,
     required String stnkPhotoPath,
     required String facePhotoPath,
+    String kelasMobil = '', // mobil saja: 'besar' (maks 6 orang) atau '' (sedang)
   }) async {
     final request = http.MultipartRequest(
       'POST',
@@ -197,6 +198,7 @@ class ApiService {
       'vehicle_plate': vehiclePlate,
       'vehicle_type': vehicleType,
       'vehicle_model': vehicleModel,
+      'kelas_mobil': kelasMobil,
     });
     request.files.addAll([
       await http.MultipartFile.fromPath('ktp_photo', ktpPhotoPath),
@@ -433,12 +435,15 @@ class ApiService {
     required double keLng,
     // BohFood: subtotal keranjang, supaya syarat min. belanja voucher ikut terhitung.
     double subtotal = 0,
+    // BohCar: 'besar' untuk mobil besar, '' sedang. Lihat kelasMobil.
+    String kelas = '',
   }) async {
     if (_token == null) {
       throw Exception(_sesiHabis);
     }
     final uri = Uri.parse('$baseUrl/api/tarif/estimasi').replace(queryParameters: {
       'layanan': layanan,
+      if (kelas.isNotEmpty) 'kelas': kelas,
       'from_lat': '$dariLat',
       'from_lng': '$dariLng',
       'to_lat': '$keLat',
@@ -528,6 +533,7 @@ class ApiService {
     // BohFood: warung dan isi keranjang ({menu_id, qty}); harga dihitung server.
     String? merchantId,
     List<Map<String, dynamic>>? items,
+    String kelas = '', // BohCar saja
   }) async {
     if (_token == null) {
       throw Exception(_sesiHabis);
@@ -547,6 +553,7 @@ class ApiService {
         'dropoff_lng': dropoffLng,
         'payment_method': paymentMethod,
         'service': service,
+        if (kelas.isNotEmpty) 'kelas': kelas,
         'package_type': packageType,
         'package_quantity': packageQuantity,
         'package_weight': packageWeight,

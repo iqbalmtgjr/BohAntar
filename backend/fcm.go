@@ -261,7 +261,7 @@ func notifikasiDriverSiaga(o Order) {
 		// puluhan. Gabungkan ke kueri di atas kalau armadanya ratusan.
 		var tokens []string
 		for _, s := range siaga {
-			if cocokKendaraan(o.Service, kendaraanDriver(s[0])) {
+			if cocokKendaraan(o.Service, kendaraanDriver(s[0])) && cocokKelas(o.Kelas, s[0]) {
 				tokens = append(tokens, s[1])
 			}
 		}
@@ -276,6 +276,9 @@ func notifikasiDriverSiaga(o Order) {
 			// membayar warung tidak perlu membuka aplikasi.
 			judul = "Pesanan makanan: " + o.MerchantName
 			isi = fmt.Sprintf("Talangi Rp%.0f · ongkir bersih Rp%.0f → %s", o.FoodTotal, o.Fare-o.Komisi, o.DropoffAddress)
+		} else if o.Kelas == kelasBesar {
+			// Hanya sampai ke driver bermobil besar (cocokKelas di atas).
+			judul = "Orderan mobil besar (maks 6 orang)!"
 		} else if o.PackageType != "" {
 			judul = "Kiriman baru: " + o.PackageType
 			if o.PackageWeight != "" {

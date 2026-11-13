@@ -97,10 +97,9 @@ func TestOngkosBohRideCocokDenganHargaLokal(t *testing.T) {
 // sebelum jarak dasar dan pembulatan ditambahkan.
 func TestOngkosLayananLainTidakBergeser(t *testing.T) {
 	lama := map[string][]float64{
-		"BohAntar": {9000, 10000, 14000, 18000, 28000, 48000},
-		"BohCar":   {17800, 19500, 26500, 33500, 51000, 86000},
-		"BohFood":  {9000, 10000, 14000, 18000, 28000, 48000},
-		"BohSend":  {9000, 10000, 14000, 18000, 28000, 48000},
+		"BohCar":  {17800, 19500, 26500, 33500, 51000, 86000},
+		"BohFood": {9000, 10000, 14000, 18000, 28000, 48000},
+		"BohSend": {9000, 10000, 14000, 18000, 28000, 48000},
 	}
 	jarakKM := []float64{0.5, 1, 3, 5, 10, 20}
 
@@ -113,6 +112,24 @@ func TestOngkosLayananLainTidakBergeser(t *testing.T) {
 			if got := hitungOngkos(tr, km*1000); got != harap[i] {
 				t.Errorf("%s %.1f km = %.0f, sebelum perubahan %.0f", tr.Layanan, km, got, harap[i])
 			}
+		}
+	}
+}
+
+// Harga mobil besar hanya lewat BohCar + kelas "besar". Kelas karangan, atau
+// kelas untuk layanan lain, tidak boleh menggeser baris tarif.
+func TestBarisTarifKelasMobil(t *testing.T) {
+	kasus := []struct{ layanan, kelas, harap string }{
+		{"BohCar", "besar", tarifMobilBesar},
+		{"BohCar", "", "BohCar"},
+		{"BohCar", "BESAR", "BohCar"},
+		{"BohRide", "besar", "BohRide"},
+		{"BohFood", "besar", "BohFood"},
+		{"BohAntar", "", "BohSend"},
+	}
+	for _, k := range kasus {
+		if got := barisTarif(k.layanan, k.kelas); got != k.harap {
+			t.Errorf("barisTarif(%q, %q) = %q, harap %q", k.layanan, k.kelas, got, k.harap)
 		}
 	}
 }

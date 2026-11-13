@@ -52,7 +52,8 @@ type tarifLayanan struct {
 var tarifBawaan = []tarifLayanan{
 	{Layanan: "BohRide", Base: 10000, PerKM: 2500, JarakDasarKM: 3, Pembulatan: 1000, KeAtas: true, KomisiPersen: 20, BiayaJasa: 1000},
 	{Layanan: "BohCar", Base: 16000, PerKM: 3500, Pembulatan: 100, KomisiPersen: 20, BiayaJasa: 1000},
-	{Layanan: "BohAntar", Base: 8000, PerKM: 2000, Pembulatan: 100, KomisiPersen: 20, BiayaJasa: 1000},
+	// Mobil besar (6-7 kursi). Angka awal ±25% di atas BohCar; atur di dashboard.
+	{Layanan: tarifMobilBesar, Base: 20000, PerKM: 4500, Pembulatan: 100, KomisiPersen: 20, BiayaJasa: 1000},
 	{Layanan: "BohSend", Base: 8000, PerKM: 2000, Pembulatan: 100, KomisiPersen: 20, BiayaJasa: 1000},
 	// Ongkir saja; harga makanannya milik warung dan tidak kena komisi.
 	{Layanan: "BohFood", Base: 8000, PerKM: 2000, Pembulatan: 100, KomisiPersen: 20, BiayaJasa: 1000},
@@ -65,6 +66,35 @@ var tarifBawaan = []tarifLayanan{
 // layananTagihanQR adalah nama baris tarif yang menyimpan persen potongan
 // tagihan QR. Lihat komisiTagihan di tagihan.go.
 const layananTagihanQR = "TagihanQR"
+
+// BohCar punya dua kelas: sedang (bawaan) dan besar. Pesanannya tetap
+// berlayanan "BohCar" — pencocokan kendaraan, voucher, banner, dan APK driver
+// lama tidak perlu tahu ada kelas — hanya harganya dibaca dari baris sendiri.
+// Batas penumpang (4/6) cuma tulisan di aplikasi; server tidak menghitung orang.
+const (
+	kelasBesar      = "besar"
+	tarifMobilBesar = "BohCar Besar"
+)
+
+// kelasPesanan menormalkan kiriman aplikasi: kelas selain "besar", atau kelas
+// untuk layanan selain BohCar, dianggap tidak ada.
+func kelasPesanan(layanan, kelas string) string {
+	if layanan == "BohCar" && kelas == kelasBesar {
+		return kelasBesar
+	}
+	return ""
+}
+
+// barisTarif: nama baris tabel tarif untuk satu layanan dan kelasnya.
+func barisTarif(layanan, kelas string) string {
+	if layanan == "BohAntar" { // nama lama BohSend, masih dikirim app versi lama
+		return "BohSend"
+	}
+	if kelasPesanan(layanan, kelas) == kelasBesar {
+		return tarifMobilBesar
+	}
+	return layanan
+}
 
 // Jaring pengaman kalau baris layanannya hilang. Sengaja tarif motor yang lama,
 // bukan bohRide yang baru: baris hilang berarti ada yang salah, dan harga
@@ -80,6 +110,8 @@ func seedTarif() {
 			t.Layanan, t.Base, t.PerKM, t.JarakDasarKM, t.Pembulatan, t.KeAtas, t.KomisiPersen, t.BiayaJasa, waktuKeDB(time.Now().Format(time.RFC3339)),
 		)
 	}
+	// Baris nama lama BohSend; pesanannya kini memakai baris BohSend (barisTarif).
+	_, _ = db.Exec("DELETE FROM tarif WHERE layanan = 'BohAntar'")
 }
 
 // ambilTarif membaca satu baris tarif. Sengaja tanpa cache: satu query empat
@@ -352,7 +384,7 @@ func tarifEstimasiHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	layanan := r.URL.Query().Get("layanan")
-	rincian := hitungRincian(ambilTarif(layanan), jarakKM(fLat, fLng, tLat, tLng)*1000)
+	rincian := hitungRincian(ambilTarif(barisTarif(layanan, r.URL.Query().Get("kelas"))), jarakKM(fLat, fLng, tLat, tLng)*1000)
 	// Pratinjau voucher yang akan terpakai otomatis. BohFood mengirim
 	// subtotal keranjangnya supaya syarat min. belanja ikut terhitung; angka
 	// yang mengikat tetap dihitung ulang dari menu saat pesanan dibuat.

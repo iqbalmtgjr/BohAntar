@@ -111,6 +111,7 @@ type Order struct {
 	VoucherID       string  `json:"voucher_id,omitempty"` // hanya ditulis; dasar hitungan kuota
 	PaymentMethod   string  `json:"payment_method"`       // "cash" | "wallet"
 	Service         string  `json:"service"`
+	Kelas           string  `json:"kelas"` // BohCar: "" = mobil sedang, "besar" = mobil besar. Lihat barisTarif
 	Status          string  `json:"status"`
 	AlasanBatal     string  `json:"alasan_batal"`   // dari penumpang saat membatalkan; kosong = tanpa alasan (app lama / masih mencari)
 	MintaBatalAt    string  `json:"minta_batal_at"` // BohFood: pengajuan batal menunggu jawaban driver; "" = tidak ada
@@ -160,6 +161,7 @@ type DriverApplication struct {
 	VehiclePlate string `json:"vehicle_plate"`
 	VehicleType  string `json:"vehicle_type"`
 	VehicleModel string `json:"vehicle_model"`
+	KelasMobil   string `json:"kelas_mobil"` // "besar" = mobil 6-7 kursi; "" = sedang atau motor
 	KTPPhotoURL  string `json:"ktp_photo_url"`
 	SIMPhotoURL  string `json:"sim_photo_url"`
 	STNKPhotoURL string `json:"stnk_photo_url"`
@@ -371,6 +373,7 @@ type CreateOrderInput struct {
 	// lewat hitungTarif(), dan `fare` yang dikirim aplikasi diabaikan.
 	PaymentMethod   string `json:"payment_method"` // "cash" | "wallet"; kosong dianggap "cash"
 	ServiceType     string `json:"service"`
+	Kelas           string `json:"kelas"` // BohCar: "besar" atau kosong (sedang)
 	PackageType     string `json:"package_type"`
 	PackageQuantity int    `json:"package_quantity"`
 	PackageWeight   string `json:"package_weight"`
@@ -566,6 +569,7 @@ func main() {
 	mux.HandleFunc("/api/admin/voucher/", admin(adminVoucherHandler))
 	mux.HandleFunc("/api/admin/komisi", admin(adminKomisiHandler))
 	mux.HandleFunc("/api/admin/setoran", admin(adminSetoranHandler))
+	mux.HandleFunc("/api/admin/topup", admin(adminTopUpHandler))
 	mux.HandleFunc("/api/admin/setoran/qr/", admin(adminSetoranQRHandler))
 	mux.HandleFunc("/api/driver/setoran/klaim", requireRole("driver")(driverKlaimSetoranHandler))
 	// Uang hanya boleh MASUK ke BohAntar, tidak keluar lagi (keputusan user
@@ -1601,7 +1605,7 @@ func dbGetOrder(id string) (Order, bool) {
 		COALESCE(pickup_photo_url, ''), COALESCE(delivery_photo_url, ''), COALESCE(received_by, ''),
 		COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0),
 		COALESCE(kasvo_pesanan_id, 0), COALESCE(kasvo_pengantaran_id, 0), COALESCE(alasan_batal, ''),
-		COALESCE(DATE_FORMAT(minta_batal_at, '%Y-%m-%d %H:%i:%s'), ''), COALESCE(tolak_batal, ''), COALESCE(driver_tujuan, ''), COALESCE(diskon, 0)
+		COALESCE(DATE_FORMAT(minta_batal_at, '%Y-%m-%d %H:%i:%s'), ''), COALESCE(tolak_batal, ''), COALESCE(driver_tujuan, ''), COALESCE(diskon, 0), COALESCE(kelas, '')
 		FROM orders WHERE id = ?
 	`, id)
 	var pkgType, pkgWeight, pkgNotes sql.NullString
@@ -1614,7 +1618,7 @@ func dbGetOrder(id string) (Order, bool) {
 		&pkgType, &pkgQty, &pkgWeight, &pkgNotes, &ins, &spec,
 		&o.ReceiverName, &o.ReceiverPhone, &o.PickupPhotoURL, &o.DeliveryPhotoURL, &o.ReceivedBy,
 		&o.MerchantID, &o.MerchantName, &itemsJSON, &o.FoodTotal,
-		&o.KasvoPesananID, &o.KasvoPengantaranID, &o.AlasanBatal, &o.MintaBatalAt, &o.TolakBatal, &o.DriverTujuan, &o.Diskon,
+		&o.KasvoPesananID, &o.KasvoPengantaranID, &o.AlasanBatal, &o.MintaBatalAt, &o.TolakBatal, &o.DriverTujuan, &o.Diskon, &o.Kelas,
 	)
 	if err != nil {
 		return o, false
@@ -1645,8 +1649,8 @@ func dbSaveOrder(o Order) error {
 		fare, komisi, biaya_jasa, payment_method, service, status, driver_phone, driver_name, created_at, updated_at,
 		package_type, package_quantity, package_weight, package_notes, insurance, special_handling,
 		receiver_name, receiver_phone, pickup_photo_url, delivery_photo_url, received_by,
-		merchant_id, merchant_name, items_json, food_total, kasvo_pesanan_id, kasvo_pengantaran_id, driver_tujuan, diskon, voucher_id, voucher_pemakai)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		merchant_id, merchant_name, items_json, food_total, kasvo_pesanan_id, kasvo_pengantaran_id, driver_tujuan, diskon, voucher_id, voucher_pemakai, kelas)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			status = VALUES(status),
 			driver_phone = VALUES(driver_phone),
@@ -1668,7 +1672,7 @@ func dbSaveOrder(o Order) error {
 		// yang sedang polling bisa mengklaim pesanan yang belum bertuan.
 		kosongJadiNULL(o.DriverTujuan),
 		// Diskon dikunci ke pesanan saat dibuat, seperti biaya jasa.
-		o.Diskon, kosongJadiNULL(o.VoucherID), pemakai)
+		o.Diskon, kosongJadiNULL(o.VoucherID), pemakai, o.Kelas)
 	return err
 }
 
@@ -1827,7 +1831,7 @@ func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, e
 }
 
 // kolomPesanan berpasangan dengan scanPesanan: urutannya harus sama persis.
-const kolomPesanan = "id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(biaya_jasa, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ''), driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling, COALESCE(receiver_name, ''), COALESCE(receiver_phone, ''), COALESCE(pickup_photo_url, ''), COALESCE(delivery_photo_url, ''), COALESCE(received_by, ''), COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0), COALESCE(kasvo_pesanan_id, 0), COALESCE(kasvo_pengantaran_id, 0), COALESCE(alasan_batal, ''), COALESCE(DATE_FORMAT(minta_batal_at, '%Y-%m-%d %H:%i:%s'), ''), COALESCE(tolak_batal, ''), COALESCE(driver_tujuan, ''), COALESCE(diskon, 0)"
+const kolomPesanan = "id, COALESCE(rider_phone, ''), rider_name, pickup, dropoff, pickup_lat, pickup_lng, dropoff_lat, dropoff_lng, fare, COALESCE(komisi, 0), COALESCE(biaya_jasa, 0), COALESCE(payment_method, 'wallet'), service, status, COALESCE(driver_phone, ''), driver_name, created_at, updated_at, package_type, package_quantity, package_weight, package_notes, insurance, special_handling, COALESCE(receiver_name, ''), COALESCE(receiver_phone, ''), COALESCE(pickup_photo_url, ''), COALESCE(delivery_photo_url, ''), COALESCE(received_by, ''), COALESCE(merchant_id, ''), COALESCE(merchant_name, ''), COALESCE(items_json, ''), COALESCE(food_total, 0), COALESCE(kasvo_pesanan_id, 0), COALESCE(kasvo_pengantaran_id, 0), COALESCE(alasan_batal, ''), COALESCE(DATE_FORMAT(minta_batal_at, '%Y-%m-%d %H:%i:%s'), ''), COALESCE(tolak_batal, ''), COALESCE(driver_tujuan, ''), COALESCE(diskon, 0), COALESCE(kelas, '')"
 
 func scanPesanan(rows *sql.Rows) []Order {
 	var result []Order
@@ -1843,7 +1847,7 @@ func scanPesanan(rows *sql.Rows) []Order {
 			&pkgType, &pkgQty, &pkgWeight, &pkgNotes, &ins, &spec,
 			&o.ReceiverName, &o.ReceiverPhone, &o.PickupPhotoURL, &o.DeliveryPhotoURL, &o.ReceivedBy,
 			&o.MerchantID, &o.MerchantName, &itemsJSON, &o.FoodTotal,
-			&o.KasvoPesananID, &o.KasvoPengantaranID, &o.AlasanBatal, &o.MintaBatalAt, &o.TolakBatal, &o.DriverTujuan, &o.Diskon,
+			&o.KasvoPesananID, &o.KasvoPengantaranID, &o.AlasanBatal, &o.MintaBatalAt, &o.TolakBatal, &o.DriverTujuan, &o.Diskon, &o.Kelas,
 		)
 		if err == nil {
 			o.Items = uraiItems(itemsJSON)
@@ -1900,20 +1904,20 @@ func dbGetPendingOrders() ([]Order, error) {
 
 func dbSaveApplication(a DriverApplication) error {
 	_, err := db.Exec(`
-		INSERT INTO driver_applications (id, phone_number, name, email, ktp_number, sim_number, vehicle_plate, vehicle_type, vehicle_model, ktp_photo_url, sim_photo_url, stnk_photo_url, face_photo_url, status, created_at, notes)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO driver_applications (id, phone_number, name, email, ktp_number, sim_number, vehicle_plate, vehicle_type, vehicle_model, ktp_photo_url, sim_photo_url, stnk_photo_url, face_photo_url, status, created_at, notes, kelas_mobil)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE status = VALUES(status)
-	`, a.ID, a.PhoneNumber, a.Name, a.Email, a.KTPNumber, a.SIMNumber, a.VehiclePlate, a.VehicleType, a.VehicleModel, a.KTPPhotoURL, a.SIMPhotoURL, a.STNKPhotoURL, a.FacePhotoURL, a.Status, waktuKeDB(a.CreatedAt), a.Notes)
+	`, a.ID, a.PhoneNumber, a.Name, a.Email, a.KTPNumber, a.SIMNumber, a.VehiclePlate, a.VehicleType, a.VehicleModel, a.KTPPhotoURL, a.SIMPhotoURL, a.STNKPhotoURL, a.FacePhotoURL, a.Status, waktuKeDB(a.CreatedAt), a.Notes, a.KelasMobil)
 	return err
 }
 
-const kolomPengajuanDriver = "id, phone_number, name, email, ktp_number, sim_number, vehicle_plate, vehicle_type, vehicle_model, ktp_photo_url, sim_photo_url, stnk_photo_url, COALESCE(face_photo_url, ''), status, created_at, notes"
+const kolomPengajuanDriver = "id, phone_number, name, email, ktp_number, sim_number, vehicle_plate, vehicle_type, vehicle_model, ktp_photo_url, sim_photo_url, stnk_photo_url, COALESCE(face_photo_url, ''), status, created_at, notes, COALESCE(kelas_mobil, '')"
 
 func dbGetApplication(id string) (DriverApplication, bool) {
 	var a DriverApplication
 	row := db.QueryRow("SELECT "+kolomPengajuanDriver+" FROM driver_applications WHERE id = ?", id)
 	var notes sql.NullString
-	err := row.Scan(&a.ID, &a.PhoneNumber, &a.Name, &a.Email, &a.KTPNumber, &a.SIMNumber, &a.VehiclePlate, &a.VehicleType, &a.VehicleModel, &a.KTPPhotoURL, &a.SIMPhotoURL, &a.STNKPhotoURL, &a.FacePhotoURL, &a.Status, &a.CreatedAt, &notes)
+	err := row.Scan(&a.ID, &a.PhoneNumber, &a.Name, &a.Email, &a.KTPNumber, &a.SIMNumber, &a.VehiclePlate, &a.VehicleType, &a.VehicleModel, &a.KTPPhotoURL, &a.SIMPhotoURL, &a.STNKPhotoURL, &a.FacePhotoURL, &a.Status, &a.CreatedAt, &notes, &a.KelasMobil)
 	if err != nil {
 		return a, false
 	}
@@ -1938,7 +1942,7 @@ func dbGetApplications(statusFilter string) ([]DriverApplication, error) {
 	for rows.Next() {
 		var a DriverApplication
 		var notes sql.NullString
-		if err := rows.Scan(&a.ID, &a.PhoneNumber, &a.Name, &a.Email, &a.KTPNumber, &a.SIMNumber, &a.VehiclePlate, &a.VehicleType, &a.VehicleModel, &a.KTPPhotoURL, &a.SIMPhotoURL, &a.STNKPhotoURL, &a.FacePhotoURL, &a.Status, &a.CreatedAt, &notes); err == nil {
+		if err := rows.Scan(&a.ID, &a.PhoneNumber, &a.Name, &a.Email, &a.KTPNumber, &a.SIMNumber, &a.VehiclePlate, &a.VehicleType, &a.VehicleModel, &a.KTPPhotoURL, &a.SIMPhotoURL, &a.STNKPhotoURL, &a.FacePhotoURL, &a.Status, &a.CreatedAt, &notes, &a.KelasMobil); err == nil {
 			a.Notes = notes.String
 			result = append(result, a)
 		}
@@ -3118,10 +3122,13 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// Baris tarif ini ongkosnya nol; tanpa penolakan ini siapa pun bisa
 	// memesan ojek gratis cukup dengan mengirim nama layanan itu.
-	if input.ServiceType == layananTagihanQR {
+	// Begitu juga baris harga mobil besar: dipesan sebagai layanan sendiri ia
+	// lolos dari cocokKendaraan dan bisa diambil motor.
+	if input.ServiceType == layananTagihanQR || input.ServiceType == tarifMobilBesar {
 		writeJSONResponse(w, 400, map[string]string{"error": "Jenis layanan tidak dikenal"})
 		return
 	}
+	kelas := kelasPesanan(input.ServiceType, input.Kelas)
 	// Pesanan makanan: titik jemputnya ditulis ulang jadi lokasi warung, isinya
 	// dicocokkan dengan menu, dan uang makanannya dihitung di sini.
 	var warung FoodMerchant
@@ -3151,7 +3158,7 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Angka fare kiriman aplikasi sengaja diabaikan: lihat tarif.go.
-	t := ambilTarif(input.ServiceType)
+	t := ambilTarif(barisTarif(input.ServiceType, kelas))
 	fare := hitungTarif(t, input.PickupLat, input.PickupLng, input.DropoffLat, input.DropoffLng)
 	komisi := hitungKomisi(t, fare)
 	// Dikunci ke pesanan, bukan dibaca dari tabel saat pesanan ditutup: super
@@ -3171,7 +3178,7 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 		PickupAddress: input.Pickup, DropoffAddress: input.Dropoff,
 		PickupLat: input.PickupLat, PickupLng: input.PickupLng,
 		DropoffLat: input.DropoffLat, DropoffLng: input.DropoffLng,
-		Fare: fare, Komisi: komisi, BiayaJasa: biayaJasa, PaymentMethod: metode, Service: input.ServiceType, Status: "pending",
+		Fare: fare, Komisi: komisi, BiayaJasa: biayaJasa, PaymentMethod: metode, Service: input.ServiceType, Kelas: kelas, Status: "pending",
 		CreatedAt: now, UpdatedAt: now,
 		PackageType: input.PackageType, PackageQuantity: input.PackageQuantity,
 		PackageWeight: input.PackageWeight, PackageNotes: input.PackageNotes,
@@ -3247,7 +3254,7 @@ func getActiveOrdersHandler(w http.ResponseWriter, r *http.Request) {
 		if o.DriverTujuan != "" && o.DriverTujuan != callerPhone(r) {
 			continue
 		}
-		if !cocokKendaraan(o.Service, kendaraan) {
+		if !cocokKendaraan(o.Service, kendaraan) || !cocokKelas(o.Kelas, callerPhone(r)) {
 			continue
 		}
 		// Papan orderan disaring sejauh driver, bukan disiarkan ke seluruh
@@ -3396,6 +3403,10 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	}
 	if !cocokKendaraan(o.Service, kendaraanDriver(driver.PhoneNumber)) {
 		writeJSONResponse(w, 403, map[string]string{"error": "Pesanan " + o.Service + " butuh kendaraan lain dari yang terdaftar di akun Anda"})
+		return
+	}
+	if !cocokKelas(o.Kelas, driver.PhoneNumber) {
+		writeJSONResponse(w, 403, map[string]string{"error": "Pesanan ini untuk mobil besar (maks 6 orang), sedangkan mobil Anda terdaftar sebagai mobil sedang. Hubungi admin kalau mobil Anda muat 6 orang."})
 		return
 	}
 	now := time.Now().Format(time.RFC3339)
@@ -3762,6 +3773,8 @@ func migrasiAlasanBatal() {
 	// Pesanan manual super admin (dispatch.go). Di sini, bukan fungsi sendiri,
 	// karena alasannya sama: dibaca semua kueri pesanan.
 	migrasiSkema("ALTER TABLE orders ADD COLUMN driver_tujuan VARCHAR(20) NULL")
+	// Kelas BohCar (sedang/besar), lihat barisTarif.
+	migrasiSkema("ALTER TABLE orders ADD COLUMN kelas VARCHAR(10) NOT NULL DEFAULT ''")
 	migrasiSkema(`CREATE TABLE IF NOT EXISTS pesanan_dilepas (
 		id BIGINT AUTO_INCREMENT PRIMARY KEY,
 		order_id VARCHAR(50) NOT NULL,
@@ -4237,6 +4250,8 @@ func infoDriver(phone string) map[string]interface{} {
 func migrasiFotoWajah() {
 	migrasiSkema("ALTER TABLE users ADD COLUMN foto_wajah VARCHAR(255) DEFAULT ''")
 	migrasiSkema("ALTER TABLE driver_applications ADD COLUMN face_photo_url VARCHAR(255) DEFAULT ''")
+	// Ukuran mobil (kelasMobilDriver). Di sini karena dibaca kueri pengajuan yang sama.
+	migrasiSkema("ALTER TABLE driver_applications ADD COLUMN kelas_mobil VARCHAR(10) NOT NULL DEFAULT ''")
 }
 
 // fotoGambarSah: hasil /api/upload berformat gambar — bukan alamat luar atau
@@ -4290,6 +4305,35 @@ func cocokKendaraan(layanan, kendaraan string) bool {
 		return kendaraan != "mobil"
 	}
 	return true
+}
+
+// kelasMobilSah: ukuran mobil hanya berarti untuk mobil, dan apa pun selain
+// "besar" dianggap sedang.
+func kelasMobilSah(jenisKendaraan, kelas string) string {
+	if strings.EqualFold(strings.TrimSpace(jenisKendaraan), "mobil") && kelas == kelasBesar {
+		return kelasBesar
+	}
+	return ""
+}
+
+// kelasMobilDriver: "besar" kalau pengajuan terakhir yang disetujui
+// mendaftarkan mobil besar, "" untuk lainnya — termasuk driver mobil yang
+// mendaftar sebelum pilihan ini ada (13 Nov 2026), sampai admin mengubahnya.
+func kelasMobilDriver(phone string) string {
+	var kelas sql.NullString
+	db.QueryRow(`SELECT kelas_mobil FROM driver_applications
+		WHERE phone_number = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1`, phone).Scan(&kelas)
+	if kelas.String == kelasBesar {
+		return kelasBesar
+	}
+	return ""
+}
+
+// cocokKelas: pesanan mobil besar hanya untuk driver bermobil besar; mobil
+// besar tetap boleh mengambil pesanan sedang. Database baru ditanya untuk
+// pesanan besar, jadi saringan ini gratis bagi pesanan lain.
+func cocokKelas(kelasPesanan, phone string) bool {
+	return kelasPesanan != kelasBesar || kelasMobilDriver(phone) == kelasBesar
 }
 
 // ==================== ADMIN HANDLERS ====================
@@ -5004,6 +5048,7 @@ func adminDriverRegisterHandler(w http.ResponseWriter, r *http.Request) {
 			VehiclePlate: r.FormValue("vehicle_plate"),
 			VehicleType:  r.FormValue("vehicle_type"),
 			VehicleModel: r.FormValue("vehicle_model"),
+			KelasMobil:   r.FormValue("kelas_mobil"),
 		}
 		password = r.FormValue("password")
 		if len(password) < 8 {
@@ -5069,6 +5114,7 @@ func adminDriverRegisterHandler(w http.ResponseWriter, r *http.Request) {
 	// sendiri — token, pesanan, dan lokasinya berpisah di dua baris.
 	app.PhoneNumber = normalizePhone(app.PhoneNumber)
 	app.Email = strings.ToLower(strings.TrimSpace(app.Email))
+	app.KelasMobil = kelasMobilSah(app.VehicleType, app.KelasMobil)
 
 	statusLama := statusPengajuanDriver(app.PhoneNumber)
 	if statusLama == "pending" {
@@ -5267,6 +5313,23 @@ func adminDriverApproveHandler(w http.ResponseWriter, r *http.Request) {
 		app.Status = "rejected"
 		dbSaveApplication(app)
 		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "message": "Driver ditolak", "application": app})
+	} else if action == "kelas-mobil" {
+		// Ubah ukuran mobil tanpa pengajuan ulang: driver mobil lama semuanya
+		// "sedang" sampai admin menandai yang muat enam orang.
+		var in struct {
+			KelasMobil string `json:"kelas_mobil"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		if !strings.EqualFold(strings.TrimSpace(app.VehicleType), "mobil") {
+			writeJSONResponse(w, 400, map[string]string{"error": "Ukuran hanya untuk driver mobil"})
+			return
+		}
+		app.KelasMobil = kelasMobilSah(app.VehicleType, in.KelasMobil)
+		if _, err := db.Exec("UPDATE driver_applications SET kelas_mobil = ? WHERE id = ?", app.KelasMobil, app.ID); err != nil {
+			writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan ukuran mobil"})
+			return
+		}
+		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "application": app})
 	} else {
 		writeJSONResponse(w, 400, map[string]string{"error": "Action harus approve atau reject"})
 	}
@@ -7231,6 +7294,85 @@ func dbKreditTopUp(invoiceID string, dibayar float64) (phone string, jumlah floa
 		return phone, 0, err
 	}
 	return phone, tagihan, nil
+}
+
+type barisTopUp struct {
+	ID        string  `json:"id"`
+	Phone     string  `json:"phone_number"`
+	Nama      string  `json:"nama"`
+	Amount    float64 `json:"amount"`
+	Status    string  `json:"status"` // PENDING | PAID; QR-nya basi sejam setelah dibuat
+	CreatedAt string  `json:"created_at"`
+	PaidAt    string  `json:"paid_at"`
+}
+
+// adminTopUpHandler: GET /api/admin/topup?bulan=YYYY-MM
+//
+// Riwayat top up saldo komisi driver sebulan (bawaan bulan berjalan), terbaru
+// dulu, lunas maupun belum. Nama dibaca terpisah, bukan JOIN: topup_invoices
+// tabel baru dan di MariaDB produksi kolasinya bisa beda dengan users (1267).
+func adminTopUpHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
+		return
+	}
+	bulan := r.URL.Query().Get("bulan")
+	if bulan == "" {
+		bulan = time.Now().Format("2006-01")
+	}
+	if _, err := time.Parse("2006-01", bulan); err != nil {
+		writeJSONResponse(w, 400, map[string]string{"error": "Bulan harus berformat YYYY-MM"})
+		return
+	}
+	// ponytail: 1000 baris sebulan cukup untuk armada Sintang; tambah halaman kalau lewat.
+	rows, err := db.Query(`
+		SELECT id, phone_number, amount, status, created_at, paid_at FROM topup_invoices
+		WHERE created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 MONTH)
+		ORDER BY created_at DESC LIMIT 1000`, bulan+"-01", bulan+"-01")
+	if err != nil {
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal membaca riwayat top up"})
+		return
+	}
+	defer rows.Close()
+	daftar := make([]barisTopUp, 0)
+	var totalLunas float64
+	jumlahLunas := 0
+	for rows.Next() {
+		var b barisTopUp
+		var dibuat time.Time
+		var dibayar sql.NullTime
+		if err := rows.Scan(&b.ID, &b.Phone, &b.Amount, &b.Status, &dibuat, &dibayar); err != nil {
+			continue
+		}
+		b.CreatedAt = dibuat.Format(time.RFC3339)
+		if dibayar.Valid {
+			b.PaidAt = dibayar.Time.Format(time.RFC3339)
+		}
+		if b.Status == "PAID" {
+			totalLunas += b.Amount
+			jumlahLunas++
+		}
+		daftar = append(daftar, b)
+	}
+	rows.Close()
+	// ponytail: satu kueri per driver berbeda; ganti IN (...) kalau armadanya ratusan.
+	nama := map[string]string{}
+	for i := range daftar {
+		p := daftar[i].Phone
+		if _, ada := nama[p]; !ada {
+			var n sql.NullString
+			db.QueryRow("SELECT name FROM users WHERE phone_number = ?", p).Scan(&n)
+			nama[p] = n.String
+		}
+		daftar[i].Nama = nama[p]
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{
+		"status":       "success",
+		"bulan":        bulan,
+		"topup":        daftar,
+		"total_lunas":  totalLunas,
+		"jumlah_lunas": jumlahLunas,
+	})
 }
 
 // kreditTopUp membalas webhook Xendit untuk invoice dompet. Sebagian besar

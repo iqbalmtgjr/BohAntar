@@ -1,3 +1,18 @@
+/// Kelas BohCar. Pesanannya tetap berlayanan "BohCar"; kelas cuma memilih baris
+/// tarif di server ("BohCar Besar") dan tulisan batas penumpang di sini.
+/// Server tidak menghitung orang — batas ini petunjuk untuk penumpang dan driver.
+const kelasMobil = <String, ({String nama, int maks})>{
+  '': (nama: 'Mobil sedang', maks: 4),
+  'besar': (nama: 'Mobil besar', maks: 6),
+};
+
+/// "Mobil besar · maks 6 orang" untuk pesanan BohCar, '' untuk layanan lain.
+String keteranganKelas(Map<String, dynamic>? o) {
+  if (o?['service'] != 'BohCar') return '';
+  final k = kelasMobil[o?['kelas'] ?? ''] ?? kelasMobil['']!;
+  return '${k.nama} · maks ${k.maks} orang';
+}
+
 /// Estimasi ongkos yang datang dari server.
 ///
 /// Dulu berkas ini menyimpan rumusnya sendiri lengkap dengan angka buka pintu

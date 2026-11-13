@@ -30,6 +30,8 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
   final _modelController = TextEditingController();
 
   String _vehicleType = 'motor';
+  // Mobil saja: pesanan BohCar Besar hanya ditawarkan ke mobil besar.
+  String _kelasMobil = '';
   bool _obscurePassword = true;
   bool _isLoading = false;
   String _errorMessage = '';
@@ -117,6 +119,7 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
         simPhotoPath: _dokumen['sim']!.path,
         stnkPhotoPath: _dokumen['stnk']!.path,
         facePhotoPath: _dokumen['wajah']!.path,
+        kelasMobil: _vehicleType == 'mobil' ? _kelasMobil : '',
       );
       if (!mounted) return;
       // Nomor yang sudah punya akun (mis. pernah memesan sebagai penumpang):
@@ -332,7 +335,7 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
                       initialValue: _vehicleType,
-                      decoration: const InputDecoration(prefixIcon: Icon(Icons.two_wheeler_outlined)),
+                      decoration: InputDecoration(prefixIcon: Icon(_vehicleType == 'mobil' ? Icons.directions_car_outlined : Icons.two_wheeler_outlined)),
                       items: const [
                         DropdownMenuItem(value: 'motor', child: Text('Motor')),
                         DropdownMenuItem(value: 'mobil', child: Text('Mobil')),
@@ -340,9 +343,30 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
                       onChanged: (v) => setState(() => _vehicleType = v ?? 'motor'),
                     ),
                     const SizedBox(height: 20),
+                    if (_vehicleType == 'mobil') ...[
+                      Text('Ukuran Mobil',
+                          style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        initialValue: _kelasMobil,
+                        isExpanded: true,
+                        decoration: const InputDecoration(prefixIcon: Icon(Icons.airline_seat_recline_normal)),
+                        items: const [
+                          DropdownMenuItem(value: '', child: Text('Sedang · maks 4 penumpang')),
+                          DropdownMenuItem(value: 'besar', child: Text('Besar · maks 6 penumpang')),
+                        ],
+                        onChanged: (v) => setState(() => _kelasMobil = v ?? ''),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Besar = mobil 7 kursi seperti Avanza, Xenia, Innova. Pesanan BohCar Besar hanya ditawarkan ke mobil besar.',
+                        style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context)),
+                      ),
+                      const SizedBox(height: 20),
+                    ],
                     _kolom('Merek & Tipe', _modelController,
-                        ikon: Icons.directions_bike_outlined,
-                        hint: 'Honda Beat 2020',
+                        ikon: _vehicleType == 'mobil' ? Icons.directions_car_outlined : Icons.directions_bike_outlined,
+                        hint: _vehicleType == 'mobil' ? 'Toyota Avanza 2019' : 'Honda Beat 2020',
                         capitalization: TextCapitalization.words),
                     Text('Dokumen',
                         style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),

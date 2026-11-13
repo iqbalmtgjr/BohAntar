@@ -55,3 +55,45 @@ func TestOrderanDisaringMenurutKendaraan(t *testing.T) {
 		}
 	}
 }
+
+// Pesanan mobil besar hanya untuk mobil yang didaftarkan besar. Mobil besar
+// tetap boleh mengambil pesanan sedang; driver mobil lama (tanpa ukuran)
+// dianggap sedang sampai admin mengubahnya.
+func TestPesananMobilBesarHanyaUntukMobilBesar(t *testing.T) {
+	bukaDBTes(t)
+	stempel := time.Now().Format("150405")
+	besar := "+62856" + stempel + "1"
+	sedang := "+62856" + stempel + "2"
+	for _, p := range []string{besar, sedang} {
+		penggunaUji(t, p)
+	}
+	now := time.Now().Format(time.RFC3339)
+	for _, a := range []DriverApplication{
+		{PhoneNumber: besar, VehicleType: "mobil", KelasMobil: kelasBesar, Status: "approved"},
+		{PhoneNumber: sedang, VehicleType: "mobil", Status: "approved"},
+	} {
+		a.ID, a.Name, a.CreatedAt = newID("app"), "Uji", now
+		if err := dbSaveApplication(a); err != nil {
+			t.Fatalf("gagal menyiapkan pengajuan: %v", err)
+		}
+	}
+
+	for _, k := range []struct {
+		kelas, phone string
+		boleh        bool
+	}{
+		{kelasBesar, besar, true},
+		{kelasBesar, sedang, false},
+		{"", besar, true},
+		{"", sedang, true},
+	} {
+		if cocokKelas(k.kelas, k.phone) != k.boleh {
+			t.Errorf("cocokKelas(%q, %s) harusnya %v", k.kelas, k.phone, k.boleh)
+		}
+	}
+
+	// Motor tidak punya ukuran, dan kiriman karangan dianggap sedang.
+	if kelasMobilSah("motor", kelasBesar) != "" || kelasMobilSah("Mobil", "BESAR") != "" || kelasMobilSah("Mobil", kelasBesar) != kelasBesar {
+		t.Error("kelasMobilSah salah menormalkan ukuran")
+	}
+}

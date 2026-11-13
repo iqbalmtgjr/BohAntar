@@ -28,6 +28,7 @@ const BannerPage = lazy(() => import("./pages/BannerPage"));
 const VoucherPage = lazy(() => import("./pages/VoucherPage"));
 const KomisiPage = lazy(() => import("./pages/KomisiPage"));
 const PencairanPage = lazy(() => import("./pages/PencairanPage"));
+const TopUpPage = lazy(() => import("./pages/TopUpPage"));
 const DriverRegistPage = lazy(() => import("./pages/DriverRegistPage"));
 const ApplicationsPage = lazy(() => import("./pages/ApplicationsPage"));
 const PaymentReportRental = lazy(() => import("./pages/PaymentReportRental"));
@@ -242,6 +243,7 @@ export default function App() {
         <Route path="/voucher" element={<VoucherPage />} />
         <Route path="/komisi" element={<KomisiPage />} />
         <Route path="/pencairan" element={<PencairanPage />} />
+        <Route path="/topup" element={<TopUpPage />} />
         <Route path="/driver-register" element={<DriverRegistPage />} />
         <Route path="/applications" element={<ApplicationsPage />} />
         <Route path="/partner-applications" element={<PartnerApplicationsPage />} />

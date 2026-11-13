@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -192,5 +193,48 @@ func TestTopUpDiremSetelahLimaInvoice(t *testing.T) {
 		waktuKeDB(time.Now().Add(-jendelaTopUp-time.Minute).Format(time.RFC3339)), phone)
 	if kode := minta(); kode != 200 {
 		t.Fatalf("setelah jendela lewat dibalas %d, harusnya 200 (jalur pembayaran tiruan)", kode)
+	}
+}
+
+// Riwayat super admin: invoice bulan ini tampil dengan nama driver dan status
+// lunasnya, invoice bulan lalu tidak ikut.
+func TestAdminTopUpPerBulan(t *testing.T) {
+	bukaDBTes(t)
+	const phone = "+62800000104"
+	lunas := invoiceTopUpUji(t, phone, 25000)
+	belum := invoiceTopUpUji(t, phone, 15000)
+	lama := invoiceTopUpUji(t, phone, 99000)
+	if _, _, err := dbKreditTopUp(lunas, 25000); err != nil {
+		t.Fatalf("gagal melunasi: %v", err)
+	}
+	db.Exec("UPDATE topup_invoices SET created_at = ? WHERE id = ?",
+		waktuKeDB(time.Now().AddDate(0, -1, -1).Format(time.RFC3339)), lama)
+
+	rec := httptest.NewRecorder()
+	adminTopUpHandler(rec, httptest.NewRequest(http.MethodGet, "/api/admin/topup", nil))
+	var res struct {
+		Topup      []barisTopUp `json:"topup"`
+		TotalLunas float64      `json:"total_lunas"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || rec.Code != 200 {
+		t.Fatalf("status %d, body %s", rec.Code, rec.Body.String())
+	}
+	status := map[string]string{}
+	for _, b := range res.Topup {
+		if b.Phone == phone {
+			status[b.ID] = b.Status
+			if b.Nama == "" {
+				t.Errorf("invoice %s tanpa nama driver", b.ID)
+			}
+		}
+	}
+	if status[lunas] != "PAID" || status[belum] != "PENDING" {
+		t.Fatalf("status salah: %v", status)
+	}
+	if _, ada := status[lama]; ada {
+		t.Fatal("invoice bulan lalu ikut tampil")
+	}
+	if res.TotalLunas < 25000 {
+		t.Fatalf("total lunas %.0f belum memuat 25.000", res.TotalLunas)
 	}
 }

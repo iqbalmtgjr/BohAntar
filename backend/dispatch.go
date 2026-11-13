@@ -89,15 +89,19 @@ func adminDriverOnlineHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// layananManual: yang bisa dipesan lewat admin. Kiriman barang dan BohFood
-// butuh isian lain (paket, menu) — tambahkan kalau memang diminta.
-var layananManual = map[string]bool{"BohRide": true, "BohCar": true}
+// layananManual: semua layanan antar yang bisa dipesan lewat admin. BohRental
+// bukan pesanan antar (sewa per hari lewat mitra), jadi tidak ikut.
+var layananManual = map[string]bool{"BohRide": true, "BohCar": true, "BohSend": true, "BohFood": true}
 
 // pesananManual menyusun pesanan dari isian admin. Dipisah dari handler supaya
 // aturannya bisa diuji tanpa HTTP. Pesan galat kosong = boleh disimpan.
-func pesananManual(nama, hp, layanan, jemput, tujuan string, jLat, jLng, tLat, tLng float64, driverTujuan string) (Order, string) {
-	nama, jemput, tujuan = strings.TrimSpace(nama), strings.TrimSpace(jemput), strings.TrimSpace(tujuan)
+// Aturan isiannya sama dengan createOrderHandler: kelas BohCar, paket BohSend,
+// warung & menu BohFood (titik jemputnya ditulis ulang jadi lokasi warung).
+func pesananManual(nama, hp, driverTujuan string, in CreateOrderInput) (Order, string) {
+	nama = strings.TrimSpace(nama)
+	in.Pickup, in.Dropoff = strings.TrimSpace(in.Pickup), strings.TrimSpace(in.Dropoff)
 	hp = strings.NewReplacer(" ", "", "-", "").Replace(strings.TrimSpace(hp))
+	layanan := in.ServiceType
 	switch {
 	case nama == "" || hp == "":
 		return Order{}, "Nama dan nomor HP pelanggan wajib diisi"
@@ -106,14 +110,29 @@ func pesananManual(nama, hp, layanan, jemput, tujuan string, jLat, jLng, tLat, t
 	case len(hp) < 9 || len(hp) > 15 || strings.Trim(hp, "+0123456789") != "":
 		return Order{}, "Nomor HP pelanggan tidak valid"
 	case !layananManual[layanan]:
-		return Order{}, "Layanan harus BohRide atau BohCar"
-	case jemput == "" || tujuan == "" || utf8.RuneCountInString(jemput) > 500 || utf8.RuneCountInString(tujuan) > 500:
-		return Order{}, "Alamat jemput dan tujuan wajib diisi (maks. 500 karakter)"
-	case !koordinatValid(jLat, jLng) || !koordinatValid(tLat, tLng):
+		return Order{}, "Layanan harus BohRide, BohCar, BohSend, atau BohFood"
+	}
+	if pesan := teksPesananKepanjangan(in); pesan != "" {
+		return Order{}, pesan
+	}
+	var warung FoodMerchant
+	var items []OrderItem
+	var foodTotal float64
+	if layanan == "BohFood" {
+		var pesan string
+		if warung, items, foodTotal, pesan, _ = siapkanPesananMakanan(&in); pesan != "" {
+			return Order{}, pesan
+		}
+	}
+	switch {
+	case in.Pickup == "" || in.Dropoff == "":
+		return Order{}, "Alamat jemput dan tujuan wajib diisi"
+	case !koordinatValid(in.PickupLat, in.PickupLng) || !koordinatValid(in.DropoffLat, in.DropoffLng):
 		return Order{}, "Titik jemput dan tujuan harus dipilih di peta"
-	case !dalamWilayahLayanan(jLat, jLng) || !dalamWilayahLayanan(tLat, tLng):
+	case !dalamWilayahLayanan(in.PickupLat, in.PickupLng) || !dalamWilayahLayanan(in.DropoffLat, in.DropoffLng):
 		return Order{}, pesanLuarWilayah
 	}
+	kelas := kelasPesanan(layanan, in.Kelas)
 
 	// Pelanggan yang punya akun: pesanan tercatat atas akunnya, jadi ia ikut
 	// melihat drivernya di aplikasi, dan tombol Telepon/Chat driver sampai ke
@@ -139,18 +158,24 @@ func pesananManual(nama, hp, layanan, jemput, tujuan string, jLat, jLng, tLat, t
 		if !cocokKendaraan(layanan, kendaraanDriver(driverTujuan)) {
 			return Order{}, "Kendaraan driver itu tidak cocok untuk " + layanan
 		}
+		if !cocokKelas(kelas, driverTujuan) {
+			return Order{}, "Pesanan ini untuk mobil besar, mobil driver itu terdaftar sedang"
+		}
 	}
 
-	t := ambilTarif(layanan)
-	fare := hitungTarif(t, jLat, jLng, tLat, tLng)
+	t := ambilTarif(barisTarif(layanan, kelas))
+	fare := hitungTarif(t, in.PickupLat, in.PickupLng, in.DropoffLat, in.DropoffLng)
 	now := time.Now().Format(time.RFC3339)
 	return Order{
 		ID: newID("order"), RiderPhone: riderPhone, RiderName: riderName,
-		PickupAddress: jemput, DropoffAddress: tujuan,
-		PickupLat: jLat, PickupLng: jLng, DropoffLat: tLat, DropoffLng: tLng,
+		PickupAddress: in.Pickup, DropoffAddress: in.Dropoff,
+		PickupLat: in.PickupLat, PickupLng: in.PickupLng, DropoffLat: in.DropoffLat, DropoffLng: in.DropoffLng,
 		Fare: fare, Komisi: hitungKomisi(t, fare), BiayaJasa: t.BiayaJasa,
-		PaymentMethod: "cash", Service: layanan, Status: "pending",
+		PaymentMethod: "cash", Service: layanan, Kelas: kelas, Status: "pending",
 		CreatedAt: now, UpdatedAt: now, DriverTujuan: driverTujuan,
+		PackageType: strings.TrimSpace(in.PackageType), PackageNotes: strings.TrimSpace(in.PackageNotes),
+		ReceiverName: strings.TrimSpace(in.ReceiverName), ReceiverPhone: strings.TrimSpace(in.ReceiverPhone),
+		MerchantID: warung.ID, MerchantName: warung.RestaurantName, Items: items, FoodTotal: foodTotal,
 	}, ""
 }
 
@@ -172,12 +197,27 @@ func adminPesananManualHandler(w http.ResponseWriter, r *http.Request) {
 		TujuanLat   float64 `json:"tujuan_lat"`
 		TujuanLng   float64 `json:"tujuan_lng"`
 		DriverPhone string  `json:"driver_phone"`
+		// Opsional, per layanan: lihat CreateOrderInput.
+		Kelas         string        `json:"kelas"`
+		PackageType   string        `json:"package_type"`
+		PackageNotes  string        `json:"package_notes"`
+		ReceiverName  string        `json:"receiver_name"`
+		ReceiverPhone string        `json:"receiver_phone"`
+		MerchantID    string        `json:"merchant_id"`
+		Items         []itemPesanan `json:"items"`
 	}
 	if json.NewDecoder(r.Body).Decode(&in) != nil {
 		writeJSONResponse(w, 400, map[string]string{"error": "Data pesanan tidak valid"})
 		return
 	}
-	o, pesan := pesananManual(in.Nama, in.HP, in.Layanan, in.Jemput, in.Tujuan, in.JemputLat, in.JemputLng, in.TujuanLat, in.TujuanLng, in.DriverPhone)
+	o, pesan := pesananManual(in.Nama, in.HP, in.DriverPhone, CreateOrderInput{
+		ServiceType: in.Layanan, Kelas: in.Kelas,
+		Pickup: in.Jemput, Dropoff: in.Tujuan,
+		PickupLat: in.JemputLat, PickupLng: in.JemputLng, DropoffLat: in.TujuanLat, DropoffLng: in.TujuanLng,
+		PackageType: in.PackageType, PackageNotes: in.PackageNotes,
+		ReceiverName: in.ReceiverName, ReceiverPhone: in.ReceiverPhone,
+		MerchantID: in.MerchantID, Items: in.Items,
+	})
 	if pesan != "" {
 		writeJSONResponse(w, 400, map[string]string{"error": pesan})
 		return
@@ -227,6 +267,9 @@ func adminTujukanPesananHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		case !cocokKendaraan(o.Service, kendaraanDriver(in.DriverPhone)):
 			writeJSONResponse(w, 400, map[string]string{"error": "Kendaraan driver itu tidak cocok untuk " + o.Service})
+			return
+		case !cocokKelas(o.Kelas, in.DriverPhone):
+			writeJSONResponse(w, 400, map[string]string{"error": "Pesanan ini untuk mobil besar, mobil driver itu terdaftar sedang"})
 			return
 		}
 	}

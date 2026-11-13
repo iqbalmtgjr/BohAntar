@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Users, ShoppingBag, BarChart3, UserPlus, FileText,
-  LogOut, CheckCircle, CreditCard, LayoutGrid, Percent, Wallet, Banknote, MapPin, GalleryHorizontal, Radio, TicketPercent, LogIn
+  LogOut, CheckCircle, CreditCard, LayoutGrid, Percent, Wallet, Banknote, MapPin, GalleryHorizontal, Radio, TicketPercent, LogIn, QrCode
 } from "lucide-react";
 import logoB from "../assets/logo_b_icon.png";
 import ThemeToggle from "./ThemeToggle";
@@ -35,6 +35,7 @@ const navItems = [
   { to: "/beralih-akun", icon: LogIn, label: "Masuk Akun Mitra", short: "Beralih", desktopOnly: true },
   { section: "Pelaporan Pembayaran" },
   { to: "/komisi", icon: Wallet, label: "Bagi Hasil Driver", short: "Komisi", desktopOnly: true },
+  { to: "/topup", icon: QrCode, label: "Top Up Driver", short: "Top Up", desktopOnly: true },
   { to: "/pencairan", icon: Banknote, label: "Pencairan Saldo", short: "Cair", desktopOnly: true },
   { to: "/payment-reports/rental", icon: CreditCard, label: "Langganan bohRental", short: "Langganan", desktopOnly: true },
 ];

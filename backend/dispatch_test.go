@@ -19,10 +19,29 @@ func TestPesananManualHanyaUntukDriverTujuan(t *testing.T) {
 		db.Exec("UPDATE users SET role = 'driver', is_driver_active = 1 WHERE phone_number = ?", p)
 	}
 
-	if _, pesan := pesananManual("Budi", "0812", "BohRide", "A", "B", 0.07, 111.49, 0.08, 111.50, ""); pesan == "" {
+	rute := func(layanan string) CreateOrderInput {
+		return CreateOrderInput{ServiceType: layanan, Pickup: "Pasar", Dropoff: "Terminal", PickupLat: 0.0785, PickupLng: 111.494, DropoffLat: 0.09, DropoffLng: 111.50}
+	}
+	if _, pesan := pesananManual("Budi", "0812", "", rute("BohRide")); pesan == "" {
 		t.Fatal("nomor HP 4 digit seharusnya ditolak")
 	}
-	o, pesan := pesananManual("Budi", "0812 9999 0001", "BohRide", "Pasar", "Terminal", 0.0785, 111.494, 0.09, 111.50, tujuan)
+	if _, pesan := pesananManual("Budi", "081299990001", "", rute("BohRental")); pesan == "" {
+		t.Fatal("BohRental bukan pesanan antar, seharusnya ditolak")
+	}
+	if _, pesan := pesananManual("Budi", "081299990001", "", rute("BohFood")); pesan == "" {
+		t.Fatal("BohFood tanpa warung seharusnya ditolak")
+	}
+	kirim := rute("BohSend")
+	kirim.ReceiverName = "Ani"
+	if o, pesan := pesananManual("Budi", "081299990001", "", kirim); pesan != "" || o.ReceiverName != "Ani" {
+		t.Fatalf("BohSend manual: %q %q", pesan, o.ReceiverName)
+	}
+	besar := rute("BohCar")
+	besar.Kelas = kelasBesar
+	if o, _ := pesananManual("Budi", "081299990001", "", besar); o.Kelas != kelasBesar {
+		t.Fatalf("kelas BohCar besar hilang: %q", o.Kelas)
+	}
+	o, pesan := pesananManual("Budi", "0812 9999 0001", tujuan, rute("BohRide"))
 	if pesan != "" {
 		t.Fatalf("pesanan manual ditolak: %s", pesan)
 	}

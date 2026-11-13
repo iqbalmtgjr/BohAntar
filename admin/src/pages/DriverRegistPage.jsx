@@ -4,7 +4,7 @@ import { api } from "../api";
 import Topbar from "../components/Topbar";
 import { Alert } from "../components/Feedback";
 
-const EMPTY_FORM = { phone_number: "", name: "", email: "", ktp_number: "", sim_number: "", vehicle_plate: "", vehicle_type: "motor", vehicle_model: "", notes: "" };
+const EMPTY_FORM = { phone_number: "", name: "", email: "", ktp_number: "", sim_number: "", vehicle_plate: "", vehicle_type: "motor", kelas_mobil: "", vehicle_model: "", notes: "" };
 const DOCS = [
   // Gambar saja (bukan PDF/HEIC): ditampilkan ke penumpang. Sengaja tanpa
   // capture="user": di HP itu memaksa kamera, padahal admin sering menerima
@@ -92,6 +92,17 @@ export default function DriverRegistPage() {
                   <option value="mobil">Mobil</option>
                 </select>
               </div>
+
+              {/* Pesanan BohCar Besar hanya ditawarkan ke mobil besar. */}
+              {form.vehicle_type === "mobil" && (
+                <div className="input-group">
+                  <label>Ukuran Mobil</label>
+                  <select className="input" value={form.kelas_mobil} onChange={e => set("kelas_mobil", e.target.value)}>
+                    <option value="">Sedang — maks 4 penumpang (Agya, Brio, sedan)</option>
+                    <option value="besar">Besar — maks 6 penumpang (Avanza, Xenia, Innova)</option>
+                  </select>
+                </div>
+              )}
 
               {[
                 { label: "Plat Nomor", key: "vehicle_plate", placeholder: "KB 1234 AB" },

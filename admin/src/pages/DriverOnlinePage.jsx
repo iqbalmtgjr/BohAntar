@@ -26,7 +26,64 @@ const jarakKM = (a, b) => {
   const x = Math.sin(((b.lat - a.lat) * r) / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(((b.lng - a.lng) * r) / 2) ** 2;
   return 12742 * Math.asin(Math.sqrt(x));
 };
-const KOSONG = { nama: "", hp: "", layanan: "BohRide", jemput: { alamat: "", lat: "", lng: "" }, tujuan: { alamat: "", lat: "", lng: "" }, driver: "" };
+const KOSONG = {
+  nama: "", hp: "", layanan: "BohRide", kelas: "", jemput: { alamat: "", lat: "", lng: "" }, tujuan: { alamat: "", lat: "", lng: "" }, driver: "",
+  paket: "Dokumen", catatan: "", penerima: "", hpPenerima: "", warung: "", pilihan: {},
+};
+// Semua layanan antar; BohRental bukan pesanan antar. [layanan, kelas, label]
+const LAYANAN = [
+  ["BohRide", "", "BohRide (motor)"],
+  ["BohCar", "", "BohCar (mobil sedang)"],
+  ["BohCar", "besar", "BohCar besar (mobil 6-7 kursi)"],
+  ["BohSend", "", "BohSend (kirim barang)"],
+  ["BohFood", "", "BohFood (pesan makanan)"],
+];
+const hargaItem = (m, opsi = {}) => m.price + (m.option_groups || []).flatMap((g) => g.options.filter((o) => (opsi[g.id] || []).includes(o.id))).reduce((s, o) => s + o.price, 0);
+
+// Menu warung untuk BohFood. pilihan = { menuId: { qty, opsi: { grupId: [opsiId] } } }.
+// ponytail: satu baris per menu, jadi satu menu dengan dua varian berbeda tidak
+// bisa dipesan sekaligus; buat dua pesanan atau tambah baris kalau sering diminta.
+function MenuWarung({ menu, pilihan, ubah }) {
+  const set = (id, v) => ubah({ ...pilihan, [id]: { qty: 0, opsi: {}, ...pilihan[id], ...v } });
+  if (!menu) return <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Memuat menu…</div>;
+  if (!menu.length) return <div style={{ fontSize: 12, color: "var(--warning)" }}>Warung ini belum punya menu yang bisa dipesan.</div>;
+  return (
+    <div style={{ maxHeight: 360, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 10, padding: 8 }}>
+      {menu.map((m) => {
+        const p = pilihan[m.id] || { qty: 0, opsi: {} };
+        return (
+          <div key={m.id} style={{ padding: "6px 4px", borderBottom: "1px solid var(--border)", opacity: m.is_available ? 1 : 0.5 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ flex: 1 }}><b>{m.name}</b> <span style={{ color: "var(--text-muted)", fontSize: 12 }}>{m.is_available ? rp(m.price) : "habis"}</span></div>
+              <input className="input" type="number" min={0} max={50} value={p.qty || ""} placeholder="0" disabled={!m.is_available}
+                aria-label={`Jumlah ${m.name}`} style={{ width: 70 }} onChange={(e) => set(m.id, { qty: Math.max(0, Math.min(50, +e.target.value || 0)) })} />
+            </div>
+            {p.qty > 0 && (m.option_groups || []).map((g) => {
+              const dipilih = p.opsi[g.id] || [];
+              const pasang = (ids) => set(m.id, { opsi: { ...p.opsi, [g.id]: ids } });
+              return g.type === "single" ? (
+                <select key={g.id} className="input" style={{ marginTop: 6 }} value={dipilih[0] || ""} onChange={(e) => pasang(e.target.value ? [e.target.value] : [])}>
+                  <option value="">{g.required ? `Pilih ${g.name}…` : `Tanpa ${g.name}`}</option>
+                  {g.options.map((o) => <option key={o.id} value={o.id}>{o.name}{o.price ? ` (+${rp(o.price)})` : ""}</option>)}
+                </select>
+              ) : (
+                <div key={g.id} style={{ fontSize: 13, marginTop: 6 }}>
+                  {g.name}{g.required ? " (wajib)" : ""}:{" "}
+                  {g.options.map((o) => (
+                    <label key={o.id} style={{ marginRight: 10, whiteSpace: "nowrap" }}>
+                      <input type="checkbox" checked={dipilih.includes(o.id)}
+                        onChange={(e) => pasang(e.target.checked ? [...dipilih, o.id] : dipilih.filter((x) => x !== o.id))} /> {o.name}{o.price ? ` +${rp(o.price)}` : ""}
+                    </label>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function PetaDriver({ drivers }) {
   const wadah = useRef(null);
@@ -125,15 +182,31 @@ export default function DriverOnlinePage() {
     return () => clearInterval(t);
   }, []);
 
-  const { jemput, tujuan, layanan } = form;
+  const [warungList, setWarungList] = useState(null);
+  const [menu, setMenu] = useState(null);
+  const { tujuan, layanan, kelas } = form;
+  const makanan = layanan === "BohFood";
+  useEffect(() => {
+    if (makanan && !warungList) api.daftarWarung().then((res) => setWarungList(res.merchants || [])).catch(() => setWarungList([]));
+  }, [makanan]);
+  useEffect(() => {
+    setMenu(null);
+    if (form.warung) api.menuWarung(form.warung).then((res) => setMenu(Array.isArray(res) ? res : [])).catch(() => setMenu([]));
+  }, [form.warung]);
+  const warung = makanan ? (warungList || []).find((w) => w.id === form.warung) : null;
+  // BohFood dijemput di warung: server menulis ulang titik jemputnya ke lokasi warung.
+  const jemput = makanan ? (warung ? { alamat: warung.restaurant_name, lat: warung.lat, lng: warung.lng } : { alamat: "", lat: "", lng: "" }) : form.jemput;
+  const subtotal = makanan && menu ? menu.reduce((s, m) => s + (form.pilihan[m.id]?.qty || 0) * hargaItem(m, form.pilihan[m.id]?.opsi), 0) : 0;
+
   useEffect(() => {
     if (!jemput.lat || !tujuan.lat) return setEstimasi(null);
-    api.estimasiTarif(layanan, jemput, tujuan).then((res) => setEstimasi(res.rincian || null)).catch(() => setEstimasi(null));
-  }, [layanan, jemput.lat, jemput.lng, tujuan.lat, tujuan.lng]);
+    api.estimasiTarif(layanan, jemput, tujuan, kelas).then((res) => setEstimasi(res.rincian || null)).catch(() => setEstimasi(null));
+  }, [layanan, kelas, jemput.lat, jemput.lng, tujuan.lat, tujuan.lng]);
 
   const drivers = data?.drivers || [];
   const nama = Object.fromEntries(drivers.map((d) => [d.phone, d.name]));
   // Calon untuk layanan ini: siaga, kendaraan cocok, terdekat dari titik jemput.
+  // Ukuran mobil (BohCar besar) tidak ada di daftar ini; server yang menolak.
   const calon = drivers
     .filter((d) => statusDriver(d) === "siaga" && cocok(layanan, d.kendaraan))
     .map((d) => ({ ...d, km: jemput.lat ? jarakKM({ lat: +jemput.lat, lng: +jemput.lng }, d) : null }))
@@ -142,16 +215,22 @@ export default function DriverOnlinePage() {
 
   const buat = async (e) => {
     e.preventDefault();
+    const items = Object.entries(form.pilihan).filter(([, p]) => p.qty > 0)
+      .map(([id, p]) => ({ menu_id: id, qty: p.qty, options: Object.values(p.opsi || {}).flat() }));
+    if (makanan && !form.warung) return toast.warning("Pilih warungnya dulu");
+    if (makanan && !items.length) return toast.warning("Isi jumlah minimal satu menu");
     setKirim(true);
     const res = await api.buatPesananManual({
-      nama: form.nama, hp: form.hp, layanan,
+      nama: form.nama, hp: form.hp, layanan, kelas,
       jemput: jemput.alamat, jemput_lat: +jemput.lat, jemput_lng: +jemput.lng,
       tujuan: tujuan.alamat, tujuan_lat: +tujuan.lat, tujuan_lng: +tujuan.lng,
       driver_phone: form.driver,
+      ...(layanan === "BohSend" && { package_type: form.paket, package_notes: form.catatan, receiver_name: form.penerima, receiver_phone: form.hpPenerima }),
+      ...(makanan && { merchant_id: form.warung, items, package_notes: form.catatan }),
     }).catch(() => ({ error: "Gagal menghubungi server" }));
     setKirim(false);
     if (res.status !== "success") return toast.error(res.error || "Gagal membuat pesanan");
-    toast.success(`Pesanan dibuat · ${rp(res.order.fare + res.order.biaya_jasa)} · ${form.driver ? "menunggu " + (nama[form.driver] || "driver") + " menerima" : "disiarkan ke driver"}`, 8000);
+    toast.success(`Pesanan dibuat · ${rp(res.order.fare + res.order.biaya_jasa + (res.order.food_total || 0))} · ${form.driver ? "menunggu " + (nama[form.driver] || "driver") + " menerima" : "disiarkan ke driver"}`, 8000);
     setForm(KOSONG);
     muat();
   };
@@ -215,13 +294,48 @@ export default function DriverOnlinePage() {
               </div>
               <div className="input-group">
                 <label>Layanan</label>
-                <select className="input" value={layanan} onChange={(e) => setForm((f) => ({ ...f, layanan: e.target.value, driver: "" }))}>
-                  <option value="BohRide">BohRide (motor)</option>
-                  <option value="BohCar">BohCar (mobil)</option>
+                <select className="input" value={`${layanan}|${kelas}`}
+                  onChange={(e) => { const [l, k] = e.target.value.split("|"); setForm((f) => ({ ...f, layanan: l, kelas: k, driver: "" })); }}>
+                  {LAYANAN.map(([l, k, label]) => <option key={l + k} value={`${l}|${k}`}>{label}</option>)}
                 </select>
               </div>
-              <TitikAlamat judul="Jemput" nilai={jemput} ubah={(v) => set("jemput", v)} />
-              <TitikAlamat judul="Tujuan" nilai={tujuan} ubah={(v) => set("tujuan", v)} />
+              {makanan ? (
+                <div className="input-group">
+                  <label>Warung</label>
+                  <select className="input" value={form.warung} onChange={(e) => setForm((f) => ({ ...f, warung: e.target.value, pilihan: {} }))} style={{ marginBottom: 8 }}>
+                    <option value="">{warungList ? "Pilih warung…" : "Memuat warung…"}</option>
+                    {(warungList || []).map((w) => <option key={w.id} value={w.id} disabled={!w.is_open}>{w.restaurant_name}{w.is_open ? "" : " (tutup)"}</option>)}
+                  </select>
+                  {form.warung && <MenuWarung menu={menu} pilihan={form.pilihan} ubah={(v) => set("pilihan", v)} />}
+                  {subtotal > 0 && <div style={{ fontSize: 13, marginTop: 6 }}>Harga makanan <b>{rp(subtotal)}</b></div>}
+                </div>
+              ) : (
+                <TitikAlamat judul="Jemput" nilai={form.jemput} ubah={(v) => set("jemput", v)} />
+              )}
+              <TitikAlamat judul={makanan || layanan === "BohSend" ? "Antar ke" : "Tujuan"} nilai={tujuan} ubah={(v) => set("tujuan", v)} />
+              {layanan === "BohSend" && (
+                <>
+                  <div className="input-group">
+                    <label>Isi paket</label>
+                    <select className="input" value={form.paket} onChange={(e) => set("paket", e.target.value)}>
+                      {["Dokumen", "Makanan", "Pakaian", "Elektronik", "Lainnya"].map((p) => <option key={p}>{p}</option>)}
+                    </select>
+                  </div>
+                  <div className="input-group">
+                    <label>Penerima</label>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <input className="input" placeholder="Nama penerima" value={form.penerima} maxLength={100} onChange={(e) => set("penerima", e.target.value)} />
+                      <input className="input" type="tel" placeholder="HP penerima" value={form.hpPenerima} maxLength={20} onChange={(e) => set("hpPenerima", e.target.value)} />
+                    </div>
+                  </div>
+                </>
+              )}
+              {(makanan || layanan === "BohSend") && (
+                <div className="input-group">
+                  <label>Catatan untuk driver</label>
+                  <input className="input" placeholder={makanan ? "Mis. sambal dipisah" : "Mis. barang mudah pecah"} value={form.catatan} maxLength={500} onChange={(e) => set("catatan", e.target.value)} />
+                </div>
+              )}
               <div className="input-group">
                 <label>Driver</label>
                 <select className="input" value={form.driver} onChange={(e) => set("driver", e.target.value)}>
@@ -234,7 +348,7 @@ export default function DriverOnlinePage() {
               </div>
               {estimasi && (
                 <div style={{ background: "var(--primary-glow)", borderRadius: 10, padding: 12, marginBottom: 16, fontSize: 13 }}>
-                  <b style={{ fontSize: 16 }}>{rp(estimasi.total)}</b> dibayar tunai ke driver · {estimasi.km.toFixed(1)} km · driver terima {rp(estimasi.driver)}
+                  <b style={{ fontSize: 16 }}>{rp(estimasi.total + subtotal)}</b> dibayar tunai ke driver{subtotal > 0 && ` (makanan ${rp(subtotal)} + ongkir ${rp(estimasi.total)})`} · {estimasi.km.toFixed(1)} km · driver terima {rp(estimasi.driver)}
                 </div>
               )}
               <button type="submit" className="btn btn-primary" disabled={kirim} style={{ width: "100%", justifyContent: "center", padding: 12 }}>
@@ -263,7 +377,8 @@ export default function DriverOnlinePage() {
                     <td>
                       {s === "siaga" && (
                         <button className="btn" onClick={() => {
-                          setForm((f) => ({ ...f, driver: d.phone, layanan: d.kendaraan === "mobil" ? "BohCar" : "BohRide" }));
+                          // Layanan yang sedang dipilih dipertahankan kalau kendaraannya cocok (BohSend/BohFood boleh keduanya).
+                          setForm((f) => ({ ...f, driver: d.phone, ...(cocok(f.layanan, d.kendaraan) ? {} : { layanan: d.kendaraan === "mobil" ? "BohCar" : "BohRide", kelas: "" }) }));
                           formRef.current?.scrollIntoView({ behavior: "smooth" });
                         }}>Tugaskan</button>
                       )}

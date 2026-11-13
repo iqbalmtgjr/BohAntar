@@ -129,7 +129,9 @@ export const api = {
   tujukanPesanan: (orderId, driverPhone) => post(`/admin/pesanan-tujukan`, { order_id: orderId, driver_phone: driverPhone }),
   cariAlamat: (q, sesi) => json(`/maps/autocomplete?q=${encodeURIComponent(q)}&lat=0.0785&lng=111.494&session=${sesi}`),
   detailTempat: (id, sesi) => json(`/maps/place?place_id=${encodeURIComponent(id)}&session=${sesi}`),
-  estimasiTarif: (layanan, a, b) => json(`/tarif/estimasi?layanan=${layanan}&from_lat=${a.lat}&from_lng=${a.lng}&to_lat=${b.lat}&to_lng=${b.lng}`),
+  estimasiTarif: (layanan, a, b, kelas = "") => json(`/tarif/estimasi?layanan=${layanan}&kelas=${kelas}&from_lat=${a.lat}&from_lng=${a.lng}&to_lat=${b.lat}&to_lng=${b.lng}`),
+  daftarWarung: () => json(`/food/merchants`),
+  menuWarung: (mid) => json(`/food/menus?merchant_id=${encodeURIComponent(mid)}`),
   // Banner beranda aplikasi. Id ada = ubah, kosong = banner baru.
   getBanner: () => json(`/admin/banner`),
   simpanBanner: (b) => b.id
@@ -152,6 +154,7 @@ export const api = {
   },
   approveDriver: (id) => json(`/admin/drivers/${id}/approve`, { method: "POST" }),
   rejectDriver: (id) => json(`/admin/drivers/${id}/reject`, { method: "POST" }),
+  kelasMobilDriver: (id, kelas) => post(`/admin/drivers/${id}/kelas-mobil`, { kelas_mobil: kelas }),
   deleteUser: (phone) => json(`/admin/users/${phone.replace("+", "")}`, { method: "DELETE" }),
   registerPartner: (data) => post(`/partner/register`, data),
   getPartnerApplications: (params = {}) => {
@@ -174,5 +177,6 @@ export const api = {
   // yang sudah menunggu. Saldonya sudah dipotong backend saat pengajuan lahir.
   adminPencairan: (status) => json(`/admin/pencairan?status=${status}`),
   prosesPencairan: (id, aksi, catatan) => post(`/admin/pencairan/${id}/${aksi}`, { catatan }),
+  adminTopUp: (bulan) => json(`/admin/topup?bulan=${bulan}`),
   updateProfile: (data) => json(`/users/profile`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
 };

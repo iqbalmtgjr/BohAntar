@@ -25,10 +25,12 @@ import 'package:mobile/services/chat_service.dart';
 import 'package:mobile/services/maps_service.dart';
 import 'package:mobile/services/notifikasi_service.dart';
 import 'package:mobile/status_pesanan.dart';
+import 'package:mobile/tarif.dart' show keteranganKelas;
 import 'package:mobile/theme.dart';
 import 'package:mobile/widgets/banner_beranda.dart';
 import 'package:mobile/widgets/dialog_alasan.dart';
 import 'package:mobile/widgets/food_widgets.dart' show PesanKosong, lebarDekode;
+import 'package:mobile/widgets/kaca.dart';
 import 'package:mobile/widgets/peta.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -160,6 +162,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
   // Panel pesanan berjalan diciutkan jadi satu bar supaya peta terlihat, sama
   // dengan layar penumpang. Pesanan berikutnya selalu mulai dengan panel penuh.
+  // Kartu pesanan masuk memakai penanda yang sama: rinciannya disembunyikan,
+  // tombol Terima/Lewatkan tetap ada karena hitung mundurnya terus berjalan.
   bool _panelKecil = false;
 
   String _arahBerikut(Map<String, dynamic>? o) => _sudahDijemput
@@ -784,6 +788,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             setState(() {
               _currentIncomingOrder = order;
               _hasIncomingOrder = true;
+              _panelKecil = false;
               _countdownSeconds = 15;
               // Kartu orderan hidup di tab peta dan hitung mundurnya cuma 15
               // detik. Driver yang sedang membuka tab Pendapatan akan kehilangan
@@ -1280,6 +1285,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           _acceptedOrder = response['order'];
           _hasIncomingOrder = false;
           _currentIncomingOrder = null;
+          _panelKecil = false; // diterima dari kartu yang diciutkan: buka rincian penumpang
         });
         _setupDriverOrderRouting();
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1478,9 +1484,29 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           ),
         ],
       ),
-      bottomNavigationBar: _buildRiderBottomNavBar(isDark),
+      // Isi halaman lewat di belakang menu kaca; ruangnya lihat _ruangNav.
+      extendBody: true,
+      // Tombol QR "Bayar" di tengah dibuang 24 Okt 2026 bersama saldo
+      // penumpang. Indeks tabnya tetap 0–3.
+      bottomNavigationBar: ValueListenableBuilder(
+        valueListenable: daftarChat,
+        builder: (_, daftar, _) => NavKaca(
+          aktif: _currentTabIndex,
+          saatPilih: (i) => setState(() => _currentTabIndex = i),
+          item: [
+            (ikon: Icons.home, label: 'Beranda', lencana: 0),
+            (ikon: Icons.receipt_long, label: 'Aktivitas', lencana: 0),
+            (ikon: Icons.chat_bubble, label: 'Chat', lencana: jumlahBelumDibaca(daftar)),
+            (ikon: Icons.person, label: 'Akun', lencana: 0),
+          ],
+        ),
+      ),
     );
   }
+
+  /// Ruang bawah tiap daftar bergulir supaya baris terakhirnya tidak tertutup
+  /// menu kaca yang mengambang. `context` State ini ada di luar Scaffold.
+  double get _ruangNav => NavKaca.ruang(context) + 12;
 
   /// Latar lengkung biru di pojok kanan atas.
   ///
@@ -1505,83 +1531,13 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
-  // Tombol QR "Bayar" di tengah (dan takiknya) dibuang 24 Okt 2026 bersama
-  // saldo penumpang. Indeks tabnya tetap 0–3.
-  Widget _buildRiderBottomNavBar(bool isDark) {
-    return BottomAppBar(
-      // Tanpa latar sendiri: warna halaman yang terlihat, jadi bar bawah menyatu
-      // dengan isinya. Bayangan ikut dimatikan, kalau tidak garis abu-abunya
-      // tetap tercetak di atas bar yang sudah bening.
-      color: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      height: 66,
-      padding: EdgeInsets.zero,
-      child: Row(
-        children: [
-          _itemNavRider(0, Icons.home_outlined, Icons.home, 'Beranda', isDark),
-          _itemNavRider(1, Icons.receipt_long_outlined, Icons.receipt_long, 'Aktivitas', isDark),
-          ValueListenableBuilder(
-            valueListenable: daftarChat,
-            builder: (_, daftar, _) => _itemNavRider(2, Icons.chat_bubble_outline, Icons.chat_bubble, 'Chat', isDark,
-                lencana: jumlahBelumDibaca(daftar)),
-          ),
-          _itemNavRider(3, Icons.person_outline, Icons.person, 'Akun', isDark),
-        ],
-      ),
-    );
-  }
-
-  Widget _itemNavRider(int index, IconData icon, IconData iconAktif, String label, bool isDark, {int lencana = 0}) {
-    final aktif = _currentTabIndex == index;
-    // Abu-abu redup tema, bukan grey.shade400 yang cuma 1,9:1 di atas latar
-    // terang — label menu yang tidak aktif nyaris tak terbaca.
-    final warna = aktif ? AppTheme.primaryBlue : AppTheme.teksRedup(context);
-    return Expanded(
-      child: InkWell(
-        onTap: () => setState(() => _currentTabIndex = index),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Badge(
-              isLabelVisible: lencana > 0,
-              label: Text(lencana > 99 ? '99+' : '$lencana'),
-              child: Icon(aktif ? iconAktif : icon, color: warna, size: 23),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              label,
-              style: TextStyle(
-                color: warna,
-                fontSize: aktif ? 11.5 : 11,
-                fontWeight: aktif ? FontWeight.bold : FontWeight.w500,
-              ),
-            ),
-            // Garis penanda tab aktif, seperti di rancangan. Slot setinggi 3 px
-            // tetap dipesan walau tab tidak aktif supaya label tidak bergeser
-            // naik-turun setiap pindah tab.
-            const SizedBox(height: 3),
-            Container(
-              width: 16,
-              height: 2.5,
-              decoration: BoxDecoration(
-                color: aktif ? AppTheme.primaryBlue : Colors.transparent,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildRiderTabContent(ThemeData theme, bool isDark) {
     if (_currentTabIndex == 0) {
       return _buildRiderHomeBody(theme, isDark);
     } else if (_currentTabIndex == 1) {
       return _buildAktivitasBody(theme, isDark);
     } else if (_currentTabIndex == 2) {
-      return DaftarChat(myPhone: widget.phone, myName: _userName);
+      return DaftarChat(myPhone: widget.phone, myName: _userName, ruangBawah: _ruangNav);
     } else {
       return _buildAkunBody(theme, isDark);
     }
@@ -1600,7 +1556,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       onRefresh: () => Future.wait([_fetchUserProfile(), _fetchRiderActiveOrder(), _muatBanner(), _muatMenuLaris()]),
       child: SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-      padding: const EdgeInsets.only(top: 4, bottom: 24),
+      padding: EdgeInsets.only(top: 4, bottom: _ruangNav),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1923,8 +1879,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
   // Urutan grid keputusan 16 Okt 2026: BohRide·BohCar·BohFood·BohSend·
   // BohRental·Lainnya (19 Okt: BohMart yang belum ada diganti BohRental).
-  // Empat kolom, ilustrasi di atas ubin warna lembut seperti
-  // Gojek (18 Okt). BohAntar sudah dilebur ke BohSend (nama aplikasinya sendiri
+  // Empat kolom, ilustrasi di atas ubin kaca berwarna (13 Nov; dulu ubin warna
+  // lembut ala Gojek). BohAntar sudah dilebur ke BohSend (nama aplikasinya sendiri
   // BohAntar); pengenal 'BohAntar' tetap dikenali untuk pesanan lama.
   Widget _gridLayanan(bool isDark) {
     return GridView.count(
@@ -1935,38 +1891,17 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       crossAxisSpacing: 10,
       childAspectRatio: 0.78,
       padding: EdgeInsets.zero, // jangan ambil padding sistem dari MediaQuery
+      clipBehavior: Clip.none, // bayangan ubin di tepi grid jangan terpotong
       children: [
-        for (final l in const ['BohRide', 'BohCar', 'BohFood', 'BohSend', 'BohRental', 'Lainnya']) _ubinLayanan(l, isDark),
+        for (final l in const ['BohRide', 'BohCar', 'BohFood', 'BohSend', 'BohRental', 'Lainnya'])
+          UbinKaca(
+            warna: l == 'Lainnya' ? AppTheme.textSecondary : AppTheme.warnaLayanan(l),
+            label: l,
+            onTap: l == 'Lainnya' ? _bukaSemuaLayanan : () => _bukaLayanan(l),
+            padding: 7,
+            child: Image.asset(asetLayanan(l)!, fit: BoxFit.contain),
+          ),
       ],
-    );
-  }
-
-  Widget _ubinLayanan(String layanan, bool isDark) {
-    final warna = layanan == 'Lainnya' ? AppTheme.textSecondary : AppTheme.warnaLayanan(layanan);
-    return InkWell(
-      onTap: layanan == 'Lainnya' ? _bukaSemuaLayanan : () => _bukaLayanan(layanan),
-      borderRadius: BorderRadius.circular(18),
-      child: Column(
-        children: [
-          AspectRatio(
-            aspectRatio: 1,
-            child: DecoratedBox(
-              decoration: BoxDecoration(color: warna.withValues(alpha: isDark ? 0.20 : 0.10), borderRadius: BorderRadius.circular(20)),
-              child: Padding(
-                padding: const EdgeInsets.all(7),
-                child: Image.asset(asetLayanan(layanan)!, fit: BoxFit.contain),
-              ),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            layanan,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1978,17 +1913,16 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       showDragHandle: true,
       isScrollControlled: true,
       builder: (ctx) {
-        final isDark = Theme.of(ctx).brightness == Brightness.dark;
-        // Ilustrasi yang sama dengan grid beranda, di ubin warna lembutnya.
-        Widget ubin(String layanan) => Container(
+        // Ubin kaca yang sama dengan grid beranda, versi kecil.
+        Widget ubin(String layanan) => SizedBox(
               width: 46,
               height: 46,
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: AppTheme.warnaLayanan(layanan).withValues(alpha: isDark ? 0.20 : 0.10),
-                borderRadius: BorderRadius.circular(14),
+              child: UbinKaca(
+                warna: AppTheme.warnaLayanan(layanan),
+                radius: 14,
+                padding: 4,
+                child: Image.asset(asetLayanan(layanan)!, fit: BoxFit.contain),
               ),
-              child: Image.asset(asetLayanan(layanan)!, fit: BoxFit.contain),
             );
         return SafeArea(
           child: SingleChildScrollView(
@@ -2044,7 +1978,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         onRefresh: _fetchRiderActiveOrder,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.fromLTRB(16, 16, 16, _ruangNav),
           children: [
             judul,
             const SizedBox(height: 60),
@@ -2068,7 +2002,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         },
         child: ListView.builder(
           physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 56),
+          padding: EdgeInsets.fromLTRB(16, 0, 16, _ruangNav),
           itemCount: _riwayatPesanan.length + (_riwayatAdaLagi ? 2 : 1),
           itemBuilder: (context, index) {
             if (index == 0) return judul;
@@ -2470,7 +2404,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       onRefresh: _fetchUserProfile,
       child: SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 56),
+      padding: EdgeInsets.fromLTRB(20, 24, 20, _ruangNav),
       child: Column(
         children: [
           Row(
@@ -3019,63 +2953,34 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       // tiap pindah tab akan mengunduh ubinnya lagi saat kembali — itu kuota
       // driver — dan _driverMapController tertinggal menunjuk peta yang sudah
       // lepas, jadi _pindahPeta berikutnya menembak peta yang tidak ada.
-      body: IndexedStack(
-        index: _driverTabIndex,
-        children: [
-          _buildDriverPeta(theme, isDark),
-          _buildPendapatanBody(theme, isDark),
-          _buildAkunBody(theme, isDark),
-        ],
+      // Peta dan daftar lewat di belakang menu kaca (lihat _ruangNav).
+      // removePadding: tanpa ini Scaffold menambahkan tinggi menu ke padding
+      // bawah, dan daftar bersarang tanpa padding sendiri ikut menambah jarak.
+      extendBody: true,
+      body: MediaQuery.removePadding(
+        context: context,
+        removeBottom: true,
+        child: IndexedStack(
+          index: _driverTabIndex,
+          children: [
+            _buildDriverPeta(theme, isDark),
+            _buildPendapatanBody(theme, isDark),
+            _buildAkunBody(theme, isDark),
+          ],
+        ),
       ),
-      bottomNavigationBar: _buildDriverBottomNavBar(isDark),
-    );
-  }
-
-  Widget _buildDriverBottomNavBar(bool isDark) {
-    return Container(
-      decoration: BoxDecoration(
-        color: isDark ? AppTheme.cardObsidianDark : Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.06),
-            blurRadius: 10,
-            offset: const Offset(0, -3),
-          ),
-        ],
-      ),
-      child: BottomNavigationBar(
-        currentIndex: _driverTabIndex,
-        onTap: (index) {
-          setState(() {
-            _driverTabIndex = index;
-            // Ditarik saat tabnya dibuka, bukan di initState: driver yang tidak
-            // pernah membukanya tidak perlu membayar kuotanya.
-            if (index == 1) _pendapatanFuture ??= _tarikPendapatan();
-          });
-        },
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        selectedItemColor: AppTheme.primaryBlue,
-        unselectedItemColor: Colors.grey.shade400,
-        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal, fontSize: 11),
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.map_outlined),
-            activeIcon: Icon(Icons.map),
-            label: 'Beranda',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.account_balance_wallet_outlined),
-            activeIcon: Icon(Icons.account_balance_wallet),
-            label: 'Pendapatan',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
-            activeIcon: Icon(Icons.person),
-            label: 'Akun',
-          ),
+      bottomNavigationBar: NavKaca(
+        aktif: _driverTabIndex,
+        saatPilih: (index) => setState(() {
+          _driverTabIndex = index;
+          // Ditarik saat tabnya dibuka, bukan di initState: driver yang tidak
+          // pernah membukanya tidak perlu membayar kuotanya.
+          if (index == 1) _pendapatanFuture ??= _tarikPendapatan();
+        }),
+        item: const [
+          (ikon: Icons.map, label: 'Beranda', lencana: 0),
+          (ikon: Icons.account_balance_wallet, label: 'Pendapatan', lencana: 0),
+          (ikon: Icons.person, label: 'Akun', lencana: 0),
         ],
       ),
     );
@@ -3271,7 +3176,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     if (_acceptedOrder != null && _panelKecil)
                       _barKecilDriver(isDark)
                     else ...[
-                      if (_acceptedOrder != null) _tombolLihatPeta(isDark),
+                      if (!_panelKecil && (_acceptedOrder != null || _hasIncomingOrder)) _tombolLihatPeta(isDark),
                       if (_walletBalance < _ambangSaldoMenipis) _kartuSaldoDriver(isDark),
                       _buildBottomPanel(isDark, theme),
                     ],
@@ -3329,7 +3234,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         onTap: () => setState(() => _panelKecil = false),
         onVerticalDragEnd: _usapPanelDriver,
         child: Container(
-          margin: const EdgeInsets.all(16),
+          margin: EdgeInsets.fromLTRB(16, 16, 16, _ruangNav),
           padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
           decoration: BoxDecoration(
             color: isDark ? const Color(0xFF1E293B) : Colors.white,
@@ -3445,7 +3350,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             // Wajib, kalau tidak daftar yang pendek atau kosong tidak bisa
             // ditarik untuk menyegarkan.
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(20, 60, 20, 24),
+            padding: EdgeInsets.fromLTRB(20, 60, 20, _ruangNav),
             children: [
               Container(
                 padding: const EdgeInsets.all(20),
@@ -4133,7 +4038,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     if (!_isOnline && _acceptedOrder == null) {
       // 1. OFFLINE PANEL
       return Container(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.fromLTRB(24, 24, 24, _ruangNav + 4),
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF1E293B) : Colors.white,
           borderRadius: const BorderRadius.only(
@@ -4188,7 +4093,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     if (_acceptedOrder != null) {
       // 4. ACTIVE ORDER DRIVER PANEL
       return Container(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.fromLTRB(24, 24, 24, _ruangNav + 4),
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF1E293B) : Colors.white,
           borderRadius: const BorderRadius.only(
@@ -4227,7 +4132,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                       ),
                       Text(
-                        _acceptedOrder!['service'] ?? 'Layanan',
+                        [_acceptedOrder!['service'] ?? 'Layanan', keteranganKelas(_acceptedOrder)].where((s) => s.isNotEmpty).join(' · '),
                         style: const TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold),
                       ),
                     ],
@@ -4451,7 +4356,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     if (_hasIncomingOrder && _currentIncomingOrder != null) {
       // 2. INCOMING ORDER BOTTOM OVERLAY
       return Container(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.fromLTRB(24, 24, 24, _ruangNav + 4),
         decoration: BoxDecoration(
           color: isDark ? const Color(0xFF1A1625) : const Color(0xFFEEF2FF), // Subtle blue Alert bg
           border: Border.all(color: AppTheme.primaryBlue, width: 2),
@@ -4471,10 +4376,16 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
+            // Ketuk atau usap kepala kartu untuk menyembunyikan/membuka rincian.
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => setState(() => _panelKecil = !_panelKecil),
+              onVerticalDragEnd: _usapPanelDriver,
+              child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
+                Expanded(
+                  child: Row(
                   children: [
                     Container(
                       padding: const EdgeInsets.all(8),
@@ -4485,15 +4396,23 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                       child: Icon(ikonLayanan((_currentIncomingOrder!['service'] ?? '').toString()), color: AppTheme.primaryBlue),
                     ),
                     const SizedBox(width: 12),
-                    Column(
+                    Expanded(
+                      child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text('PESANAN MASUK!', style: TextStyle(fontWeight: FontWeight.w900, color: AppTheme.primaryBlue, fontSize: 12, letterSpacing: 1)),
                         Text('Layanan ${_currentIncomingOrder!['service']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                        // Driver bermobil kecil harus tahu sebelum menerima.
+                        if (keteranganKelas(_currentIncomingOrder).isNotEmpty)
+                          Text(keteranganKelas(_currentIncomingOrder), style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: AppTheme.teksBerwarna(context, AppTheme.primaryBlue))),
                       ],
+                    ),
                     ),
                   ],
                 ),
+                ),
+                Icon(_panelKecil ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, color: AppTheme.teksRedup(context)),
+                const SizedBox(width: 6),
                 // Circular Countdown Timer Widget
                 Stack(
                   alignment: Alignment.center,
@@ -4516,8 +4435,29 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                 )
               ],
             ),
+            ),
+            if (_panelKecil)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pendapatanmu ${_rupiah(_bagianDriver(_currentIncomingOrder!))}',
+                      style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: AppTheme.teksBerwarna(context, Colors.green.shade700)),
+                    ),
+                    Text(
+                      '${_labelJemput(_currentIncomingOrder)}: ${_cleanPickupAddress(_currentIncomingOrder!['pickup'])}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context)),
+                    ),
+                  ],
+                ),
+              )
+            else ...[
             const Divider(height: 32),
-            
+
             _barisTagihan(_currentIncomingOrder!),
             const SizedBox(height: 16),
 
@@ -4555,6 +4495,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             ),
             _detailBarang(_currentIncomingOrder!),
             const SizedBox(height: 24),
+            ],
 
             // Buttons
             Row(
@@ -4592,7 +4533,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
     // 3. RADAR / LOOKING FOR ORDERS STATE
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: EdgeInsets.fromLTRB(24, 24, 24, _ruangNav + 4),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1E293B) : Colors.white,
         borderRadius: const BorderRadius.only(

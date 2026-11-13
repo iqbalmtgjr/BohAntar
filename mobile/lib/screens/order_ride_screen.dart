@@ -65,6 +65,11 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // Taksiran dari server. Null berarti belum pernah berhasil diambil untuk
   // tujuan yang sekarang.
   EstimasiTarif? _estimasi;
+  // BohCar: kelas yang dipilih ('' sedang, 'besar') dan taksiran tiap kelas
+  // dari permintaan yang sama dengan _estimasi. Harganya hanya ditampilkan
+  // selama _estimasi tidak null, jadi isi lama tidak perlu dibersihkan.
+  String _kelasMobil = '';
+  Map<String, EstimasiTarif> _hargaKelas = const {};
   bool _estimasiGagal = false;
   String _pesanEstimasi = ''; // galat dari server, mis. titik di luar Sintang
 
@@ -732,26 +737,23 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
   // tidak pernah ikut berubah saat tarif diubah dari dashboard.
   Future<void> _ambilEstimasi(LatLng tujuan, String layanan) async {
     final dari = _currentLatLng;
+    // BohCar: kedua kelas ditaksir sekaligus supaya harganya bisa dibandingkan.
+    final semuaKelas = layanan == 'BohCar' ? kelasMobil.keys.toList() : const [''];
     try {
-      final hasil = await ApiService().estimasiTarif(
+      final hasil = await Future.wait(semuaKelas.map((k) => ApiService().estimasiTarif(
         layanan: layanan,
+        kelas: k,
         dariLat: dari.latitude,
         dariLng: dari.longitude,
         keLat: tujuan.latitude,
         keLng: tujuan.longitude,
-      );
+      )));
       // Jemput, tujuan, atau layanan bisa sudah berganti selama permintaan
       // berjalan; balasan yang basi tidak boleh menimpa angka yang tampil.
       if (!mounted || _destinationLatLng != tujuan || _selectedService != layanan || _currentLatLng != dari) return;
       setState(() {
-        _estimasi = hasil;
-        // _fare adalah ongkos perjalanan saja, sama seperti kolom `fare` di
-        // server. Biaya jasa disimpan terpisah supaya rinciannya bisa
-        // ditampilkan dan supaya angka yang dibandingkan dengan balasan server
-        // tetap sepadan.
-        _fare = hasil.ongkos;
-        _biayaJasa = hasil.biayaJasa;
-        _diskon = hasil.diskon;
+        _hargaKelas = {for (var i = 0; i < semuaKelas.length; i++) semuaKelas[i]: hasil[i]};
+        _pakaiEstimasi(_hargaKelas[_kelasMobil] ?? hasil.first);
         _estimasiGagal = false;
       });
     } catch (e) {
@@ -766,6 +768,23 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
       });
     }
   }
+
+  void _pakaiEstimasi(EstimasiTarif e) {
+    _estimasi = e;
+    // _fare adalah ongkos perjalanan saja, sama seperti kolom `fare` di
+    // server. Biaya jasa disimpan terpisah supaya rinciannya bisa
+    // ditampilkan dan supaya angka yang dibandingkan dengan balasan server
+    // tetap sepadan.
+    _fare = e.ongkos;
+    _biayaJasa = e.biayaJasa;
+    _diskon = e.diskon;
+  }
+
+  void _pilihKelas(String k) => setState(() {
+        _kelasMobil = k;
+        final e = _hargaKelas[k];
+        if (_estimasi != null && e != null) _pakaiEstimasi(e);
+      });
 
   void _calculateFareFromDistance() {
     final tujuan = _destinationLatLng;
@@ -1022,6 +1041,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         pickup: _pickupController.text,
         dropoff: _destinationController.text,
         service: _selectedService,
+        kelas: _selectedService == 'BohCar' ? _kelasMobil : '',
         // Penumpang hanya bayar tunai sejak 24 Okt 2026: BohAntar tidak boleh
         // menampung uang pelanggan (kasus ojol Sintang di Polda Kalbar).
         paymentMethod: "cash",
@@ -2117,6 +2137,20 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           ),
           const SizedBox(height: 16),
 
+          if (_selectedService == 'BohCar') ...[
+            const Text("Pilih mobil", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                for (final k in kelasMobil.keys) ...[
+                  if (k != kelasMobil.keys.first) const SizedBox(width: 10),
+                  Expanded(child: _kartuKelas(k)),
+                ],
+              ],
+            ),
+            const SizedBox(height: 16),
+          ],
+
           const Text("Rincian biaya", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           const SizedBox(height: 8),
           if (tarif == null)
@@ -2181,6 +2215,48 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
           ),
         ],
       ),
+      ),
+    );
+  }
+
+  /// Satu pilihan kelas BohCar: nama, batas penumpang, dan harganya.
+  Widget _kartuKelas(String k) {
+    final kelas = kelasMobil[k]!;
+    final dipilih = _kelasMobil == k;
+    final harga = _estimasi == null ? null : _hargaKelas[k]?.totalBayar;
+    return Semantics(
+      selected: dipilih,
+      child: InkWell(
+        onTap: () => _pilihKelas(k),
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            color: dipilih ? AppTheme.primaryBlue.withValues(alpha: 0.08) : null,
+            border: Border.all(color: dipilih ? AppTheme.primaryBlue : Colors.grey.shade300, width: dipilih ? 2 : 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(k == 'besar' ? Icons.airport_shuttle : Icons.directions_car, color: AppTheme.primaryBlue),
+              const SizedBox(height: 6),
+              Text(kelas.nama, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              Row(
+                children: [
+                  Icon(Icons.person, size: 14, color: AppTheme.teksRedup(context)),
+                  const SizedBox(width: 2),
+                  Text("Maks ${kelas.maks} orang", style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                harga == null ? "…" : rupiah(harga),
+                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14, color: AppTheme.primaryBlue),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

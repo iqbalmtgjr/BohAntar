@@ -56,6 +56,13 @@ export default function ApplicationsPage() {
     }
     setActionLoading(null); load(filter);
   };
+  const ubahKelas = async (app, kelas) => {
+    setActionLoading(app.id + "_kelas");
+    const res = await api.kelasMobilDriver(app.id, kelas);
+    setActionLoading(null);
+    if (res?.status !== "success") window.alert("Gagal mengubah ukuran mobil: " + (res?.error || "coba lagi"));
+    else setApps(apps.map(a => a.id === app.id ? { ...a, kelas_mobil: res.application.kelas_mobil } : a));
+  };
   const reject = async (id) => {
     setActionLoading(id + "_reject");
     await api.rejectDriver(id);
@@ -117,7 +124,7 @@ export default function ApplicationsPage() {
                     <span className={`badge ${s.badge}`}><s.icon size={11} />{s.label}</span>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                    {[["Email", app.email], ["KTP", app.ktp_number], ["SIM", app.sim_number], ["Kendaraan", app.vehicle_type === "mobil" ? "Mobil" : "Motor"], ["Plat", app.vehicle_plate], ["Model", app.vehicle_model]].map(([l, v]) => (
+                    {[["Email", app.email], ["KTP", app.ktp_number], ["SIM", app.sim_number], ["Kendaraan", app.vehicle_type === "mobil" ? (app.kelas_mobil === "besar" ? "Mobil besar (6 orang)" : "Mobil sedang (4 orang)") : "Motor"], ["Plat", app.vehicle_plate], ["Model", app.vehicle_model]].map(([l, v]) => (
                       <div key={l} style={{ background: "var(--bg-input)", borderRadius: 8, padding: "8px 10px" }}>
                         <div style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>{l}</div>
                         <div style={{ fontSize: 13, fontWeight: 600, marginTop: 2 }}>{v || "—"}</div>
@@ -133,6 +140,18 @@ export default function ApplicationsPage() {
                       <span key={k} style={{ fontSize: 12, padding: "6px 10px", color: "var(--text-muted)" }}>{l}: —</span>
                     ))}
                   </div>
+                  {/* Cocokkan dengan model & STNK. Driver mobil lama semuanya
+                      "sedang" sampai ditandai besar di sini. */}
+                  {app.vehicle_type === "mobil" && app.status !== "rejected" && (
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                      Ukuran mobil:
+                      <select className="input" style={{ width: "auto", padding: "4px 8px" }} value={app.kelas_mobil || ""}
+                        disabled={actionLoading === app.id + "_kelas"} onChange={e => ubahKelas(app, e.target.value)}>
+                        <option value="">Sedang — maks 4</option>
+                        <option value="besar">Besar — maks 6</option>
+                      </select>
+                    </label>
+                  )}
                   <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Dikirim: {new Date(app.created_at).toLocaleString("id-ID")}</div>
                   {app.status === "pending" && (
                     <div style={{ display: "flex", gap: 8 }}>

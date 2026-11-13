@@ -10,7 +10,9 @@ import 'package:mobile/widgets/food_widgets.dart' show PesanKosong;
 class DaftarChat extends StatefulWidget {
   final String myPhone;
   final String myName;
-  const DaftarChat({super.key, required this.myPhone, required this.myName});
+  // Ruang di bawah daftar untuk menu kaca yang mengambang di atasnya.
+  final double ruangBawah;
+  const DaftarChat({super.key, required this.myPhone, required this.myName, this.ruangBawah = 56});
 
   @override
   State<DaftarChat> createState() => _DaftarChatState();
@@ -199,7 +201,7 @@ class _DaftarChatState extends State<DaftarChat> {
           onRefresh: segarkanDaftarChat,
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-            padding: const EdgeInsets.only(bottom: 56),
+            padding: EdgeInsets.only(bottom: widget.ruangBawah),
             children: [
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
