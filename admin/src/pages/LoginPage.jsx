@@ -88,24 +88,15 @@ export default function LoginPage({ onLogin, role }) {
   const [googleReady, setGoogleReady] = useState(false);
 
   // Meneruskan hasil verifikasi backend ke portal yang sesuai.
-  const applyGoogleResult = useCallback(async (data, idToken) => {
+  const applyGoogleResult = useCallback(async (data) => {
     if (data.error) throw new Error(data.error);
 
     if (data.status === 'need_phone') {
-      // Nomor HP belum ada — lanjutkan di halaman pelengkapan pendaftaran.
-      if (role === 'admin') {
-        throw new Error('Akun Super Admin tidak terdaftar. Hubungi Administrator sistem.');
-      }
-      navigate('/auth/callback', {
-        state: {
-          idToken,
-          nonce: nonceRef.current,
-          email: data.email || '',
-          name: data.name || '',
-          role,
-        },
-      });
-      return;
+      // Email belum punya akun. Mitra lahir hanya dari pengajuan yang disetujui
+      // admin — dulu di sini langsung dibuatkan akun mitra tanpa persetujuan.
+      throw new Error(role === 'admin'
+        ? 'Akun Super Admin tidak terdaftar. Hubungi Administrator sistem.'
+        : 'Email Google ini belum terdaftar sebagai mitra. Daftar dulu lewat tombol Daftar di bawah; setelah disetujui admin, masuk dengan Google memakai email yang sama.');
     }
 
     if (data.status !== 'success' || !data.user || !data.token) {
@@ -119,7 +110,7 @@ export default function LoginPage({ onLogin, role }) {
     if (onLogin) {
       await onLogin(role, data.user.phone_number, data.token);
     }
-  }, [navigate, onLogin, role]);
+  }, [onLogin, role]);
 
   const handleCredential = useCallback(async (response) => {
     setError('');
@@ -128,7 +119,7 @@ export default function LoginPage({ onLogin, role }) {
       const idToken = response?.credential;
       if (!idToken) throw new Error('Google tidak mengembalikan kredensial.');
       const data = await api.googleLogin(idToken, nonceRef.current);
-      await applyGoogleResult(data, idToken);
+      await applyGoogleResult(data);
     } catch (err) {
       console.error(err);
       setError(err.message || 'Gagal masuk dengan Google.');

@@ -157,7 +157,7 @@ func TestDaftarDriverDariHPTertahanSampaiDisetujui(t *testing.T) {
 		"ktp_photo_url": "/uploads/ktp.png", "sim_photo_url": "/uploads/sim.png", "stnk_photo_url": "/uploads/stnk.png",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/admin/drivers/register", bytes.NewReader(b))
-	req.Header.Set("Authorization", "Bearer "+mustToken(t, "+620000000001", "admin"))
+	req.Header.Set("Authorization", "Bearer "+tokenAdminUji(t, "+620000000001"))
 	rec := httptest.NewRecorder()
 	adminDriverRegisterHandler(rec, req)
 	if rec.Code != 201 {

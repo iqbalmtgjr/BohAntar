@@ -13,6 +13,8 @@ func TestEtalaseMenuBohFood(t *testing.T) {
 	bukaDBTes(t)
 	pemilik := "+62800000501"
 	penggunaUji(t, pemilik)
+	// Daftar warung hanya memuat milik mitra BohFood (celah 13 Nov 2026).
+	db.Exec("UPDATE users SET role = 'food_merchant' WHERE phone_number = ?", pemilik)
 	mid := newID("merchant")
 	if _, err := db.Exec(`INSERT INTO food_merchants (id, owner_phone, restaurant_name, address, is_open, created_at, lat, lng)
 		VALUES (?, ?, 'Warung Etalase', '', 1, ?, -0.07, 111.49)`, mid, pemilik, time.Now().Format(time.RFC3339)); err != nil {

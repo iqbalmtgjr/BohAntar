@@ -64,7 +64,17 @@ func TestTokenExpiry(t *testing.T) {
 	}
 }
 
+// Peran dibaca dari database, bukan dari token: token berlaku tujuh hari,
+// sedangkan admin bisa menghapus akun atau mencabut perannya kapan saja.
 func TestRequireRole(t *testing.T) {
+	bukaDBTes(t)
+	const admin, penumpang, dicabut, dihapus = "+62800000901", "+62800000902", "+62800000903", "+62800000904"
+	for _, p := range []string{admin, penumpang, dicabut} {
+		penggunaUji(t, p)
+	}
+	db.Exec("UPDATE users SET role = 'admin' WHERE phone_number = ?", admin)
+	db.Exec("DELETE FROM users WHERE phone_number = ?", dihapus)
+
 	handler := requireRole("admin")(func(w http.ResponseWriter, r *http.Request) {
 		if callerPhone(r) == "" || callerRole(r) != "admin" {
 			t.Error("context tidak terisi identitas pemanggil")
@@ -78,8 +88,12 @@ func TestRequireRole(t *testing.T) {
 		want int
 	}{
 		{"tanpa token", "", 401},
-		{"role salah", mustToken(t, "+628123456789", "rider"), 403},
-		{"role benar", mustToken(t, "+628000000000", "admin"), 200},
+		{"role salah", mustToken(t, penumpang, "rider"), 403},
+		{"role benar", mustToken(t, admin, "admin"), 200},
+		// Token lama masih bertuliskan admin, tapi di database sudah penumpang.
+		{"peran sudah dicabut", mustToken(t, dicabut, "admin"), 403},
+		// Akunnya dihapus admin; tokennya sendiri masih sah dan belum kedaluwarsa.
+		{"akun sudah dihapus", mustToken(t, dihapus, "admin"), 401},
 	}
 	for _, c := range cases {
 		r := httptest.NewRequest(http.MethodGet, "/api/admin/users", nil)
@@ -92,6 +106,15 @@ func TestRequireRole(t *testing.T) {
 			t.Errorf("%s: status %d, harusnya %d", c.name, w.Code, c.want)
 		}
 	}
+}
+
+// tokenAdminUji: token admin untuk akun admin sungguhan di DB uji. Token untuk
+// nomor karangan sudah ditolak sesiPemanggil.
+func tokenAdminUji(t *testing.T, phone string) string {
+	t.Helper()
+	penggunaUji(t, phone)
+	db.Exec("UPDATE users SET role = 'admin' WHERE phone_number = ?", phone)
+	return mustToken(t, phone, "admin")
 }
 
 func mustToken(t *testing.T, phone, role string) string {

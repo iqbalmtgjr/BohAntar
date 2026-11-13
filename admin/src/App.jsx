@@ -11,7 +11,6 @@ import { lepasLangganan } from "./webpush";
 import LandingPage from "./pages/LandingPage";
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const PortalMitraPage = lazy(() => import("./pages/PortalMitraPage"));
-const AuthCallbackPage = lazy(() => import("./pages/AuthCallbackPage"));
 const PartnerRegisterPage = lazy(() => import("./pages/PartnerRegisterPage"));
 const PartnerApplicationsPage = lazy(() => import("./pages/PartnerApplicationsPage"));
 const ApprovedPartnersPage = lazy(() => import("./pages/ApprovedPartnersPage"));
@@ -182,7 +181,6 @@ export default function App() {
             <Route path="/login-resto" element={<LoginPage onLogin={login} role="food" />} />
             <Route path="/login-rental" element={<LoginPage onLogin={login} role="rental" />} />
             <Route path="/super-admin-login" element={<LoginPage onLogin={login} role="admin" />} />
-            <Route path="/auth/callback" element={<AuthCallbackPage onLogin={login} />} />
             <Route path="/register-partner" element={<PartnerRegisterPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

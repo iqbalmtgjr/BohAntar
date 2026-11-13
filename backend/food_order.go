@@ -270,7 +270,13 @@ func foodMerchantsHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
 		return
 	}
-	rows, err := db.Query("SELECT id, restaurant_name, address, COALESCE(image_url, ''), is_open, lat, lng, COALESCE(kasvo_toko_uuid, '') FROM food_merchants WHERE lat <> 0 AND lng <> 0")
+	// Hanya warung milik akun mitra BohFood: warung yang terlanjur dibuat
+	// penumpang lewat celah lama, atau milik mitra yang perannya dicabut admin,
+	// tidak ditawarkan. JOIN ini aman dari galat 1267: food_merchants.owner_phone
+	// punya foreign key ke users, jadi collation keduanya pasti sama.
+	rows, err := db.Query(`SELECT m.id, m.restaurant_name, m.address, COALESCE(m.image_url, ''), m.is_open, m.lat, m.lng, COALESCE(m.kasvo_toko_uuid, '')
+		FROM food_merchants m JOIN users u ON u.phone_number = m.owner_phone
+		WHERE m.lat <> 0 AND m.lng <> 0 AND u.role = 'food_merchant'`)
 	if err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal membaca daftar warung"})
 		return

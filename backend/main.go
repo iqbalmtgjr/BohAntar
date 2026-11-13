@@ -2393,6 +2393,19 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSONResponse(w, 201, map[string]interface{}{"status": "success", "message": "Registrasi berhasil", "token": token, "user": u})
 }
 
+// Akun Google bisa dibuat untuk alamat email apa pun, bukan cuma Gmail:
+// pemilik kotak suratnya cukup mengeklik tautan verifikasi. Super admin bawaan
+// memakai admin@bohantar.com, dan domain bohantar.com belum dimiliki siapa pun
+// (dicek 13 Nov 2026). Siapa yang membelinya bisa membuat akun Google untuk
+// alamat itu, lalu masuk — atau mengganti password — sebagai super admin. Jadi
+// admin hanya lewat email + password, berapa pun email yang tersimpan.
+const pesanAdminTanpaGoogle = "Akun admin hanya bisa masuk dengan email dan password."
+
+// verifikasiGoogle bisa diganti di tes; aslinya memanggil server Google.
+var verifikasiGoogle = verifyGoogleIDToken
+
+const pesanMitraBelumTerdaftar = "Email Google ini belum terdaftar sebagai mitra. Daftar dulu lewat formulir Daftar Mitra; setelah disetujui admin, Anda bisa masuk dengan Google memakai email yang sama."
+
 func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
@@ -2411,7 +2424,7 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Identitas hanya boleh berasal dari token Google yang sudah diverifikasi.
-	email, name, err := verifyGoogleIDToken(r.Context(), input.IDToken, input.Nonce)
+	email, name, err := verifikasiGoogle(r.Context(), input.IDToken, input.Nonce)
 	if err != nil {
 		log.Printf("masuk Google ditolak: %v", err)
 		writeJSONResponse(w, 401, map[string]string{"error": "Masuk dengan Google gagal. Coba lagi, atau masuk dengan email dan password."})
@@ -2421,6 +2434,11 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 	// 1. Cek apakah email sudah terdaftar
 	u, _, found := dbFindUserByEmail(email)
 	if found {
+		if u.Role == "admin" {
+			log.Printf("masuk Google ke akun admin %s ditolak (email %s)", u.PhoneNumber, email)
+			writeJSONResponse(w, 403, map[string]string{"error": pesanAdminTanpaGoogle})
+			return
+		}
 		if alasan := alasanDriverBelumBolehMasuk(u.PhoneNumber, u.Role); alasan != "" {
 			writeJSONResponse(w, 403, map[string]string{"error": alasan})
 			return
@@ -2452,30 +2470,30 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Tentukan role target (default: rider)
-	targetRole := "rider"
+	// Mitra warung dan rental hanya lahir lewat pengajuan yang disetujui admin
+	// (partnerRegisterHandler → approve). Jalur ini dulu langsung membuat akun
+	// food_merchant/rental_partner beserta warung yang menyala atau trial 14
+	// hari, tanpa KTP dan tanpa muncul di halaman pengajuan (Mobastore 12 Nov
+	// 2026). Dashboard versi lama masih mengirim role ini, jadi ditolak di sini.
 	if input.Role == "rental_partner" || input.Role == "food_merchant" {
-		targetRole = input.Role
+		writeJSONResponse(w, 403, map[string]string{"error": pesanMitraBelumTerdaftar})
+		return
 	}
 	// Penumpang dari aplikasi diperiksa seperti registerHandler.
-	// ponytail: mitra yang daftar Google dari dashboard web belum diverifikasi
-	// WhatsApp-nya (nomor usaha bisa telepon rumah); tambahkan bila disalahgunakan.
 	ip := alamatPemanggil(r)
-	if targetRole == "rider" {
-		pesan := ""
-		switch {
-		case !nomorHPValid(phone):
-			pesan = pesanNomorTidakValid
-		case kuotaDaftarHabis(ip):
-			writeJSONResponse(w, 429, map[string]string{"error": pesanKuotaDaftar})
-			return
-		default:
-			pesan = cekVerifWA(input.KodeWA, phone)
-		}
-		if pesan != "" {
-			writeJSONResponse(w, 400, map[string]string{"error": pesan})
-			return
-		}
+	pesan := ""
+	switch {
+	case !nomorHPValid(phone):
+		pesan = pesanNomorTidakValid
+	case kuotaDaftarHabis(ip):
+		writeJSONResponse(w, 429, map[string]string{"error": pesanKuotaDaftar})
+		return
+	default:
+		pesan = cekVerifWA(input.KodeWA, phone)
+	}
+	if pesan != "" {
+		writeJSONResponse(w, 400, map[string]string{"error": pesan})
+		return
 	}
 
 	// Buat pengguna baru
@@ -2483,45 +2501,16 @@ func googleLoginHandler(w http.ResponseWriter, r *http.Request) {
 		PhoneNumber:    phone,
 		Name:           name,
 		Email:          email,
-		Role:           targetRole,
+		Role:           "rider",
 		CreatedAt:      time.Now().Format(time.RFC3339),
 		Balance:        0, // lihat catatan saldo awal di registerHandler
 		Badge:          "Silver",
 		IsDriverActive: false,
 	}
 	dbSaveUser(u)
-	if targetRole == "rider" {
-		habiskanVerifWA(input.KodeWA)
-		catatPendaftaran(ip)
-	}
+	habiskanVerifWA(input.KodeWA)
+	catatPendaftaran(ip)
 	// Tanpa alamat bawaan — lihat catatan di registerHandler.
-
-	// Inisialisasi data pendukung spesifik role
-	if targetRole == "rental_partner" {
-		trialUntil := time.Now().AddDate(0, 0, 14).Format(time.RFC3339)
-		_ = dbSavePartnerSubscription(PartnerSubscription{
-			PhoneNumber: phone,
-			Status:      "TRIAL",
-			ValidUntil:  trialUntil,
-			UpdatedAt:   time.Now().Format(time.RFC3339),
-		})
-	} else if targetRole == "food_merchant" {
-		merchantID := newID("merchant")
-		// Alamat sengaja kosong, diisi mitra sendiri di portal. Alamat contoh
-		// yang salah kota lebih buruk daripada kolom kosong: yang kosong
-		// terlihat dan diisi, yang salah ikut tercetak di pesanan.
-		//
-		// Komentar ini dulu terselip DI DALAM string SQL di bawah, jadi MySQL
-		// menolak seluruh INSERT dan warung yang mendaftar lewat Google lahir
-		// tanpa baris food_merchants (17 Sep – 9 Okt 2026). Jejaknya hanya satu
-		// baris PERINGATAN di log.
-		if _, err := db.Exec(`
-			INSERT INTO food_merchants (id, owner_phone, restaurant_name, address, image_url, is_open, created_at)
-			VALUES (?, ?, ?, ?, ?, 1, ?)
-		`, merchantID, phone, name+" Restaurant", "", "https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=400", time.Now()); err != nil {
-			log.Printf("PERINGATAN: merchant %s untuk %s gagal dibuat saat pendaftaran: %v", merchantID, phone, err)
-		}
-	}
 
 	token, err := issueToken(u.PhoneNumber, u.Role)
 	if err != nil {
@@ -2566,7 +2555,7 @@ func resetPasswordGoogleHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 400, map[string]string{"error": "Password baru minimal 8 karakter"})
 		return
 	}
-	email, _, err := verifyGoogleIDToken(r.Context(), input.IDToken, input.Nonce)
+	email, _, err := verifikasiGoogle(r.Context(), input.IDToken, input.Nonce)
 	if err != nil {
 		log.Printf("reset password Google ditolak: %v", err)
 		writeJSONResponse(w, 401, map[string]string{"error": "Akun Google tidak bisa diperiksa. Coba lagi sebentar."})
@@ -2575,6 +2564,12 @@ func resetPasswordGoogleHandler(w http.ResponseWriter, r *http.Request) {
 	u, _, found := dbFindUserByEmail(email)
 	if !found {
 		writeJSONResponse(w, 404, map[string]string{"error": "Email Google " + email + " tidak terdaftar di BohAntar. Pilih akun Google yang emailnya sama dengan akun BohAntar Anda, atau hubungi admin."})
+		return
+	}
+	// Lihat pesanAdminTanpaGoogle: jalur ini sama bahayanya dengan masuk.
+	if u.Role == "admin" {
+		log.Printf("reset password Google untuk akun admin %s ditolak (email %s)", u.PhoneNumber, email)
+		writeJSONResponse(w, 403, map[string]string{"error": pesanAdminTanpaGoogle})
 		return
 	}
 	if err := dbSetPassword(u.PhoneNumber, input.NewPassword); err != nil {
@@ -5098,7 +5093,7 @@ func adminDriverRegisterHandler(w http.ResponseWriter, r *http.Request) {
 	// gagal tersimpan; tanpa pengecualian ini dia terkunci selamanya.
 	sudahJadiDriver := statusLama == "approved" || (statusLama == "" && pemilik.IsDriverActive)
 	if sudahPunyaAkun && pemilik.Role == "driver" && sudahJadiDriver {
-		if _, peran, _ := parseBearer(r); peran != "admin" {
+		if _, peran, _ := sesiPemanggil(r); peran != "admin" {
 			writeJSONResponse(w, 409, map[string]string{"error": "Nomor ini sudah terdaftar sebagai driver. Untuk ganti kendaraan, hubungi admin BohAntar."})
 			return
 		}
@@ -5289,6 +5284,15 @@ func partnerRegisterHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
 		return
 	}
+	// Endpoint publik tanpa verifikasi apa pun, dan tiap kiriman menyimpan satu
+	// pengajuan berisi nomor KTP plus satu hash bcrypt. Rem yang sama dengan
+	// pendaftaran driver: setiap kiriman dihitung, embernya sendiri.
+	rem := "daftar-mitra:" + alamatPemanggil(r)
+	if terlaluSeringGagal(rem) {
+		writeJSONResponse(w, 429, map[string]string{"error": "Terlalu banyak pendaftaran dari jaringan ini. Coba lagi 15 menit lagi."})
+		return
+	}
+	catatGagalLogin(rem)
 	// Password dibaca di luar struct PartnerApplication supaya tidak pernah ikut
 	// terkirim di JSON daftar pengajuan.
 	var in struct {
@@ -5573,7 +5577,7 @@ func chatWebSocketHandler(w http.ResponseWriter, r *http.Request) {
 	if tok := r.URL.Query().Get("token"); tok != "" && r.Header.Get("Authorization") == "" {
 		r.Header.Set("Authorization", "Bearer "+tok)
 	}
-	sPhone, sRole, ok := parseBearer(r)
+	sPhone, sRole, ok := sesiPemanggil(r)
 	if !ok {
 		http.Error(w, "Token otorisasi diperlukan", http.StatusUnauthorized)
 		return
@@ -5743,6 +5747,14 @@ func foodMerchantHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSONResponse(w, 200, m)
 	} else if r.Method == http.MethodPost {
+		// Dulu cukup login: penumpang mana pun bisa membuat warung sendiri, lalu
+		// warung itu tampil di BohFood begitu lokasinya diisi — tanpa pengajuan
+		// dan tanpa persetujuan admin. Peran dibaca dari database, bukan token,
+		// supaya mitra yang perannya dicabut admin langsung berhenti.
+		if !peranDB(r, "food_merchant") {
+			writeJSONResponse(w, 403, map[string]string{"error": "Hanya mitra BohFood yang sudah disetujui yang bisa mengatur warung."})
+			return
+		}
 		var m FoodMerchant
 		if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
 			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})
@@ -5963,6 +5975,13 @@ func rentalCarsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSONResponse(w, 200, cars)
 	} else if r.Method == http.MethodPost {
+		// Mobil milik penumpang memang tidak tampil di katalog (disaring peran
+		// pemilik), tapi plat nomornya UNIK se-sistem: penumpang bisa "menduduki"
+		// plat mitra sungguhan sebelum mitra itu mendaftarkannya.
+		if !peranDB(r, "rental_partner") {
+			writeJSONResponse(w, 403, map[string]string{"error": "Hanya mitra BohRental yang sudah disetujui yang bisa menambah armada."})
+			return
+		}
 		var c RentalCar
 		if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
 			writeJSONResponse(w, 400, map[string]string{"error": "Data yang dikirim tidak terbaca. Coba lagi."})

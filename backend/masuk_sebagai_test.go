@@ -23,7 +23,7 @@ func TestMasukSebagaiMitra(t *testing.T) {
 		}
 	}
 
-	adminTok, _ := issueToken("+62800admin", "admin")
+	adminTok := tokenAdminUji(t, "+62893"+akhir)
 	masuk := func(tok, phone string) *httptest.ResponseRecorder {
 		b, _ := json.Marshal(map[string]string{"phone": phone})
 		r := httptest.NewRequest(http.MethodPost, "/api/admin/masuk-sebagai", bytes.NewReader(b))

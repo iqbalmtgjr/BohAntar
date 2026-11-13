@@ -123,9 +123,28 @@ func parseBearer(r *http.Request) (phone, role string, ok bool) {
 	return c.Subject, c.Role, true
 }
 
+// sesiPemanggil = parseBearer + akunnya masih ada di database, dengan peran
+// dari database. Token berlaku tujuh hari dan dulu tidak pernah dicocokkan
+// lagi: akun yang dihapus admin tetap "masuk" sampai aplikasinya dibuka ulang,
+// dan peran yang dicabut admin (mis. admin → penumpang) masih berlaku penuh
+// sampai tokennya kedaluwarsa.
+//
+// ponytail: satu SELECT per permintaan bertoken, lewat primary key. Pasang
+// cache singkat kalau suatu hari kueri ini terlihat di profil beban.
+func sesiPemanggil(r *http.Request) (phone, role string, ok bool) {
+	phone, _, ok = parseBearer(r)
+	if !ok {
+		return "", "", false
+	}
+	if db.QueryRow("SELECT role FROM users WHERE phone_number = ?", phone).Scan(&role) != nil {
+		return "", "", false
+	}
+	return phone, role, true
+}
+
 // extractPhone dipakai handler yang memeriksa token sendiri (bukan lewat middleware).
 func extractPhone(r *http.Request) (string, bool) {
-	phone, _, ok := parseBearer(r)
+	phone, _, ok := sesiPemanggil(r)
 	return phone, ok
 }
 
@@ -153,7 +172,8 @@ func callerRole(r *http.Request) string {
 func requireRole(roles ...string) func(http.HandlerFunc) http.HandlerFunc {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			phone, role, ok := parseBearer(r)
+			// Teks galat ini dicocokkan aplikasi untuk "Sesi sudah berakhir".
+			phone, role, ok := sesiPemanggil(r)
 			if !ok {
 				writeJSONResponse(w, 401, map[string]string{"error": "Token otorisasi diperlukan"})
 				return
@@ -341,6 +361,15 @@ func requireActiveSubscription(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// peranDB menjawab apakah pemanggil berperan `peran` (atau admin) menurut
+// database. Peran di token bisa tertinggal sampai tujuh hari setelah admin
+// mengubahnya, jadi gerbang pembuatan warung/armada membaca barisnya langsung.
+func peranDB(r *http.Request, peran string) bool {
+	var p string
+	_ = db.QueryRow("SELECT role FROM users WHERE phone_number = ?", callerPhone(r)).Scan(&p)
+	return p == peran || p == "admin"
 }
 
 func denyOwnership(w http.ResponseWriter) {

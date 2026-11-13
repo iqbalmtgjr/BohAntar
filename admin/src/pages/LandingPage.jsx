@@ -297,9 +297,9 @@ export default function LandingPage({ onSelectPortal }) {
             features: ['Foto bukti serah terima', 'Nama penerima tercatat', 'Lacak kurir di peta'],
         },
         {
-            key: 'rental', name: 'BohRental', tagline: 'Sewa mobil harian dari mitra rental di Sintang, lepas kunci atau dengan sopir.',
+            key: 'rental', name: 'BohRental', tagline: 'Sewa mobil & motor harian dari mitra rental di Sintang, lepas kunci atau dengan sopir.',
             icon: KeyRound, iconBg: 'bg-emerald-50 text-emerald-600 border-emerald-100', img: ikonRental, imgBg: 'bg-cyan-50',
-            features: ['Cek armada yang tersedia', 'Chat dengan mitra', 'Invoice & kuitansi'],
+            features: ['Pilihan mobil & motor', 'Cek unit yang tersedia', 'Chat mitra & kuitansi resmi'],
         }
     ];
 
@@ -343,9 +343,9 @@ export default function LandingPage({ onSelectPortal }) {
                         className="cursor-pointer select-none"
                         whileHover={{ scale: 1.01 }}
                     >
-                        <img 
-                            src={logoImg} 
-                            alt="BohAntar Logo" 
+                        <img
+                            src={logoImg}
+                            alt="BohAntar Logo"
                             className="h-10 w-auto object-contain"
                         />
                     </motion.div>
@@ -641,7 +641,7 @@ export default function LandingPage({ onSelectPortal }) {
                                 transition={{ duration: 0.7, delay: 0.8 }}
                                 className="text-base sm:text-lg text-slate-500 max-w-xl leading-relaxed"
                             >
-                                Pesan ojek online, kirim paket cepat, pesan makanan terdekat, hingga sewa mobil harian & jam-jaman langsung secara praktis dari HP Anda.
+                                Pesan ojek online, kirim paket cepat, pesan makanan terdekat, hingga sewa mobil & motor harian langsung dari HP Anda.
                             </motion.p>
 
                             {/* Hero Buttons */}
@@ -959,37 +959,37 @@ export default function LandingPage({ onSelectPortal }) {
                                     variants={staggerItem}
                                     whileHover={{ y: -8 }}
                                     className="group bg-white rounded-3xl p-6 sm:p-8 border border-slate-100 shadow-sm hover:shadow-2xl hover:shadow-slate-200/50 flex flex-col justify-between transition-all duration-500"
-                                  >
-                                      <div className="space-y-5">
-                                          <div className="flex justify-between items-start">
-                                              <motion.div
-                                                  whileHover={{ scale: 1.1, rotate: -5 }}
-                                                  className={`w-13 h-13 rounded-2xl bg-gradient-to-br ${portal.color} flex items-center justify-center text-white shadow-lg`}
-                                              >
-                                                  <Icon className="w-6 h-6" />
-                                              </motion.div>
-                                              <span className="text-[9px] font-bold uppercase tracking-wider px-3 py-1.5 bg-slate-50 text-slate-600 rounded-full border border-slate-100">
-                                                  {portal.badge}
-                                              </span>
-                                          </div>
-                                          <div>
-                                              <h3 className="text-xl font-black text-slate-900">{portal.title}</h3>
-                                              <p className="text-xs text-slate-500 mt-2 leading-relaxed">{portal.desc}</p>
-                                          </div>
-                                      </div>
-                                      <div className="pt-8">
-                                          <MagneticButton
-                                              onClick={() => navigate(portal.path)}
-                                              className={`w-full py-3.5 px-4 ${portal.btnClass} text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all duration-300 cursor-pointer`}
-                                          >
-                                              <span>Masuk Dashboard</span>
-                                              <ExternalLink className="w-4 h-4" />
-                                          </MagneticButton>
-                                      </div>
-                                  </motion.div>
-                              );
-                          })}
-                      </StaggerContainer>
+                                >
+                                    <div className="space-y-5">
+                                        <div className="flex justify-between items-start">
+                                            <motion.div
+                                                whileHover={{ scale: 1.1, rotate: -5 }}
+                                                className={`w-13 h-13 rounded-2xl bg-gradient-to-br ${portal.color} flex items-center justify-center text-white shadow-lg`}
+                                            >
+                                                <Icon className="w-6 h-6" />
+                                            </motion.div>
+                                            <span className="text-[9px] font-bold uppercase tracking-wider px-3 py-1.5 bg-slate-50 text-slate-600 rounded-full border border-slate-100">
+                                                {portal.badge}
+                                            </span>
+                                        </div>
+                                        <div>
+                                            <h3 className="text-xl font-black text-slate-900">{portal.title}</h3>
+                                            <p className="text-xs text-slate-500 mt-2 leading-relaxed">{portal.desc}</p>
+                                        </div>
+                                    </div>
+                                    <div className="pt-8">
+                                        <MagneticButton
+                                            onClick={() => navigate(portal.path)}
+                                            className={`w-full py-3.5 px-4 ${portal.btnClass} text-white font-bold text-sm rounded-xl flex items-center justify-center gap-2 shadow-lg transition-all duration-300 cursor-pointer`}
+                                        >
+                                            <span>Masuk Dashboard</span>
+                                            <ExternalLink className="w-4 h-4" />
+                                        </MagneticButton>
+                                    </div>
+                                </motion.div>
+                            );
+                        })}
+                    </StaggerContainer>
                 </div>
             </section>
 
@@ -1101,14 +1101,14 @@ export default function LandingPage({ onSelectPortal }) {
                         {/* Brand */}
                         <div className="space-y-4">
                             <div className="bg-white px-3.5 py-1.5 rounded-xl inline-flex items-center shadow-sm">
-                                <img 
-                                    src={logoImg} 
-                                    alt="BohAntar Logo" 
+                                <img
+                                    src={logoImg}
+                                    alt="BohAntar Logo"
                                     className="h-7 w-auto object-contain"
                                 />
                             </div>
                             <p className="text-slate-500 leading-relaxed text-xs">
-                                Aplikasi ojek, kurir, pesan makanan, dan sewa mobil untuk warga Sintang, Kalimantan Barat.
+                                Aplikasi ojek, kurir, pesan makanan, serta sewa mobil & motor untuk warga Sintang, Kalimantan Barat.
                             </p>
                         </div>
 
@@ -1120,13 +1120,13 @@ export default function LandingPage({ onSelectPortal }) {
                                     { label: 'BohCar (Taksi Mobil)', href: '#layanan' },
                                     { label: 'BohSend (Kurir Instan)', href: '#layanan' },
                                     { label: 'BohFood (Pesan Makanan)', href: '#layanan' },
-                                    { label: 'BohRental (Sewa Mobil)', href: '#layanan' },
+                                    { label: 'BohRental (Sewa Mobil & Motor)', href: '#layanan' },
                                 ]
                             },
                             {
                                 title: 'Kemitraan', links: [
                                     { label: 'Mitra Merchant Food', onClick: () => navigate('/login-resto') },
-                                    { label: 'Mitra Rental Mobil', onClick: () => navigate('/login-rental') },
+                                    { label: 'Mitra Rental Mobil & Motor', onClick: () => navigate('/login-rental') },
                                     { label: 'Pendaftaran Driver', href: '#portal' },
                                 ]
                             },
