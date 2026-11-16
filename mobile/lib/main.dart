@@ -104,10 +104,8 @@ class _AuthGateState extends State<AuthGate> {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Image.asset(
-                'assets/images/logo.png',
+                isDark ? 'assets/images/logo_gelap.png' : 'assets/images/logo.png',
                 height: 56,
-                color: isDark ? Colors.white : null,
-                colorBlendMode: isDark ? BlendMode.srcIn : null,
               ),
               const SizedBox(height: 24),
               const CircularProgressIndicator(

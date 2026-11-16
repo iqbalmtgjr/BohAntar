@@ -98,7 +98,8 @@ class NotifikasiService {
     // Chat sewa: payload "sewa:<id>" supaya ketukannya membuka layar chat sewa.
     final sewa = pesan.data['tipe'] == 'chat_sewa' ? pesan.data['booking_id'] : null;
     if (sewa != null && sewa == ChatSewaScreen.terbuka) return; // sedang dibaca
-    if (!chat && sewa == null && pesan.data['tipe'] != 'pesanan_terlantar') return;
+    // topup: top up manual disetujui/ditolak admin (topup_manual.go).
+    if (!chat && sewa == null && !const ['pesanan_terlantar', 'topup'].contains(pesan.data['tipe'])) return;
     if (chat) segarkanDaftarChat();
     final isi = pesan.notification?.body ?? '';
     final pengirim = pesan.notification?.title ?? 'Pesan baru';

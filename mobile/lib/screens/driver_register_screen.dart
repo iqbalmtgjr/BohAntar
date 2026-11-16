@@ -127,15 +127,15 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
       // jadi jangan suruh dia masuk dengan password yang barusan diketik.
       final akunLama = hasil['akun_lama'] == true;
       final caraMasuk = akunLama
-          ? 'Nomor ini sudah punya akun, jadi masuk memakai email dan password akun lama Anda'
-          : 'Masuk memakai email dan password yang tadi Anda buat';
+          ? 'Nomor ini sudah punya akun, jadi masuk memakai email dan password akun lamamu'
+          : 'Masuk memakai email dan password yang tadi kamu buat';
       await showDialog<void>(
         context: context,
         barrierDismissible: false,
         builder: (ctx) => AlertDialog(
           icon: const Icon(Icons.hourglass_top, color: AppTheme.primaryBlue, size: 40),
           title: const Text('Pengajuan terkirim'),
-          content: Text('Dokumen Anda sedang ditinjau admin BohAntar. $caraMasuk setelah pengajuan disetujui.'),
+          content: Text('Dokumenmu sedang ditinjau admin BohAntar. $caraMasuk setelah pengajuan disetujui.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
@@ -152,7 +152,7 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
         context,
         MaterialPageRoute(
           builder: (_) => LoginScreen(
-            pesanInfo: 'Pengajuan driver Anda sedang ditinjau admin. $caraMasuk setelah pengajuan disetujui.',
+            pesanInfo: 'Pengajuan drivermu sedang ditinjau admin. $caraMasuk setelah pengajuan disetujui.',
           ),
         ),
         (route) => false,
@@ -264,7 +264,7 @@ class _DriverRegisterScreenState extends State<DriverRegisterScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Data diri dan kendaraan Anda diperiksa admin sebelum akun '
+                      'Data diri dan kendaraanmu diperiksa admin sebelum akun '
                       'driver bisa dipakai. Siapkan KTP, SIM, dan STNK asli, lalu '
                       'ambil selfie untuk foto wajah.',
                       style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.teksRedup(context)),

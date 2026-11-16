@@ -28,6 +28,7 @@ export default function OrdersPage() {
     setLoading(true);
     const params = { page: p, limit: l };
     if (status) params.status = status;
+    if (search.trim()) params.q = search.trim();
     api.getOrders(params).then(d => {
       setOrders(d.orders || []);
       setDilepas(d.dilepas || {});
@@ -40,15 +41,12 @@ export default function OrdersPage() {
     });
   };
 
-  useEffect(() => { load(filter, 1, limit); }, []);
-
-  const filtered = orders.filter(o =>
-    o.id?.toLowerCase().includes(search.toLowerCase()) ||
-    o.rider_name?.toLowerCase().includes(search.toLowerCase()) ||
-    o.driver_name?.toLowerCase().includes(search.toLowerCase()) ||
-    o.pickup?.toLowerCase().includes(search.toLowerCase()) ||
-    o.dropoff?.toLowerCase().includes(search.toLowerCase())
-  );
+  // Dicari di server supaya pesanan di halaman lain ikut ketemu; ketikan
+  // ditunggu 300 ms dulu agar tidak memanggil API tiap huruf.
+  useEffect(() => {
+    const t = setTimeout(() => load(filter, 1, limit), search ? 300 : 0);
+    return () => clearTimeout(t);
+  }, [search]);
 
   return (
     <>
@@ -67,11 +65,11 @@ export default function OrdersPage() {
         </div>
         {loading ? <div className="loading-overlay"><div className="spinner" /><p>Memuat...</p></div> : (
           <div className="table-wrap">
-            <div className="table-header"><h3>Total: {filtered.length} pesanan</h3></div>
+            <div className="table-header"><h3>Total: {totalRecords} pesanan</h3></div>
             <table>
               <thead><tr><th>ID</th><th>Penumpang</th><th>Driver</th><th>Layanan</th><th>Jemput</th><th>Tujuan</th><th>Tarif</th><th>Status</th><th>Waktu</th></tr></thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {orders.length === 0 ? (
                   <tr>
                     <td colSpan={9}>
                       <div className="empty-state">
@@ -83,7 +81,7 @@ export default function OrdersPage() {
                       </div>
                     </td>
                   </tr>
-                ) : filtered.map(o => (
+                ) : orders.map(o => (
                   <tr key={o.id}>
                     <td data-label="ID"><span className="chip">#{o.id?.slice(-6)}</span></td>
                     <td data-label="Penumpang">

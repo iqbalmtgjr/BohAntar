@@ -94,6 +94,23 @@ func TestVoucherOtomatisDitanggungAplikator(t *testing.T) {
 	if o1.Diskon != 3000 || o2.Diskon != 1000 || o3.Diskon != 0 {
 		t.Fatalf("diskon tiga pesanan %v, %v, %v; harusnya 3000, 1000, 0", o1.Diskon, o2.Diskon, o3.Diskon)
 	}
+	// Tab Promo: jatah kecil & besar sudah habis, basi & mati tidak tampil.
+	req := httptest.NewRequest(http.MethodGet, "/api/voucher", nil)
+	req.Header.Set("Authorization", "Bearer "+mustToken(t, rider, "rider"))
+	w := httptest.NewRecorder()
+	requireAuth(voucherPemakaiHandler)(w, req)
+	var promo struct{ Voucher []Voucher }
+	json.Unmarshal(w.Body.Bytes(), &promo)
+	tampil := map[string]bool{}
+	for _, v := range promo.Voucher {
+		tampil[v.Judul] = true
+	}
+	for judul, mau := range map[string]bool{"Uji voucher mobil": true, "Uji voucher makan": true, "Uji voucher besar": false,
+		"Uji voucher kecil": false, "Uji voucher basi": false, "Uji voucher mati": false} {
+		if tampil[judul] != mau {
+			t.Errorf("/api/voucher: %q tampil=%v, harusnya %v (balasan %d %s)", judul, tampil[judul], mau, w.Code, w.Body.String())
+		}
+	}
 	// Hapus akun mengosongkan rider_phone; daftar ulang dengan nomor yang sama
 	// tidak boleh mendapat jatah baru.
 	db.Exec("UPDATE orders SET rider_phone = NULL WHERE id = ?", o2.ID)
@@ -117,9 +134,9 @@ func TestVoucherOtomatisDitanggungAplikator(t *testing.T) {
 	}
 	db.Exec("UPDATE orders SET status = 'accepted', driver_phone = ?, driver_name = 'Uji' WHERE id = ?", driver, o2.ID)
 	awal := saldo()
-	req := httptest.NewRequest(http.MethodPost, "/api/orders/"+o2.ID+"/complete", nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/orders/"+o2.ID+"/complete", nil)
 	req.Header.Set("Authorization", "Bearer "+mustToken(t, driver, "driver"))
-	w := httptest.NewRecorder()
+	w = httptest.NewRecorder()
 	orderRouterHandler(w, req)
 	if w.Code != 200 {
 		t.Fatalf("selesai gagal: %d %s", w.Code, w.Body.String())

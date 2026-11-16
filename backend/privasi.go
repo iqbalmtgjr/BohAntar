@@ -81,7 +81,8 @@ var tmplPrivasi = template.Must(template.New("privasi").Parse(`<!doctype html>
   <li><strong>Warung bohFood</strong> menerima nama pemesan dan isi pesanan, serta nama, nomor handphone, dan kendaraan driver yang mengambilnya. Warung yang memakai aplikasi kasir Kasvo menerimanya lewat Kasvo.</li>
   <li><strong>Layanan peta berbasis OpenStreetMap</strong> (Photon, OSRM) menerima koordinat untuk menerjemahkan titik di peta jadi alamat dan menghitung rute.</li>
   <li><strong>Google</strong> menerima permintaan verifikasi bila Anda masuk dengan akun Google, token perangkat untuk mengantarkan notifikasi (Firebase Cloud Messaging), kata kunci pencarian alamat beserta perkiraan lokasi Anda (Google Places), dan data pemakaian peta dari aplikasi untuk menampilkannya (Google Maps).</li>
-  <li><strong>Xendit</strong> menerima nominal dan alamat email Anda untuk memproses top up QRIS dan pembayaran langganan mitra.</li>
+  <li><strong>Xendit</strong> menerima nominal dan alamat email Anda untuk memproses pembayaran langganan mitra.</li>
+  <li><strong>Brevo</strong> menerima alamat email Anda untuk mengirim tautan pembuatan password baru bila Anda memintanya, serta nama, nomor handphone, dan nominal pengajuan top up untuk diteruskan ke admin BohAntar.</li>
 </ul>
 <p>Kami tidak menjual data Anda, dan tidak membaginya untuk keperluan iklan.</p>
 

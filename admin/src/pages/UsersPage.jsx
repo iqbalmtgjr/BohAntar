@@ -38,7 +38,7 @@ export default function UsersPage() {
 
   const load = (role = filter, p = page, l = limit) => {
     setLoading(true);
-    api.getUsers(role, p, l).then(d => {
+    api.getUsers(role, p, l, search.trim()).then(d => {
       setUsers(d.users || []);
       setLepas(d.lepas_30_hari || {});
       setAlasanNonaktif(d.alasan_nonaktif || {});
@@ -52,7 +52,12 @@ export default function UsersPage() {
     });
   };
 
-  useEffect(() => { load(filter, 1, limit); }, []);
+  // Dicari di server supaya pengguna di halaman lain ikut ketemu; ketikan
+  // ditunggu 300 ms dulu agar tidak memanggil API tiap huruf.
+  useEffect(() => {
+    const t = setTimeout(() => load(filter, 1, limit), search ? 300 : 0);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const handleDelete = async (u) => {
     const ok = await confirmDialog({
@@ -165,12 +170,6 @@ export default function UsersPage() {
     }
   };
 
-  const filtered = users.filter(u =>
-    u.name?.toLowerCase().includes(search.toLowerCase()) || 
-    u.phone_number?.includes(search) || 
-    u.email?.toLowerCase().includes(search.toLowerCase())
-  );
-
   return (
     <>
       <Topbar title="Manajemen Pengguna" />
@@ -205,7 +204,7 @@ export default function UsersPage() {
           <div className="loading-overlay"><div className="spinner" /><p>Memuat...</p></div>
         ) : (
           <div className="table-wrap">
-            <div className="table-header"><h3>Total: {filtered.length} pengguna</h3></div>
+            <div className="table-header"><h3>Total: {totalRecords} pengguna</h3></div>
             <table>
               <thead>
                 <tr>
@@ -221,7 +220,7 @@ export default function UsersPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.length === 0 ? (
+                {users.length === 0 ? (
                   <tr>
                     <td colSpan={9}>
                       <div className="empty-state">
@@ -229,11 +228,11 @@ export default function UsersPage() {
                           <User size={40} style={{ color: "var(--text-muted)", opacity: 0.5 }} />
                         </div>
                         <h3>Tidak ada pengguna</h3>
-                        <p>Belum ada pengguna yang terdaftar</p>
+                        <p>{search.trim() ? `Tidak ada yang cocok dengan "${search.trim()}"` : "Belum ada pengguna yang terdaftar"}</p>
                       </div>
                     </td>
                   </tr>
-                ) : filtered.map(u => (
+                ) : users.map(u => (
                   <tr key={u.phone_number}>
                     <td data-label="Pengguna">
                       <div className="user-cell">

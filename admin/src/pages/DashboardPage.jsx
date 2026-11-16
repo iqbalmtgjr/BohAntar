@@ -28,7 +28,7 @@ export default function DashboardPage() {
   const driverData = (a.driver_stats || []).slice(0, 6).map(d => ({
     name: d.driver_name?.split(" ")[0] || "?",
     pesanan: d.order_count || 0,
-    pendapatan: Math.round((d.total_income || 0) / 1000),
+    pendapatan: Math.round((d.bagian_driver || 0) / 1000),
   }));
 
   const fmt = (n) => "Rp " + (n || 0).toLocaleString("id-ID");
@@ -91,7 +91,7 @@ export default function DashboardPage() {
                   fontSize: 11, fontWeight: 700, letterSpacing: 0.6, textTransform: "uppercase",
                   color: "rgba(255,255,255,0.88)"
                 }}>
-                  Total Pendapatan
+                  Pendapatan Kami (bersih)
                 </div>
                 <button
                   onClick={() => setHideAmount(v => !v)}
@@ -109,8 +109,11 @@ export default function DashboardPage() {
               <div style={{ marginTop: 16, display: "flex", alignItems: "baseline", gap: 6 }}>
                 <span style={{ fontSize: 15, fontWeight: 700, opacity: 0.9 }}>Rp</span>
                 <span style={{ fontSize: "clamp(22px, 7vw, 32px)", fontWeight: 800, letterSpacing: -0.8, lineHeight: 1.1, whiteSpace: "nowrap" }}>
-                  {hideAmount ? "••••••" : (a.total_revenue || 0).toLocaleString("id-ID")}
+                  {hideAmount ? "••••••" : Math.round(a.pendapatan_kami || 0).toLocaleString("id-ID")}
                 </span>
+              </div>
+              <div style={{ marginTop: 6, fontSize: 11.5, color: "rgba(255,255,255,0.8)" }}>
+                dari ongkos kotor {hideAmount ? "••••••" : fmt(a.total_revenue)} yang dibayar penumpang
               </div>
 
               <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -121,7 +124,7 @@ export default function DashboardPage() {
                 }}>
                   <CheckCircle size={13} /> {a.completed_orders || 0} pesanan selesai
                 </span>
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.75)" }}>Akumulasi seluruh layanan</span>
+                <Link to="/komisi" style={{ fontSize: 11, fontWeight: 700, color: "#fff" }}>Lihat rincian →</Link>
               </div>
             </div>
           </div>
@@ -202,17 +205,20 @@ export default function DashboardPage() {
             { label: "Total Pengguna", value: a.total_users || 0, icon: Users, color: "var(--primary)", bg: "var(--primary-glow)" },
             { label: "Total Pesanan", value: a.total_orders || 0, icon: ShoppingBag, color: "var(--success)", bg: "var(--success-glow)" },
             { label: "Total Driver", value: a.total_drivers || 0, icon: Bike, color: "var(--warning)", bg: "var(--warning-glow)" },
-            { label: "Total Pendapatan", value: fmtShort(a.total_revenue), title: fmt(a.total_revenue), icon: DollarSign, color: "var(--info)", bg: "var(--info-glow)" },
+            { label: "Pendapatan Kami (bersih) →", value: fmtShort(a.pendapatan_kami), title: `Komisi + biaya jasa − diskon voucher + potongan QR mitra. Ongkos kotor: ${fmt(a.total_revenue)}`, icon: DollarSign, color: "var(--info)", bg: "var(--info-glow)", to: "/komisi" },
             { label: "Pesanan Selesai", value: a.completed_orders || 0, icon: CheckCircle, color: "var(--success)", bg: "var(--success-glow)" },
             { label: "Pesanan Pending", value: a.pending_orders || 0, icon: Clock, color: "var(--warning)", bg: "var(--warning-glow)" },
             { label: "Pesanan Dibatalkan", value: a.cancelled_orders || 0, icon: XCircle, color: "var(--danger)", bg: "var(--danger-glow)" },
             { label: "Total Penumpang", value: a.total_riders || 0, icon: Users, color: "var(--info)", bg: "var(--info-glow)" },
-          ].map((s, i) => (
-            <div key={i} className="stat-card">
-              <div className="stat-icon" style={{ background: s.bg }}><s.icon size={22} style={{ color: s.color }} /></div>
-              <div style={{ minWidth: 0 }}><div className="stat-value" style={{ color: s.color }} title={s.title}>{s.value}</div><div className="stat-label">{s.label}</div></div>
-            </div>
-          ))}
+          ].map((s, i) => {
+            const Kartu = s.to ? Link : "div";
+            return (
+              <Kartu key={i} to={s.to} className="stat-card" style={{ textDecoration: "none", color: "inherit" }}>
+                <div className="stat-icon" style={{ background: s.bg }}><s.icon size={22} style={{ color: s.color }} /></div>
+                <div style={{ minWidth: 0 }}><div className="stat-value" style={{ color: s.color }} title={s.title}>{s.value}</div><div className="stat-label">{s.label}</div></div>
+              </Kartu>
+            );
+          })}
         </div>
 
         <div className="grid-2" style={{ marginBottom: 24 }}>
@@ -242,7 +248,7 @@ export default function DashboardPage() {
         </div>
 
         <div className="card">
-          <div className="card-title">Pendapatan Driver (Ribuan Rp)</div>
+          <div className="card-title">Bagian Driver — ongkos dikurangi komisi (Ribuan Rp)</div>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={driverData}>
               <XAxis dataKey="name" stroke="var(--text-secondary)" tick={{ fontSize: 12 }} />

@@ -11,20 +11,42 @@ import (
 	"time"
 )
 
-// Biaya QRIS dibebankan ke pembayar: setelah Xendit memotong 0,777% yang masuk
-// harus tetap >= nominal, dan tidak lebih mahal dari perlu.
-func TestTotalBayarQRIS(t *testing.T) {
-	if got := totalBayarQRIS(50000); got != 50392 {
-		t.Fatalf("top up 50.000 ditagih %.0f, harusnya 50392", got)
+// Top up manual: setujui menambah saldo tepat sekali, tolak tidak menambah
+// apa pun, dan QR Xendit lama (PENDING) tidak bisa disetujui dari dashboard.
+func TestTopUpManualSetujuiTolak(t *testing.T) {
+	bukaDBTes(t)
+	const phone = "+62800000105"
+	proses := func(id, aksi string) int {
+		rec := httptest.NewRecorder()
+		adminProsesTopUpHandler(rec, httptest.NewRequest(http.MethodPost, "/api/admin/topup/"+id+"/"+aksi, nil))
+		return rec.Code
 	}
-	for n := float64(topUpMinimal); n <= topUpMaksimal; n += 777 {
-		total := totalBayarQRIS(n)
-		if bersih := total * (1 - biayaQRISPersen/100); bersih < n-1e-6 {
-			t.Fatalf("nominal %.0f: tagih %.0f, bersih %.2f kurang dari nominal", n, total, bersih)
-		}
-		if (total-1)*(1-biayaQRISPersen/100) >= n {
-			t.Fatalf("nominal %.0f: tagih %.0f, lebih 1 rupiah dari perlu", n, total)
-		}
+	menunggu := func(nominal float64) string {
+		id := invoiceTopUpUji(t, phone, nominal)
+		db.Exec("UPDATE topup_invoices SET status = 'MENUNGGU' WHERE id = ?", id)
+		return id
+	}
+	// Semua baris dibuat dulu: invoiceTopUpUji menyimpan ulang pengguna uji,
+	// dan itu mengenolkan saldonya.
+	a, b, lama := menunggu(30000), menunggu(20000), invoiceTopUpUji(t, phone, 40000)
+	saldoAwal := saldoUji(t, phone)
+	if kode := proses(a, "setujui"); kode != 200 {
+		t.Fatalf("setujui dibalas %d", kode)
+	}
+	if kode := proses(a, "setujui"); kode != 409 {
+		t.Fatalf("setujui kedua dibalas %d, harusnya 409", kode)
+	}
+	if kode := proses(b, "tolak"); kode != 200 {
+		t.Fatalf("tolak dibalas %d", kode)
+	}
+	if kode := proses(b, "setujui"); kode != 409 {
+		t.Fatalf("setujui setelah ditolak dibalas %d, harusnya 409", kode)
+	}
+	if kode := proses(lama, "setujui"); kode != 409 {
+		t.Fatalf("QR Xendit lama disetujui (kode %d)", kode)
+	}
+	if saldo := saldoUji(t, phone); saldo != saldoAwal+30000 {
+		t.Fatalf("saldo jadi %.0f, harusnya %.0f", saldo, saldoAwal+30000)
 	}
 }
 
@@ -108,7 +130,7 @@ func TestDbKreditTopUpHanyaSekali(t *testing.T) {
 		go func() {
 			defer siap.Done()
 			mulai.Wait() // semua webhook tiba sedekat mungkin
-			_, jumlah, err := dbKreditTopUp(id, nominal)
+			_, jumlah, err := dbKreditTopUp(id, "PENDING", nominal)
 			if err != nil {
 				t.Errorf("webhook gagal: %v", err)
 				return
@@ -139,7 +161,7 @@ func TestDbKreditTopUpTolakKurangBayar(t *testing.T) {
 	id := invoiceTopUpUji(t, phone, 50000)
 	saldoAwal := saldoUji(t, phone)
 
-	if _, jumlah, err := dbKreditTopUp(id, 20000); !errors.Is(err, errTopUpKurangBayar) || jumlah != 0 {
+	if _, jumlah, err := dbKreditTopUp(id, "PENDING", 20000); !errors.Is(err, errTopUpKurangBayar) || jumlah != 0 {
 		t.Fatalf("bayar 20000 untuk tagihan 50000 diterima: jumlah %.0f, err %v", jumlah, err)
 	}
 	if saldo := saldoUji(t, phone); saldo != saldoAwal {
@@ -160,16 +182,17 @@ func TestDbKreditTopUpTolakKurangBayar(t *testing.T) {
 // yang bisa memalsukan webhook cukup mengarang ID untuk mencetak saldo.
 func TestDbKreditTopUpInvoiceTakDikenal(t *testing.T) {
 	bukaDBTes(t)
-	if _, jumlah, err := dbKreditTopUp("topup-karangan-xyz", 50000); !errors.Is(err, errTopUpTakDitemukan) || jumlah != 0 {
+	if _, jumlah, err := dbKreditTopUp("topup-karangan-xyz", "PENDING", 50000); !errors.Is(err, errTopUpTakDitemukan) || jumlah != 0 {
 		t.Fatalf("invoice karangan diterima: jumlah %.0f, err %v", jumlah, err)
 	}
 }
 
-// Tiap permintaan top up membuat invoice sungguhan di akun Xendit yang dipakai
-// bersama Kasvo, jadi permintaan keenam dalam sepuluh menit harus ditahan
-// sebelum sampai ke Xendit.
+// Tiap pengajuan top up mengirim email ke admin, jadi permintaan keenam dalam
+// sepuluh menit harus ditahan.
 func TestTopUpDiremSetelahLimaInvoice(t *testing.T) {
 	bukaDBTes(t)
+	t.Setenv("TOPUP_TUJUAN", "DANA uji")
+	t.Setenv("SMTP_HOST", "") // jangan kirim email sungguhan dari tes
 	const phone = "+62800000400"
 	t.Cleanup(func() { db.Exec("DELETE FROM topup_invoices WHERE phone_number = ?", phone) })
 
@@ -192,7 +215,7 @@ func TestTopUpDiremSetelahLimaInvoice(t *testing.T) {
 	db.Exec("UPDATE topup_invoices SET created_at = ? WHERE phone_number = ?",
 		waktuKeDB(time.Now().Add(-jendelaTopUp-time.Minute).Format(time.RFC3339)), phone)
 	if kode := minta(); kode != 200 {
-		t.Fatalf("setelah jendela lewat dibalas %d, harusnya 200 (jalur pembayaran tiruan)", kode)
+		t.Fatalf("setelah jendela lewat dibalas %d, harusnya 200", kode)
 	}
 }
 
@@ -204,7 +227,7 @@ func TestAdminTopUpPerBulan(t *testing.T) {
 	lunas := invoiceTopUpUji(t, phone, 25000)
 	belum := invoiceTopUpUji(t, phone, 15000)
 	lama := invoiceTopUpUji(t, phone, 99000)
-	if _, _, err := dbKreditTopUp(lunas, 25000); err != nil {
+	if _, _, err := dbKreditTopUp(lunas, "PENDING", 25000); err != nil {
 		t.Fatalf("gagal melunasi: %v", err)
 	}
 	db.Exec("UPDATE topup_invoices SET created_at = ? WHERE id = ?",

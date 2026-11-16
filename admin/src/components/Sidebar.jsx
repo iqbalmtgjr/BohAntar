@@ -34,7 +34,7 @@ const navItems = [
   { to: "/approved-partners", icon: CheckCircle, label: "Mitra Disetujui", short: "Disetujui", desktopOnly: true },
   { to: "/beralih-akun", icon: LogIn, label: "Masuk Akun Mitra", short: "Beralih", desktopOnly: true },
   { section: "Pelaporan Pembayaran" },
-  { to: "/komisi", icon: Wallet, label: "Bagi Hasil Driver", short: "Komisi", desktopOnly: true },
+  { to: "/komisi", icon: Wallet, label: "Pendapatan & Bagi Hasil", short: "Pendapatan", desktopOnly: true },
   { to: "/topup", icon: QrCode, label: "Top Up Driver", short: "Top Up", desktopOnly: true },
   { to: "/pencairan", icon: Banknote, label: "Pencairan Saldo", short: "Cair", desktopOnly: true },
   { to: "/payment-reports/rental", icon: CreditCard, label: "Langganan bohRental", short: "Langganan", desktopOnly: true },

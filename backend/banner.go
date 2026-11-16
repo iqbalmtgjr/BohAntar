@@ -70,7 +70,7 @@ func siapkanBanner() {
 		Keterangan:  "Harga menu sama dengan harga di warung.",
 		LabelTombol: "Pesan makanan",
 		Tujuan:      "BohFood",
-		Warna:       "oranye",
+		Warna:       "biru", // rancangan beranda 16 Nov 2026
 		Aktif:       true,
 		Urutan:      1,
 	}

@@ -195,9 +195,8 @@ class _LoginScreenState extends State<LoginScreen> {
   // Nomor WhatsApp admin, sama dengan tombol "hubungi admin" di Portal Mitra.
   static const _waAdmin = ApiService.waCS;
 
-  /// Dua jalan pulih tanpa layanan email/SMS: atur ulang sendiri lewat Google
-  /// kalau email akunnya akun Google, atau minta admin mengganti password-nya
-  /// lewat dashboard.
+  /// Tiga jalan pulih: tautan ke email akun (semua email), atur ulang lewat
+  /// Google kalau emailnya Gmail, atau minta admin lewat WhatsApp.
   Future<void> _lupaPassword() async {
     final pilihan = await showModalBottomSheet<String>(
       context: context,
@@ -211,20 +210,27 @@ class _LoginScreenState extends State<LoginScreen> {
             children: [
               Text('Lupa password?', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
-              const Text('Kalau email akunmu akun Google (Gmail), kamu bisa membuat password baru sendiri sekarang.'),
+              const Text('Kami kirim tautan ke email akunmu untuk membuat password baru.'),
               const SizedBox(height: 16),
               ElevatedButton.icon(
-                onPressed: () => Navigator.pop(context, 'google'),
-                icon: const Icon(Icons.lock_reset),
-                label: const Text('Buat password baru lewat Google'),
+                onPressed: () => Navigator.pop(context, 'email'),
+                icon: const Icon(Icons.mark_email_read_outlined),
+                label: const Text('Kirim tautan ke email'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppTheme.primaryBlue,
                   foregroundColor: Colors.white,
                   minimumSize: const Size(double.infinity, 50),
                 ),
               ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.pop(context, 'google'),
+                icon: const Icon(Icons.lock_reset),
+                label: const Text('Emailnya Gmail? Lewat Google'),
+                style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 50)),
+              ),
               const SizedBox(height: 20),
-              const Text('Emailmu bukan Gmail? Admin bisa mengatur ulang password-mu.'),
+              const Text('Email tidak masuk? Admin bisa mengatur ulang password-mu.'),
               const SizedBox(height: 8),
               OutlinedButton.icon(
                 onPressed: () => Navigator.pop(context, 'admin'),
@@ -246,6 +252,31 @@ class _LoginScreenState extends State<LoginScreen> {
       final url = Uri.parse('https://wa.me/$_waAdmin?text=${Uri.encodeComponent(pesan)}');
       if (!await launchUrl(url, mode: LaunchMode.externalApplication) && mounted) {
         setState(() => _errorMessage = 'WhatsApp tidak bisa dibuka. Hubungi admin di +$_waAdmin.');
+      }
+      return;
+    }
+
+    if (pilihan == 'email') {
+      final email = _emailController.text.trim();
+      if (email.isEmpty) {
+        setState(() => _errorMessage = 'Tulis email akunmu di kolom Email dulu, lalu ketuk "Lupa password?" lagi.');
+        return;
+      }
+      setState(() {
+        _isLoading = true;
+        _errorMessage = '';
+      });
+      try {
+        final res = await ApiService().lupaPassword(email);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(res['message'] ?? 'Tautan sudah dikirim. Cek emailmu.'),
+          duration: const Duration(seconds: 6),
+        ));
+      } catch (e) {
+        if (mounted) setState(() => _errorMessage = pesanGalat(e));
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
       }
       return;
     }
@@ -451,10 +482,8 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: 40),
         // Logo Image
         Image.asset(
-          'assets/images/logo.png',
+          isDark ? 'assets/images/logo_gelap.png' : 'assets/images/logo.png',
           height: 64,
-          color: isDark ? Colors.white : null,
-          colorBlendMode: isDark ? BlendMode.srcIn : null,
         ),
         
         // Scooter Illustration
@@ -561,10 +590,8 @@ class _LoginScreenState extends State<LoginScreen> {
             Align(
               alignment: Alignment.centerLeft,
               child: Image.asset(
-                'assets/images/logo.png',
+                isDark ? 'assets/images/logo_gelap.png' : 'assets/images/logo.png',
                 height: 44,
-                color: isDark ? Colors.white : null,
-                colorBlendMode: isDark ? BlendMode.srcIn : null,
               ),
             ),
             const SizedBox(height: 32),
@@ -576,7 +603,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Masuk pakai email dan password akun BohAntar-mu.',
+              'Masuk ke akun BohAntar-mu.',
               style: theme.textTheme.bodyMedium?.copyWith(color: AppTheme.teksRedup(context)),
             ),
             if (widget.pesanInfo != null) ...[
@@ -606,7 +633,37 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
             ],
-            const SizedBox(height: 40),
+            const SizedBox(height: 28),
+
+            // Dulu tombol ini di paling bawah, di bawah lipatan layar — banyak
+            // pengguna tidak tahu ada. Kini paling atas, sebelum form email.
+            // Logo & warna mengikuti panduan merek Google (super G gradasi,
+            // aset resmi g-logo.png; isi #FFF/garis #747775, gelap #131314/#8E918F).
+            OutlinedButton.icon(
+              onPressed: _isLoading ? null : _loginWithGoogle,
+              icon: Image.asset('assets/images/google_g.png', width: 22, height: 22),
+              label: const Text('Masuk dengan Google'),
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 56),
+                backgroundColor: isDark ? const Color(0xFF131314) : Colors.white,
+                foregroundColor: isDark ? const Color(0xFFE3E3E3) : const Color(0xFF1F1F1F),
+                side: BorderSide(color: isDark ? const Color(0xFF8E918F) : const Color(0xFF747775)),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                textStyle: const TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.w600, fontSize: 16),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(
+              children: [
+                Expanded(child: Divider(color: isDark ? Colors.blueGrey.shade700 : Colors.grey.shade300)),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text('atau pakai email', style: TextStyle(color: Colors.grey, fontSize: 13)),
+                ),
+                Expanded(child: Divider(color: isDark ? Colors.blueGrey.shade700 : Colors.grey.shade300)),
+              ],
+            ),
+            const SizedBox(height: 24),
 
             // Email Input
             Text(
@@ -720,48 +777,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ),
 
-            const SizedBox(height: 20),
-            Row(
-              children: [
-                Expanded(child: Divider(color: isDark ? Colors.blueGrey.shade700 : Colors.grey.shade300)),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: Text("Atau masuk dengan", style: TextStyle(color: Colors.grey, fontSize: 13)),
-                ),
-                Expanded(child: Divider(color: isDark ? Colors.blueGrey.shade700 : Colors.grey.shade300)),
-              ],
-            ),
-            const SizedBox(height: 20),
-            OutlinedButton.icon(
-              onPressed: _isLoading ? null : _loginWithGoogle,
-              icon: Container(
-                width: 24,
-                height: 24,
-                alignment: Alignment.center,
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                ),
-                child: const Text(
-                  'G',
-                  style: TextStyle(
-                    color: Color(0xFF4285F4),
-                    fontWeight: FontWeight.w900,
-                    fontSize: 16,
-                  ),
-                ),
-              ),
-              label: const Text('Masuk dengan Google'),
-              style: OutlinedButton.styleFrom(
-                minimumSize: const Size(double.infinity, 56),
-                side: BorderSide(color: isDark ? Colors.blueGrey.shade700 : Colors.grey.shade300),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                textStyle: const TextStyle(fontFamily: 'Inter', fontWeight: FontWeight.bold, fontSize: 16),
-                foregroundColor: isDark ? Colors.white : Colors.black87,
-              ),
-            ),
-
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
             // Dulu ini teks mati: pengguna diminta menyetujui dokumen yang tidak
             // bisa dibuka dan memang belum ada. Sekarang menuju halaman
             // kebijakan privasi yang sungguhan.

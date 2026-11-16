@@ -89,10 +89,10 @@ export default function KomisiPage() {
 
   return (
     <>
-      <Topbar title="Bagi Hasil Driver" />
+      <Topbar title="Pendapatan & Bagi Hasil" />
       <div className="page">
         <div className="page-header">
-          <h1>Bagi Hasil Driver</h1>
+          <h1>Pendapatan & Bagi Hasil</h1>
           <p>Komisi yang kami peroleh dari pesanan selesai (per driver) dan dari tagihan QR mitra yang dibayar</p>
         </div>
 
@@ -123,6 +123,25 @@ export default function KomisiPage() {
                 </div>
               ))}
             </div>
+
+            {/* Rumusnya dipakai juga oleh kartu "Pendapatan Kami" di dashboard. */}
+            <details open className="card" style={{ marginBottom: 24, fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.7 }}>
+              <summary style={{ fontWeight: 700, color: "var(--text-primary)", cursor: "pointer" }}>Cara membaca angka ini</summary>
+              <div style={{ marginTop: 10 }}>
+                Dari setiap pesanan selesai:
+                <ul style={{ margin: "4px 0 12px 18px" }}>
+                  <li><b>Penumpang membayar</b> = ongkos + biaya jasa − diskon voucher (harga makanan BohFood langsung milik warung, tidak dihitung di sini)</li>
+                  <li><b>Driver menerima</b> = ongkos − komisi</li>
+                  <li><b>BohAntar menerima</b> = komisi + biaya jasa − diskon voucher</li>
+                </ul>
+                Untuk rentang {from} s/d {to}:
+                <ul style={{ margin: "4px 0 0 18px" }}>
+                  <li>Ongkos kotor {rp(d.total_ongkos)} − komisi {rp(d.total_komisi)} = <b>bagian driver {rp((d.total_ongkos || 0) - (d.total_komisi || 0))}</b></li>
+                  <li>Komisi {rp(d.total_komisi)} + biaya jasa {rp(d.total_biaya_jasa)} + potongan QR mitra {rp(d.total_komisi_tagihan)} − diskon {rp(d.total_diskon)} = <b style={{ color: "var(--success)" }}>Pendapatan Kami {rp(d.total_pendapatan)}</b></li>
+                  <li>Dari jumlah itu, {rp(d.komisi_wallet)} sudah masuk lewat saldo komisi, {rp(d.komisi_tunai)} masih di tangan driver (order tunai) sampai disetor.</li>
+                </ul>
+              </div>
+            </details>
 
             {/* Tunai belum tentu jadi uang: penumpang membayar ke driver, komisinya
                 cuma memotong saldo driver sampai ia menyetor. */}

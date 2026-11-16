@@ -9,29 +9,37 @@ import 'package:mobile/theme.dart';
 // layanan kaca berwarna.
 
 /// Satu tombol di [NavKaca]. [ikon] versi isi (bukan garis): gradasi dan
-/// kilaunya butuh bidang. [lencana] 0 = tanpa angka.
-typedef ItemNavKaca = ({IconData ikon, String label, int lencana});
+/// kilaunya butuh bidang. [gambar] = aset ikon 3D, menggantikan [ikon] bila
+/// diisi. [lencana] 0 = tanpa angka.
+typedef ItemNavKaca = ({IconData ikon, String? gambar, String label, int lencana});
 
-/// Menu bawah kaca buram: pil yang mengambang, isi halaman lewat di
-/// belakangnya dan terlihat samar. Pasang di `Scaffold.bottomNavigationBar`
-/// bersama `extendBody: true`, lalu beri tiap daftar bergulir ruang bawah
-/// [ruang] supaya baris terakhirnya tidak tertutup.
+/// Menu bawah ala dashboard admin web (17 Nov 2026; dulu pil kaca mengambang):
+/// bar putih menempel di bawah, tab aktif = kotak membulat biru muda, dan
+/// opsional satu tombol bulat besar di [tengah] yang menonjol di atas bar.
+/// Pasang di `Scaffold.bottomNavigationBar` bersama `extendBody: true`, lalu
+/// beri tiap daftar bergulir ruang bawah [ruang] supaya baris terakhirnya
+/// tidak tertutup.
 ///
-/// Gelembung tab aktif meluncur ke tab yang dipilih dengan pegas, memanjang
+/// Penanda tab aktif meluncur ke tab yang dipilih dengan pegas, memanjang
 /// sedikit selama bergerak seperti cairan.
 class NavKaca extends StatefulWidget {
-  const NavKaca({super.key, required this.item, required this.aktif, required this.saatPilih});
+  const NavKaca({super.key, required this.item, required this.aktif, required this.saatPilih, this.tengah});
 
   final List<ItemNavKaca> item;
   final int aktif;
   final ValueChanged<int> saatPilih;
 
-  static const _tinggi = 64.0;
-  static const _jarakBawah = 10.0;
+  /// Indeks tombol bulat besar di tengah (ikonnya [ItemNavKaca.ikon] putih
+  /// di lingkaran biru); null = semua tombol sama.
+  final int? tengah;
 
-  /// Tinggi layar yang ditutupi menu. [context] harus dari LUAR Scaffold,
-  /// supaya inset bawah yang terbaca milik sistem, bukan yang sudah ditambah menu.
-  static double ruang(BuildContext context) => _tinggi + _jarakBawah + MediaQuery.paddingOf(context).bottom;
+  static const _tinggi = 64.0;
+  static const _tonjol = 22.0; // tinggi tombol tengah di atas bar
+
+  /// Tinggi layar yang ditutupi menu (+10 untuk tombol tengah yang menonjol).
+  /// [context] harus dari LUAR Scaffold, supaya inset bawah yang terbaca milik
+  /// sistem, bukan yang sudah ditambah menu.
+  static double ruang(BuildContext context) => _tinggi + 10 + MediaQuery.paddingOf(context).bottom;
 
   @override
   State<NavKaca> createState() => _NavKacaState();
@@ -71,58 +79,54 @@ class _NavKacaState extends State<NavKaca> with SingleTickerProviderStateMixin {
   Widget build(BuildContext context) {
     final item = widget.item;
     final gelap = Theme.of(context).brightness == Brightness.dark;
-    final bentuk = BorderRadius.circular(_tinggi / 2);
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, NavKaca._jarakBawah),
-        child: DecoratedBox(
-          // Sengaja samar: bayangan pekat ikut terlihat menembus kaca dan
-          // membuatnya kusam.
-          decoration: BoxDecoration(
-            borderRadius: bentuk,
-            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: gelap ? 0.30 : 0.08), blurRadius: 18, offset: const Offset(0, 3))],
-          ),
-          child: ClipRRect(
-            borderRadius: bentuk,
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 18, sigmaY: 18),
-              child: Container(
-                height: _tinggi,
-                padding: const EdgeInsets.all(5),
-                decoration: BoxDecoration(
-                  borderRadius: bentuk,
-                  // Tembus pandang, sedikit lebih terang di atas (kilau kaca),
-                  // dengan garis tepi terang tipis.
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: gelap
-                        ? [const Color(0xFF334155).withValues(alpha: 0.60), const Color(0xFF1E293B).withValues(alpha: 0.50)]
-                        : [Colors.white.withValues(alpha: 0.80), Colors.white.withValues(alpha: 0.58)],
+    final warnaBar = gelap ? AppTheme.cardObsidianDark : Colors.white;
+    final bawah = MediaQuery.paddingOf(context).bottom;
+    final t = widget.tengah;
+    // Area tonjolan di atas bar bening dan tidak menangkap ketukan (tak ada
+    // apa pun di sana selain tombol tengah), jadi isi halaman di baliknya
+    // tetap bisa diketuk.
+    return SizedBox(
+      height: NavKaca._tonjol + _tinggi + bawah,
+      child: LayoutBuilder(
+        builder: (context, ruang) {
+          final lebarTab = ruang.maxWidth / item.length;
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                top: NavKaca._tonjol,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: warnaBar,
+                    border: Border(top: BorderSide(color: gelap ? Colors.white10 : const Color(0xFFF1F5F9))),
+                    boxShadow: [BoxShadow(color: const Color(0xFF0F172A).withValues(alpha: gelap ? 0.30 : 0.06), blurRadius: 16, offset: const Offset(0, -4))],
                   ),
-                  border: Border.all(color: Colors.white.withValues(alpha: gelap ? 0.14 : 0.75)),
-                ),
-                child: LayoutBuilder(
-                  builder: (context, ruang) => Stack(
-                    children: [
-                      AnimatedBuilder(animation: _gerak, builder: (_, _) => _gelembung(ruang.maxWidth / item.length, gelap)),
-                      Row(
-                        children: [for (var i = 0; i < item.length; i++) Expanded(child: _tombol(context, i))],
-                      ),
-                    ],
+                  child: Padding(
+                    padding: EdgeInsets.only(bottom: bawah),
+                    child: Stack(
+                      children: [
+                        AnimatedBuilder(animation: _gerak, builder: (_, _) => _gelembung(lebarTab, gelap)),
+                        Row(children: [for (var i = 0; i < item.length; i++) Expanded(child: _tombol(context, i))]),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
-        ),
+              if (t != null)
+                Positioned(top: 0, left: (t + 0.5) * lebarTab - 30, width: 60, height: 60, child: _bulatTengah(t, warnaBar)),
+            ],
+          );
+        },
       ),
     );
   }
 
-  /// Gelembung biru muda di bawah tab aktif. Selama bergerak ia memanjang
-  /// (sampai 35%) dan memipih sedikit, lalu kembali bulat saat tiba.
+  /// Penanda tab aktif: kotak membulat biru muda ala admin web. Selama
+  /// bergerak ia memanjang (sampai 35%) dan memipih sedikit. Disembunyikan
+  /// saat yang aktif tombol tengah — lingkarannya sendiri sudah menonjol.
   Widget _gelembung(double lebarTab, bool gelap) {
     final regang = math.sin(math.pi * _gerak.value);
     final lebar = lebarTab * (1 + 0.35 * regang);
@@ -132,13 +136,57 @@ class _NavKacaState extends State<NavKaca> with SingleTickerProviderStateMixin {
       width: lebar,
       top: 0,
       bottom: 0,
-      child: Transform.scale(
-        scaleY: 1 - 0.08 * regang,
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(_tinggi / 2),
-            color: AppTheme.primaryBlue.withValues(alpha: gelap ? 0.28 : 0.12),
-            border: Border.all(color: Colors.white.withValues(alpha: gelap ? 0.10 : 0.6)),
+      child: AnimatedOpacity(
+        opacity: widget.aktif == widget.tengah ? 0 : 1,
+        duration: _durasi ~/ 2,
+        child: Transform.scale(
+          scaleY: 1 - 0.08 * regang,
+          child: Padding(
+            padding: const EdgeInsets.all(6),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: AppTheme.primaryDarkBlue.withValues(alpha: gelap ? 0.28 : 0.10),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Tombol bulat besar di tengah: lingkaran biru bergradasi, ikon putih,
+  /// cincin warna bar supaya tampak "memotong" garis atas bar.
+  Widget _bulatTengah(int i, Color cincin) {
+    final it = widget.item[i];
+    final dipilih = i == widget.aktif;
+    return Semantics(
+      button: true,
+      selected: dipilih,
+      label: it.label,
+      child: GestureDetector(
+        onTap: () {
+          if (!dipilih) HapticFeedback.selectionClick();
+          widget.saatPilih(i);
+        },
+        child: AnimatedScale(
+          scale: dipilih ? 1.06 : 1,
+          duration: _durasi,
+          curve: Curves.easeOutBack,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF3B8BFF), AppTheme.primaryDarkBlue]),
+              border: Border.all(color: cincin, width: 4),
+              boxShadow: [BoxShadow(color: AppTheme.primaryDarkBlue.withValues(alpha: 0.35), blurRadius: 16, offset: const Offset(0, 6))],
+            ),
+            child: Center(
+              child: Badge(
+                isLabelVisible: it.lencana > 0,
+                label: Text(it.lencana > 99 ? '99+' : '${it.lencana}'),
+                child: Icon(it.ikon, color: Colors.white, size: 26),
+              ),
+            ),
           ),
         ),
       ),
@@ -167,16 +215,23 @@ class _NavKacaState extends State<NavKaca> with SingleTickerProviderStateMixin {
           builder: (_, w, _) => Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Badge(
-                isLabelVisible: it.lencana > 0,
-                label: Text(it.lencana > 99 ? '99+' : '${it.lencana}'),
-                child: AnimatedScale(
-                  scale: dipilih ? 1.12 : 1,
-                  duration: _durasi,
-                  curve: Curves.easeOutBack,
-                  child: IkonKaca(it.ikon, warna: w ?? warna, ukuran: 22),
+              // Posisi tengah: lingkarannya digambar _bulatTengah di atas bar,
+              // di sini cukup ruang kosong setinggi ikon supaya labelnya sejajar.
+              if (i == widget.tengah)
+                const SizedBox(height: 28)
+              else
+                Badge(
+                  isLabelVisible: it.lencana > 0,
+                  label: Text(it.lencana > 99 ? '99+' : '${it.lencana}'),
+                  child: AnimatedScale(
+                    scale: dipilih ? 1.12 : 1,
+                    duration: _durasi,
+                    curve: Curves.easeOutBack,
+                    child: it.gambar == null
+                        ? IkonKaca(it.ikon, warna: w ?? warna, ukuran: 22)
+                        : Image.asset(it.gambar!, width: 28, height: 28, cacheWidth: 96),
+                  ),
                 ),
-              ),
               const SizedBox(height: 2),
               Text(
                 it.label,

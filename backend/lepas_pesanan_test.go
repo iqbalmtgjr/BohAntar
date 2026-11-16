@@ -274,27 +274,3 @@ func TestAlasanLepasDanBatalTercatat(t *testing.T) {
 		t.Fatalf("batal tanpa badan: HTTP %d status %q alasan %q", rec.Code, o.Status, o.AlasanBatal)
 	}
 }
-
-// Top up tanpa kunci Xendit harus menolak terang-terangan di produksi. Versi
-// sebelumnya membalas alamat localhost yang rutenya memang tidak didaftarkan di
-// produksi — gagal yang membingungkan, plus satu tagihan menggantung di tabel.
-func TestTopUpTanpaKunci(t *testing.T) {
-	kasus := []struct {
-		nama     string
-		produksi bool
-		kunci    string
-		mauTolak bool
-	}{
-		{"produksi tanpa kunci", true, "", true},
-		{"produksi kunci masih mock", true, "mock", true},
-		{"produksi kunci sungguhan", true, "xnd_production_abc", false},
-		{"lokal tanpa kunci pakai jalur mock", false, "", false},
-		{"lokal kunci mock pakai jalur mock", false, "mock", false},
-		{"lokal kunci sungguhan", false, "xnd_development_abc", false},
-	}
-	for _, k := range kasus {
-		if got := topUpTanpaKunci(k.produksi, k.kunci); got != k.mauTolak {
-			t.Errorf("%s: topUpTanpaKunci(%v, %q) = %v, mau %v", k.nama, k.produksi, k.kunci, got, k.mauTolak)
-		}
-	}
-}

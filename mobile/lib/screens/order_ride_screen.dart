@@ -260,7 +260,37 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
     if (s == AppLifecycleState.paused || s == AppLifecycleState.hidden) return;
     final titik = _currentLatLng;
     final hasil = await ApiService().driverSekitar(titik.latitude, titik.longitude, _selectedService);
-    if (mounted) setState(() => _driverSiaga = hasil);
+    if (!mounted) return;
+    setState(() => _driverSiaga = hasil);
+    _tampilkanDriverTerdekat();
+  }
+
+  /// Zoom 15 hanya memuat ±1,5 km, padahal driver siaga dicari sampai 5 km:
+  /// peta tampak kosong walau ada driver. Kalau yang terdekat di luar layar,
+  /// kamera dimundurkan dengan titik jemput tetap di tengah — hanya selama
+  /// penumpang belum menyentuh peta dan belum memilih tujuan, supaya kamera
+  /// tidak direbut dari tangannya.
+  Future<void> _tampilkanDriverTerdekat() async {
+    final peta = _mapController;
+    final p = _currentLatLng;
+    if (peta == null || _driverSiaga.isEmpty || _orderStatus != 'input' || _destinationLatLng != null || _geserPeta || _petaDisentuh.year != 0) return;
+    // ponytail: jarak derajat tanpa cos(lat), cukup untuk Sintang di khatulistiwa.
+    double jarak(({double lat, double lng, String kendaraan}) d) =>
+        (d.lat - p.latitude) * (d.lat - p.latitude) + (d.lng - p.longitude) * (d.lng - p.longitude);
+    final d = _driverSiaga.reduce((a, b) => jarak(a) <= jarak(b) ? a : b);
+    final terlihat = await peta.getVisibleRegion();
+    // ponytail: "terlihat" termasuk area di balik panel tujuan di atas peta;
+    // driver tepat di utara jemput bisa tertutup panel.
+    if (!mounted || terlihat.contains(LatLng(d.lat, d.lng)) || _petaDisentuh.year != 0) return;
+    // Titik cerminnya ikut dimuat supaya jemput tetap di tengah layar.
+    final cLat = 2 * p.latitude - d.lat, cLng = 2 * p.longitude - d.lng;
+    peta.animateCamera(CameraUpdate.newLatLngBounds(
+      LatLngBounds(
+        southwest: LatLng(min(d.lat, cLat), min(d.lng, cLng)),
+        northeast: LatLng(max(d.lat, cLat), max(d.lng, cLng)),
+      ),
+      80,
+    ));
   }
 
   @override
@@ -466,6 +496,8 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
         if (terakhir != null && mounted && !_gpsTerbaca) {
           setState(() => _currentLatLng = LatLng(terakhir.latitude, terakhir.longitude));
           _pindahPeta(_currentLatLng, 15);
+          // Jangan menunggu GPS segar (bisa 8 detik) untuk ikon driver.
+          _muatDriverSiaga();
         }
       }
     } catch (e) {

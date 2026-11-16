@@ -30,7 +30,7 @@ const bannerBawaan = <Map<String, dynamic>>[
     'keterangan': 'Harga menu sama dengan harga di warung.',
     'label_tombol': 'Pesan makanan',
     'tujuan': 'BohFood',
-    'warna': 'oranye',
+    'warna': 'biru',
     'gambar_url': '',
   },
 ];
@@ -87,32 +87,46 @@ class _BannerBerandaState extends State<BannerBeranda> {
   @override
   Widget build(BuildContext context) {
     final jumlah = widget.banner.length;
+    // Rancangan 16 Nov 2026: kartu bersudut 28 dengan jarak 16 di kiri-kanan dan
+    // bayangan biru, titik penanda di pojok kanan bawah (dulu selebar layar).
+    final bentuk = BorderRadius.circular(28);
     return SizedBox(
       height: widget.tinggi,
       child: Stack(
+        clipBehavior: Clip.none,
         children: [
           PageView.builder(
             controller: _halaman,
             itemCount: jumlah,
+            // Bayangan kartu jangan terpotong batas bawah; halaman tetangga
+            // tetap di luar layar, jadi aman.
+            clipBehavior: Clip.none,
             onPageChanged: (i) => setState(() => _aktif = i),
-            itemBuilder: (_, i) => _satu(widget.banner[i]),
+            itemBuilder: (_, i) => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: bentuk,
+                  boxShadow: [BoxShadow(color: const Color(0xFF0066FF).withValues(alpha: 0.18), blurRadius: 24, offset: const Offset(0, 10))],
+                ),
+                child: ClipRRect(borderRadius: bentuk, child: _satu(widget.banner[i])),
+              ),
+            ),
           ),
           if (jumlah > 1)
             Positioned(
-              left: 0,
-              right: 0,
-              bottom: 8,
+              right: 34,
+              bottom: 20,
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   for (var i = 0; i < jumlah; i++)
                     AnimatedContainer(
                       duration: const Duration(milliseconds: 250),
-                      margin: const EdgeInsets.symmetric(horizontal: 3),
-                      width: i == _aktif ? 16 : 6,
+                      margin: const EdgeInsets.only(left: 6),
+                      width: i == _aktif ? 20 : 6,
                       height: 6,
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: i == _aktif ? 0.95 : 0.5),
+                        color: Colors.white.withValues(alpha: i == _aktif ? 0.95 : 0.45),
                         borderRadius: BorderRadius.circular(3),
                       ),
                     ),
@@ -159,7 +173,7 @@ class _BannerBerandaState extends State<BannerBeranda> {
     final aset = asetLayanan(tujuan);
     return LayoutBuilder(
       builder: (context, ukuran) => DecoratedBox(
-        decoration: BoxDecoration(gradient: LinearGradient(colors: warna, begin: Alignment.centerLeft, end: Alignment.centerRight)),
+        decoration: BoxDecoration(gradient: LinearGradient(colors: warna, begin: Alignment.topLeft, end: Alignment.bottomRight)),
         child: Stack(
           children: [
             // Dua lingkaran samar supaya bidang warnanya tidak datar.
@@ -167,25 +181,46 @@ class _BannerBerandaState extends State<BannerBeranda> {
             Positioned(left: ukuran.maxWidth * 0.35, bottom: -70, child: _lingkaran(150, 0.07)),
             if (aset != null)
               Positioned(
-                right: 10,
-                top: 12,
-                bottom: 2,
+                right: 6,
+                top: 30,
+                bottom: 26,
                 child: AspectRatio(aspectRatio: 1, child: Image.asset(aset, fit: BoxFit.contain)),
               ),
             Positioned(
               left: 20,
               top: 16,
-              right: aset != null ? ukuran.maxWidth * 0.40 : 20,
+              right: aset != null ? ukuran.maxWidth * 0.36 : 20,
               bottom: 6,
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // Lencana kaca bertuliskan layanan tujuan (rancangan: "SPECIAL
+                  // PROMO" — tidak semua banner promo, dan istilah Inggris dihindari).
+                  if (aset != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.25)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(width: 6, height: 6, decoration: const BoxDecoration(color: Color(0xFFFCD34D), shape: BoxShape.circle)),
+                          const SizedBox(width: 6),
+                          Text(tujuan.toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 0.8)),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                  ],
                   Text(
                     (b['judul'] ?? '').toString(),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w900, height: 1.15),
+                    style: const TextStyle(color: Colors.white, fontSize: 19, fontWeight: FontWeight.w800, height: 1.15, letterSpacing: -0.3),
                   ),
                   if (keterangan.isNotEmpty) ...[
                     const SizedBox(height: 4),
@@ -199,12 +234,16 @@ class _BannerBerandaState extends State<BannerBeranda> {
                   if (label.isNotEmpty && tujuan.isNotEmpty) ...[
                     const SizedBox(height: 10),
                     Container(
-                      padding: const EdgeInsets.fromLTRB(12, 6, 8, 6),
-                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
+                      padding: const EdgeInsets.fromLTRB(14, 7, 8, 7),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.12), blurRadius: 10, offset: const Offset(0, 3))],
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Text(label, style: TextStyle(color: warna.first, fontSize: 12, fontWeight: FontWeight.w800)),
+                          Text(label, style: TextStyle(color: warna.first, fontSize: 12.5, fontWeight: FontWeight.w900)),
                           Icon(Icons.chevron_right, size: 16, color: warna.first),
                         ],
                       ),

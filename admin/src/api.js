@@ -81,7 +81,7 @@ export async function kecilkanGambar(file) {
 }
 
 export const api = {
-  getUsers: (role, page = 1, limit = 10) => json(`/admin/users?role=${role || ""}&page=${page}&limit=${limit}`),
+  getUsers: (role, page = 1, limit = 10, q = "") => json(`/admin/users?role=${role || ""}&page=${page}&limit=${limit}&q=${encodeURIComponent(q)}`),
   getUserDetail: (phone) => json(`/admin/users/${phone.replace("+", "")}`),
   getOrders: (params = {}) => {
     const q = new URLSearchParams(params).toString();
@@ -167,6 +167,7 @@ export const api = {
   approvePartner: (id) => json(`/admin/partner-applications/${id}/approve`, { method: "POST" }),
   rejectPartner: (id) => json(`/admin/partner-applications/${id}/reject`, { method: "POST" }),
   login: (email, password) => post(`/auth/login`, { email, password }),
+  lupaPassword: (email) => post(`/auth/lupa-password`, { email }),
   googleLogin: (idToken, nonce, extra = {}) => post(`/auth/google`, { id_token: idToken, nonce, ...extra }),
   updateUser: (phone, data) => json(`/admin/users/${phone.replace("+", "")}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
   // Tanpa parameter phone: backend memakai identitas pemanggil dari token.
@@ -178,5 +179,6 @@ export const api = {
   adminPencairan: (status) => json(`/admin/pencairan?status=${status}`),
   prosesPencairan: (id, aksi, catatan) => post(`/admin/pencairan/${id}/${aksi}`, { catatan }),
   adminTopUp: (bulan) => json(`/admin/topup?bulan=${bulan}`),
+  prosesTopUp: (id, aksi) => post(`/admin/topup/${id}/${aksi}`, {}),
   updateProfile: (data) => json(`/users/profile`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
 };

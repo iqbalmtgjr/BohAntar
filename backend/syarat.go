@@ -112,7 +112,7 @@ var tmplSyarat = template.Must(template.New("syarat").Parse(`<!doctype html>
   <li>Selama status online, lokasi Anda dikirim ke sistem supaya bisa dipertemukan dengan pemesan dan diikuti selama perjalanan.</li>
   <li><strong>Setoran.</strong> Untuk setiap pesanan, driver menyetor komisi (persentase dari ongkos, tidak termasuk harga makanan) dan biaya jasa aplikasi kepada BohAntar. Setoran dipotong dari saldo driver saat pesanan selesai. Saldo yang minus berarti ada setoran yang belum dilunasi.</li>
   <li>Untuk menerima pesanan, saldo Anda harus cukup menutup setoran pesanan itu ditambah setoran pesanan lain yang belum selesai.</li>
-  <li><strong>Top up saldo</strong> lewat QRIS, minimal {{.TopUpMin}} dan maksimal {{.TopUpMaks}} per transaksi. Biaya QRIS ditambahkan ke tagihan, sehingga saldo bertambah sebesar nominal yang Anda pilih.</li>
+  <li><strong>Top up saldo</strong> lewat transfer ke rekening BohAntar yang ditampilkan di aplikasi, minimal {{.TopUpMin}} dan maksimal {{.TopUpMaks}} per transaksi. Saldo bertambah sebesar nominal yang Anda ajukan setelah admin memastikan transfernya masuk.</li>
   <li><strong>Setor tunai</strong> kepada petugas BohAntar: petugas membuat kode QR sebesar uang yang diterima, lalu Anda memindainya dari aplikasi. Setoran tunai tidak bisa melebihi setoran yang belum dilunasi.</li>
   <li>Saldo hanya dipakai untuk setoran dan tidak bisa dicairkan atau dipindahkan lewat aplikasi. Bila Anda berhenti menjadi driver, sisa saldo dikembalikan admin setelah identitas Anda diperiksa.</li>
   <li>Bersikap sopan, berkendara dengan aman, dan mematuhi peraturan lalu lintas. BohAntar dapat menonaktifkan akun driver yang melanggar ketentuan ini.</li>

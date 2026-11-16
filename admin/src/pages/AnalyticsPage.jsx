@@ -21,17 +21,17 @@ export default function AnalyticsPage() {
     <>
       <Topbar title="Analitik" />
       <div className="page">
-        <div className="page-header"><h1>Analitik Performa</h1><p>Pantau performa driver dan tren pesanan</p></div>
+        <div className="page-header"><h1>Analitik Performa</h1><p>Pantau performa driver dan tren pesanan. Rincian pendapatan per tanggal ada di <a href="#/komisi">Pendapatan &amp; Bagi Hasil</a>.</p></div>
 
         <div style={{ marginBottom: 24 }}>
           <div className="card">
             <div className="card-title" style={{ marginBottom: 16 }}>Peringkat Driver — Total Pesanan Selesai</div>
             <table style={{ width: "100%" }}>
-              <thead><tr><th>#</th><th>Driver</th><th>Pesanan</th><th>Total Pendapatan</th><th>Rata-rata per Order</th><th>Performa</th></tr></thead>
+              <thead><tr><th>#</th><th>Driver</th><th>Pesanan</th><th>Ongkos Kotor</th><th>Bagian Driver</th><th>Bagian Kami</th><th>Rata-rata Ongkos</th><th>Performa</th></tr></thead>
               <tbody>
                 {drivers.length === 0 ? (
                   <tr>
-                    <td colSpan={6}>
+                    <td colSpan={8}>
                       <div className="empty-state">
                         <div className="icon" style={{ display: "flex", justifyContent: "center", marginBottom: 12 }}>
                           <BarChart3 size={40} style={{ color: "var(--text-muted)", opacity: 0.5 }} />
@@ -55,7 +55,9 @@ export default function AnalyticsPage() {
                         </div>
                       </td>
                       <td data-label="Pesanan" style={{ fontWeight: 700 }}>{d.order_count}</td>
-                      <td data-label="Total Pendapatan" style={{ color: "var(--success)", fontWeight: 600 }}>Rp {(d.total_income || 0).toLocaleString("id-ID")}</td>
+                      <td data-label="Ongkos Kotor">Rp {Math.round(d.total_income || 0).toLocaleString("id-ID")}</td>
+                      <td data-label="Bagian Driver" style={{ color: "var(--text-secondary)" }}>Rp {Math.round(d.bagian_driver || 0).toLocaleString("id-ID")}</td>
+                      <td data-label="Bagian Kami" style={{ color: "var(--success)", fontWeight: 600 }}>Rp {Math.round(d.bagian_kami || 0).toLocaleString("id-ID")}</td>
                       <td data-label="Rata-rata" style={{ color: "var(--text-secondary)" }}>Rp {Math.round(avg).toLocaleString("id-ID")}</td>
                       <td data-label="Performa" style={{ width: 140 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -87,9 +89,9 @@ export default function AnalyticsPage() {
             </ResponsiveContainer>
           </div>
           <div className="card">
-            <div className="card-title">Pendapatan per Driver (Rp)</div>
+            <div className="card-title">Bagian Driver (Ribuan Rp)</div>
             <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={drivers.slice(0,6).map(d => ({ name: d.driver_name?.split(" ")[0], value: Math.round(d.total_income / 1000) }))}>
+              <BarChart data={drivers.slice(0,6).map(d => ({ name: d.driver_name?.split(" ")[0], value: Math.round((d.bagian_driver || 0) / 1000) }))}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
                 <XAxis dataKey="name" stroke="var(--text-secondary)" tick={{ fontSize: 12 }} />
                 <YAxis stroke="var(--text-secondary)" tick={{ fontSize: 12 }} />

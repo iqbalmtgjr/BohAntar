@@ -258,6 +258,17 @@ class ApiService {
     return _handleResponse(response);
   }
 
+  // Lupa password lewat email: server mengirim tautan, password baru dibuat di
+  // halaman web dari tautan itu (backend/lupa_password.go).
+  Future<Map<String, dynamic>> lupaPassword(String email) async {
+    final response = await klienHttp.post(
+      Uri.parse('$baseUrl/api/auth/lupa-password'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email}),
+    );
+    return _handleResponse(response);
+  }
+
   // Fetch User Profile
   Future<Map<String, dynamic>> getProfile() async {
     if (_token == null) {
@@ -593,6 +604,14 @@ class ApiService {
 
   /// Banner beranda yang aktif, diatur dari dashboard. Tanpa token: isinya
   /// memang untuk dipajang. Kosong berarti tidak ada yang aktif.
+  /// Voucher yang masih bisa kamu pakai (kartu promo beranda & tab Promo).
+  /// Hanya pajangan: diskonnya tetap dipilih server saat memesan.
+  Future<List<Map<String, dynamic>>> getVoucher() async {
+    if (_token == null) throw Exception(_sesiHabis);
+    final data = _handleResponse(await klienHttp.get(Uri.parse('$baseUrl/api/voucher'), headers: {'Authorization': 'Bearer $_token'}));
+    return [for (final v in (data['voucher'] as List?) ?? const []) Map<String, dynamic>.from(v as Map)];
+  }
+
   Future<List<Map<String, dynamic>>> getBanner() async {
     final data = _handleResponse(await klienHttp.get(Uri.parse('$baseUrl/api/banner')));
     return [for (final b in (data['banner'] as List?) ?? const []) Map<String, dynamic>.from(b as Map)];

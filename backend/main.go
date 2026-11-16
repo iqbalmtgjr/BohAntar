@@ -495,6 +495,8 @@ func main() {
 	mux.HandleFunc("/api/webhook/whatsapp", waWebhookHandler)
 	mux.HandleFunc("/api/auth/google", googleLoginHandler)
 	mux.HandleFunc("/api/auth/reset-password-google", resetPasswordGoogleHandler)
+	mux.HandleFunc("/api/auth/lupa-password", lupaPasswordHandler) // lupa_password.go
+	mux.HandleFunc("/api/reset-password/", resetPasswordHalamanHandler)
 	mux.HandleFunc("/api/users/profile", profileHandler)
 	// Rute yang ditutup tetap menjawab dengan kalimat yang bisa dibaca, bukan
 	// 404: APK lama masih punya tombolnya, dan pesan ini tampil apa adanya.
@@ -533,6 +535,8 @@ func main() {
 	mux.HandleFunc("/api/tarif/publik", tarifPublikHandler)
 	// Tanpa token: banner beranda aplikasi, isinya memang untuk dipajang.
 	mux.HandleFunc("/api/banner", bannerPublikHandler)
+	// Voucher yang masih bisa dipakai pemakai ini: kartu promo beranda & tab Promo.
+	mux.HandleFunc("/api/voucher", requireAuth(voucherPemakaiHandler))
 	// Halaman publik: Google Play menuntut URL kebijakan privasi dan URL
 	// permintaan hapus akun yang bisa dibuka tanpa memasang aplikasi.
 	// Didaftarkan di dua jalur dengan sengaja. Reverse proxy di depan hanya
@@ -570,6 +574,8 @@ func main() {
 	mux.HandleFunc("/api/admin/komisi", admin(adminKomisiHandler))
 	mux.HandleFunc("/api/admin/setoran", admin(adminSetoranHandler))
 	mux.HandleFunc("/api/admin/topup", admin(adminTopUpHandler))
+	mux.HandleFunc("/api/admin/topup/", admin(adminProsesTopUpHandler)) // topup_manual.go
+	mux.HandleFunc("/api/topup/bayar/", topUpBayarHandler)
 	mux.HandleFunc("/api/admin/setoran/qr/", admin(adminSetoranQRHandler))
 	mux.HandleFunc("/api/driver/setoran/klaim", requireRole("driver")(driverKlaimSetoranHandler))
 	// Uang hanya boleh MASUK ke BohAntar, tidak keluar lagi (keputusan user
@@ -1231,6 +1237,7 @@ func initDB() {
 	migrasiVoucher()
 	migrasiChatSewa()
 	migrasiWebPush()
+	migrasiResetPassword() // lupa_password.go
 	// Posisi driver terakhir. Satu baris per driver, ditimpa terus — riwayat
 	// perjalanan tidak disimpan karena tidak ada yang membacanya, dan menyimpan
 	// jejak lokasi orang tanpa alasan justru menambah yang harus dijaga.
@@ -1529,28 +1536,40 @@ func dbFindUserByEmail(email string) (User, string, bool) {
 	return u, hash, true
 }
 
-func dbGetUsers(roleFilter string, page, limit int) ([]User, int, error) {
-	var total int
-	var err error
-	if roleFilter != "" {
-		err = db.QueryRow("SELECT COUNT(*) FROM users WHERE role = ?", roleFilter).Scan(&total)
-	} else {
-		err = db.QueryRow("SELECT COUNT(*) FROM users").Scan(&total)
+// polaCari: pola LIKE kotak cari admin. Nomor biasa diketik "08xx" padahal
+// tersimpan "+628xx", jadi awalan 0 ditukar untuk kolom nomor.
+func polaCari(cari string) (teks, hp string) {
+	teks = "%" + cari + "%"
+	hp = teks
+	if strings.HasPrefix(cari, "0") {
+		hp = "%+62" + cari[1:] + "%"
 	}
-	if err != nil {
+	return
+}
+
+// cari menyaring di database, bukan di halaman yang sedang tampil: dulu
+// pengguna di halaman 2 tidak pernah ketemu dari halaman 1.
+func dbGetUsers(roleFilter, cari string, page, limit int) ([]User, int, error) {
+	where := " WHERE 1=1"
+	var args []interface{}
+	if roleFilter != "" {
+		where += " AND role = ?"
+		args = append(args, roleFilter)
+	}
+	if cari = strings.TrimSpace(cari); cari != "" {
+		teks, hp := polaCari(cari)
+		where += " AND (name LIKE ? OR email LIKE ? OR phone_number LIKE ?)"
+		args = append(args, teks, teks, hp)
+	}
+	var total int
+	if err := db.QueryRow("SELECT COUNT(*) FROM users"+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
-	var rows *sql.Rows
 	offset := (page - 1) * limit
 	// Pengguna terbaru di atas; phone_number memecah seri supaya halaman tidak
 	// saling tumpang tindih saat beberapa akun lahir di detik yang sama.
-	const urut = " ORDER BY created_at DESC, phone_number"
-	if roleFilter != "" {
-		rows, err = db.Query("SELECT phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users WHERE role = ?"+urut+" LIMIT ? OFFSET ?", roleFilter, limit, offset)
-	} else {
-		rows, err = db.Query("SELECT phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users"+urut+" LIMIT ? OFFSET ?", limit, offset)
-	}
+	rows, err := db.Query("SELECT phone_number, name, COALESCE(email, ''), role, created_at, balance, badge, is_driver_active, total_orders, rating FROM users"+where+" ORDER BY created_at DESC, phone_number LIMIT ? OFFSET ?", append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1773,42 +1792,34 @@ func dbCancelOrder(orderID string, statusBoleh []string, updatedAt string) (bool
 	return n == 1, err
 }
 
-func dbGetOrders(driver, rider, status string, page, limit int) ([]Order, int, error) {
-	countQ := "SELECT COUNT(*) FROM orders WHERE 1=1"
-	var countArgs []interface{}
+func dbGetOrders(driver, rider, status, cari string, page, limit int) ([]Order, int, error) {
+	where := " WHERE 1=1"
+	var args []interface{}
 	if driver != "" {
-		countQ += " AND driver_phone = ?"
-		countArgs = append(countArgs, driver)
+		where += " AND driver_phone = ?"
+		args = append(args, driver)
 	}
 	if rider != "" {
-		countQ += " AND rider_phone = ?"
-		countArgs = append(countArgs, rider)
+		where += " AND rider_phone = ?"
+		args = append(args, rider)
 	}
 	if status != "" {
-		countQ += " AND status = ?"
-		countArgs = append(countArgs, status)
+		where += " AND status = ?"
+		args = append(args, status)
+	}
+	// Disaring di database supaya pesanan di halaman lain ikut ketemu.
+	if cari = strings.TrimSpace(cari); cari != "" {
+		teks, hp := polaCari(cari)
+		where += " AND (id LIKE ? OR rider_name LIKE ? OR driver_name LIKE ? OR pickup LIKE ? OR dropoff LIKE ? OR rider_phone LIKE ? OR driver_phone LIKE ?)"
+		args = append(args, teks, teks, teks, teks, teks, hp, hp)
 	}
 	var total int
-	err := db.QueryRow(countQ, countArgs...).Scan(&total)
+	err := db.QueryRow("SELECT COUNT(*) FROM orders"+where, args...).Scan(&total)
 	if err != nil {
 		return nil, 0, err
 	}
 
-	q := "SELECT " + kolomPesanan + " FROM orders WHERE 1=1"
-	var args []interface{}
-	if driver != "" {
-		q += " AND driver_phone = ?"
-		args = append(args, driver)
-	}
-	if rider != "" {
-		q += " AND rider_phone = ?"
-		args = append(args, rider)
-	}
-	if status != "" {
-		q += " AND status = ?"
-		args = append(args, status)
-	}
-	q += " ORDER BY created_at DESC"
+	q := "SELECT " + kolomPesanan + " FROM orders" + where + " ORDER BY created_at DESC"
 
 	if limit > 0 {
 		offset := (page - 1) * limit
@@ -1898,7 +1909,7 @@ func bacaHalaman(r *http.Request, maks int) (page, limit int, diminta bool) {
 }
 
 func dbGetPendingOrders() ([]Order, error) {
-	res, _, err := dbGetOrders("", "", "pending", 0, 0)
+	res, _, err := dbGetOrders("", "", "pending", "", 0, 0)
 	return res, err
 }
 
@@ -2157,8 +2168,16 @@ func dbGetAnalyticsData() (map[string]interface{}, error) {
 	pendingOrders := byStatus["pending"]
 	ongoingOrders := byStatus["accepted"] + byStatus["picked_up"]
 
-	var totalRevenue float64
-	db.QueryRow("SELECT COALESCE(SUM(fare), 0) FROM orders WHERE status = 'completed'").Scan(&totalRevenue)
+	// total_revenue = ongkos kotor (sebagian besar milik driver). Pendapatan
+	// BohAntar dihitung dengan rumus yang sama seperti adminKomisiHandler:
+	// komisi + biaya jasa − diskon voucher + potongan tagihan QR mitra.
+	var totalRevenue, pendapatanKami, komisiTagihan float64
+	// Saringan driver sama dengan laporan, supaya dashboard tak pernah beda dari
+	// /komisi. ponytail: pesanan driver yang akunnya dihapus (driver_phone NULL)
+	// ikut tak terhitung di keduanya; kelompokkan sebagai "Pengguna dihapus" bila perlu.
+	db.QueryRow("SELECT COALESCE(SUM(fare), 0), COALESCE(SUM(komisi + biaya_jasa - diskon), 0) FROM orders WHERE status = 'completed' AND driver_phone IS NOT NULL AND driver_phone <> ''").Scan(&totalRevenue, &pendapatanKami)
+	db.QueryRow("SELECT COALESCE(SUM(komisi), 0) FROM tagihan_qr WHERE paid_at IS NOT NULL").Scan(&komisiTagihan)
+	pendapatanKami += komisiTagihan
 
 	var totalUsers, totalRiders, totalDrivers int
 	db.QueryRow("SELECT COUNT(*) FROM users").Scan(&totalUsers)
@@ -2168,20 +2187,22 @@ func dbGetAnalyticsData() (map[string]interface{}, error) {
 	// kalau tidak, angka driver di dasbor ikut naik sebelum ada yang disetujui.
 	db.QueryRow("SELECT COUNT(*) FROM users WHERE role = 'driver' AND is_driver_active = 1").Scan(&totalDrivers)
 
-	rows, err := db.Query("SELECT driver_phone, driver_name, COUNT(*), SUM(fare) FROM orders WHERE status = 'completed' AND driver_phone IS NOT NULL GROUP BY driver_phone, driver_name")
+	rows, err := db.Query("SELECT driver_phone, driver_name, COUNT(*), SUM(fare), SUM(fare - komisi), SUM(komisi + biaya_jasa - diskon) FROM orders WHERE status = 'completed' AND driver_phone IS NOT NULL GROUP BY driver_phone, driver_name")
 	var driverList []map[string]interface{}
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var phone, name string
 			var count int
-			var income float64
-			if rows.Scan(&phone, &name, &count, &income) == nil {
+			var income, bagianDriver, bagianKami float64
+			if rows.Scan(&phone, &name, &count, &income, &bagianDriver, &bagianKami) == nil {
 				driverList = append(driverList, map[string]interface{}{
-					"driver_phone": phone,
-					"driver_name":  name,
-					"order_count":  count,
-					"total_income": income,
+					"driver_phone":  phone,
+					"driver_name":   name,
+					"order_count":   count,
+					"total_income":  income, // ongkos kotor
+					"bagian_driver": bagianDriver,
+					"bagian_kami":   bagianKami,
 				})
 			}
 		}
@@ -2194,6 +2215,7 @@ func dbGetAnalyticsData() (map[string]interface{}, error) {
 		"pending_orders":   pendingOrders,
 		"ongoing_orders":   ongoingOrders,
 		"total_revenue":    totalRevenue,
+		"pendapatan_kami":  pendapatanKami,
 		"total_users":      totalUsers,
 		"total_riders":     totalRiders,
 		"total_drivers":    totalDrivers,
@@ -2843,12 +2865,9 @@ const (
 	topUpMinimal  = 10000
 	topUpMaksimal = 2000000
 
-	// Biaya QRIS Xendit 0,7% + PPN 11%, sama dengan XENDIT_BIAYA_QRIS di Kasvo.
-	// ponytail: konstanta, bukan env — ubah di sini kalau Xendit ganti tarif.
-	biayaQRISPersen = 0.777
-
-	// Orang sungguhan membuat satu atau dua invoice lalu membayar. Lima dalam
-	// sepuluh menit sudah longgar untuk yang salah ketik nominal berkali-kali.
+	// Orang sungguhan membuat satu atau dua pengajuan lalu transfer. Lima dalam
+	// sepuluh menit sudah longgar untuk yang salah ketik nominal berkali-kali,
+	// dan sekaligus membatasi email yang bisa dibanjirkan ke admin.
 	batasTopUpPerJendela = 5
 	jendelaTopUp         = 10 * time.Minute
 )
@@ -2859,33 +2878,20 @@ const (
 func nominalTopUpSah(diminta float64) (nominal float64, alasan string) {
 	nominal = math.Round(diminta)
 	if nominal < topUpMinimal {
-		return 0, fmt.Sprintf("Top up minimal Rp%.0f", float64(topUpMinimal))
+		return 0, fmt.Sprintf("Isi saldo minimal Rp%.0f", float64(topUpMinimal))
 	}
 	if nominal > topUpMaksimal {
-		return 0, fmt.Sprintf("Top up maksimal Rp%.0f sekali bayar", float64(topUpMaksimal))
+		return 0, fmt.Sprintf("Isi saldo maksimal Rp%.0f sekali transfer", float64(topUpMaksimal))
 	}
 	return nominal, ""
 }
 
-// totalBayarQRIS menaikkan tagihan supaya setelah Xendit memotong biaya QRIS
-// yang masuk tetap utuh = nominal. Biaya ditanggung pembayar; saldo yang
-// dikreditkan tetap nominal. Rumus sama dengan PaketLangganan::totalXendit Kasvo.
-func totalBayarQRIS(nominal float64) float64 {
-	return math.Ceil(nominal / (1 - biayaQRISPersen/100))
-}
-
-// topUpTanpaKunci menjawab apakah permintaan top up harus ditolak karena
-// kredensial Xendit belum diisi.
+// topUpHandler: POST /api/users/topup — pengajuan isi saldo manual (16 Nov 2026).
 //
-// Di luar produksi kunci kosong itu wajar: ada jalur pembayaran tiruan yang
-// dipakai untuk menguji. Di produksi jalur tiruan itu sengaja tidak didaftarkan,
-// jadi meneruskan permintaan hanya menghasilkan alamat localhost yang tidak
-// menuju ke mana-mana plus satu tagihan menggantung di tabel — gagal yang
-// membingungkan, padahal sebabnya cuma satu baris konfigurasi yang belum diisi.
-func topUpTanpaKunci(produksi bool, xenditKey string) bool {
-	return produksi && (xenditKey == "" || xenditKey == "mock")
-}
-
+// Xendit tidak lagi dipakai untuk top up. Driver transfer ke rekening di
+// TOPUP_TUJUAN, admin dapat email, mengecek uang masuk, lalu menyetujui di
+// dashboard (topup_manual.go). Balasannya tetap membawa payment_url supaya
+// aplikasi yang sudah terpasang membuka halaman petunjuk transfer tanpa AAB baru.
 func topUpHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
@@ -2898,7 +2904,7 @@ func topUpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	var input TopUpInput
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil || input.Amount <= 0 {
-		writeJSONResponse(w, 400, map[string]string{"error": "Nominal top up tidak valid"})
+		writeJSONResponse(w, 400, map[string]string{"error": "Nominal isi saldo tidak valid"})
 		return
 	}
 	nominal, alasan := nominalTopUpSah(input.Amount)
@@ -2911,135 +2917,60 @@ func topUpHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 404, map[string]string{"error": "User tidak ditemukan"})
 		return
 	}
-	// Rem laju. Tiap permintaan membuat satu invoice sungguhan di akun Xendit
-	// yang dipakai bersama Kasvo, jadi satu skrip yang mengulang tombol ini bisa
-	// membanjiri dasbor dan kuota API milik aplikasi lain.
+	tujuan := getEnv("TOPUP_TUJUAN", "")
+	if tujuan == "" {
+		log.Println("Top up ditolak: TOPUP_TUJUAN (rekening tujuan transfer) belum diisi di run.sh")
+		writeJSONResponse(w, 503, map[string]string{"error": "Isi saldo sedang tidak tersedia. Hubungi admin BohAntar."})
+		return
+	}
+	// Rem laju. Tiap pengajuan mengirim satu email ke admin, jadi satu skrip
+	// yang mengulang tombol ini bisa membanjiri kotak masuk.
 	//
 	// ponytail: dihitung dari tabel, bukan peta di memori — selamat dari
 	// restart. Dua permintaan yang tiba di milidetik yang sama bisa sama-sama
-	// lolos di hitungan terakhir; selisih satu invoice tidak sepadan dengan kunci.
+	// lolos di hitungan terakhir; selisih satu baris tidak sepadan dengan kunci.
 	var baruSaja int
 	if err := db.QueryRow(
 		"SELECT COUNT(*) FROM topup_invoices WHERE phone_number = ? AND created_at > ?",
 		phone, waktuKeDB(time.Now().Add(-jendelaTopUp).Format(time.RFC3339)),
 	).Scan(&baruSaja); err != nil {
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal memeriksa riwayat top up"})
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal memeriksa riwayat isi saldo"})
 		return
 	}
 	if baruSaja >= batasTopUpPerJendela {
-		writeJSONResponse(w, 429, map[string]string{"error": "Terlalu banyak permintaan top up. Selesaikan pembayaran yang sudah dibuat, atau coba lagi 10 menit lagi."})
+		writeJSONResponse(w, 429, map[string]string{"error": "Terlalu banyak pengajuan isi saldo. Selesaikan transfer yang sudah diajukan, atau coba lagi 10 menit lagi."})
 		return
 	}
 
-	// Awalan "bohantar-" wajib dipertahankan: akun Xendit ini dipakai bersama
-	// Kasvo Indonesia, dan callback Kasvo hanya meneruskan payload yang berawalan
-	// itu ke sini. "topup" di belakangnya yang memisahkan invoice dompet dari
-	// invoice langganan saat webhook memutuskan apa yang harus dikerjakan.
-	externalID := fmt.Sprintf("%s%d-%s", awalanTopUp, time.Now().Unix(), phone)
-	invoiceID := newID("topup")
-	paymentURL := ""
-
-	xenditKey := getEnv("XENDIT_SECRET_KEY", "mock")
-	if topUpTanpaKunci(isProduction(), xenditKey) {
-		log.Println("Top up ditolak: XENDIT_SECRET_KEY belum diisi di run.sh")
-		writeJSONResponse(w, 503, map[string]string{"error": "Top up sedang tidak tersedia. Hubungi admin BohAntar."})
-		return
+	// Status MENUNGGU, bukan PENDING: PENDING milik QR Xendit lama yang basi
+	// sejam. Bedanya menjaga admin tidak menyetujui QR lama yang tak dibayar.
+	id := newID("topup")
+	paymentURL := alamatPublik
+	if !isProduction() {
+		paymentURL = "http://" + r.Host
 	}
-
-	if xenditKey == "" || xenditKey == "mock" {
-		// Jalur mock lokal: halaman bayar palsu yang memanggil webhook sendiri,
-		// supaya alur top up bisa diuji tanpa uang sungguhan.
-		paymentURL = fmt.Sprintf("http://localhost:8080/api/xendit/mock-checkout?id=%s&phone=%s&external_id=%s&redirect_url=%s",
-			invoiceID, phone, externalID, url.QueryEscape("http://localhost:5173/#/topup?payment=success"))
-	} else {
-		id, bayarURL, err := buatInvoiceQRIS(xenditKey, externalID, u.Email, nominal)
-		if err != nil {
-			log.Printf("Top up %s gagal membuat invoice Xendit: %v", phone, err)
-			writeJSONResponse(w, 502, map[string]string{"error": "Gagal membuat QR pembayaran. Coba lagi sebentar lagi."})
-			return
-		}
-		invoiceID, paymentURL = id, bayarURL
-	}
-
-	// Baris PENDING ditulis SETELAH invoice Xendit jadi: kalau Xendit menolak,
-	// tidak ada tagihan hantu yang tertinggal di tabel.
+	paymentURL += "/api/topup/bayar/" + id
 	if _, err := db.Exec(
-		"INSERT INTO topup_invoices (id, phone_number, amount, status, payment_url, created_at) VALUES (?, ?, ?, 'PENDING', ?, ?)",
-		invoiceID, phone, nominal, paymentURL, waktuKeDB(time.Now().Format(time.RFC3339)),
+		"INSERT INTO topup_invoices (id, phone_number, amount, status, payment_url, created_at) VALUES (?, ?, ?, 'MENUNGGU', ?, ?)",
+		id, phone, nominal, paymentURL, waktuKeDB(time.Now().Format(time.RFC3339)),
 	); err != nil {
 		log.Printf("Top up %s gagal disimpan: %v", phone, err)
-		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan tagihan top up"})
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal menyimpan pengajuan isi saldo"})
 		return
 	}
+	kirimEmailAdmin(
+		fmt.Sprintf("Pengajuan top up %s dari %s", formatRupiah(int64(nominal)), u.Name),
+		fmt.Sprintf("Driver %s (%s) mengajukan isi saldo komisi %s.\n\n"+
+			"Cek uang masuk ke %s, lalu setujui atau tolak di:\n%s/#/topup\n",
+			u.Name, phone, formatRupiah(int64(nominal)), tujuan, alamatPublik))
 
 	writeJSONResponse(w, 200, map[string]interface{}{
 		"status":      "pending",
-		"invoice_id":  invoiceID,
+		"invoice_id":  id,
 		"amount":      nominal,
 		"payment_url": paymentURL,
-		"message":     "Selesaikan pembayaran, saldo bertambah otomatis setelah lunas.",
+		"message":     "Transfer sesuai petunjuk, saldo masuk setelah admin mengecek.",
 	})
-}
-
-// buatInvoiceQRIS menagih lewat Xendit dengan kanal dikunci ke QRIS saja.
-// Kanal lain (virtual account, kartu) biayanya per transaksi tetap dan bisa
-// beberapa ribu rupiah — memakan sebagian besar untung dari top up kecil.
-//
-// ponytail: subscriptionCreateHandler punya salinan alur yang mirip. Sengaja
-// tidak ikut dipindahkan ke sini — jalur langganan sudah hidup di produksi dan
-// bagian tersulitnya dulu justru menemukan kenapa webhook diam. Satukan kalau
-// suatu saat ada perubahan yang memang harus kena dua-duanya.
-func buatInvoiceQRIS(xenditKey, externalID, email string, nominal float64) (invoiceID, paymentURL string, err error) {
-	total := totalBayarQRIS(nominal)
-	payload := map[string]interface{}{
-		"external_id":     externalID,
-		"amount":          total,
-		"fees":            []map[string]interface{}{{"type": "Biaya layanan QRIS", "value": total - nominal}},
-		"description":     "Isi saldo komisi driver BohAntar",
-		"currency":        "IDR",
-		"payment_methods": []string{"QRIS"},
-		// QR yang sudah basi lebih baik hilang daripada dibayar berjam-jam
-		// kemudian saat penggunanya sudah lupa pernah menagih.
-		"invoice_duration": 3600,
-	}
-	// Xendit menolak payer_email yang bukan alamat sah; akun yang dibuatkan admin
-	// bisa saja emailnya kosong, jadi kirim hanya kalau ada isinya.
-	if strings.TrimSpace(email) != "" {
-		payload["payer_email"] = email
-	}
-	jsonPayload, _ := json.Marshal(payload)
-
-	req, err := http.NewRequest("POST", "https://api.xendit.co/v2/invoices", bytes.NewBuffer(jsonPayload))
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.SetBasicAuth(xenditKey, "")
-	if subAccountID := getEnv("XENDIT_SUB_ACCOUNT_ID", ""); subAccountID != "" {
-		req.Header.Set("for-user-id", subAccountID)
-	}
-
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-
-	var xenditResp struct {
-		ID         string `json:"id"`
-		InvoiceURL string `json:"invoice_url"`
-		Error      string `json:"error_message"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&xenditResp); err != nil {
-		return "", "", err
-	}
-	if xenditResp.Error != "" {
-		return "", "", errors.New(xenditResp.Error)
-	}
-	if xenditResp.ID == "" || xenditResp.InvoiceURL == "" {
-		return "", "", fmt.Errorf("Xendit membalas tanpa invoice (status %d)", resp.StatusCode)
-	}
-	return xenditResp.ID, xenditResp.InvoiceURL, nil
 }
 
 func addressesHandler(w http.ResponseWriter, r *http.Request) {
@@ -3101,8 +3032,8 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// ponytail: daftar utuh hanya untuk APK lama; buang setelah MIN_APP_BUILD >= 4.
-		result, _, _ := dbGetOrders("", phone, "", 0, 0)
-		driverOrders, _, _ := dbGetOrders(phone, "", "", 0, 0)
+		result, _, _ := dbGetOrders("", phone, "", "", 0, 0)
+		driverOrders, _, _ := dbGetOrders(phone, "", "", "", 0, 0)
 		result = append(result, driverOrders...)
 		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "orders": result})
 		return
@@ -3359,7 +3290,7 @@ func requireAssignedDriver(w http.ResponseWriter, r *http.Request, orderID strin
 		return Order{}, false
 	}
 	if o.DriverPhone != phone {
-		writeJSONResponse(w, 403, map[string]string{"error": "Pesanan ini bukan tugas Anda"})
+		writeJSONResponse(w, 403, map[string]string{"error": "Pesanan ini bukan tugasmu"})
 		return Order{}, false
 	}
 	return o, true
@@ -3383,9 +3314,9 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 	// Sebelumnya is_driver_active hanya disimpan, tidak pernah jadi syarat —
 	// menonaktifkan driver bermasalah lewat dashboard tidak berefek apa pun.
 	if !driver.IsDriverActive {
-		pesan := "Akun driver Anda sedang dinonaktifkan. Hubungi admin BohAntar."
+		pesan := "Akun drivermu sedang dinonaktifkan. Hubungi admin BohAntar."
 		if a := alasanNonaktif(dp); a != "" {
-			pesan = "Akun driver Anda sedang dinonaktifkan. Alasan: " + a + ". Hubungi admin BohAntar."
+			pesan = "Akun drivermu sedang dinonaktifkan. Alasan: " + a + ". Hubungi admin BohAntar."
 		}
 		writeJSONResponse(w, 403, map[string]string{"error": pesan})
 		return
@@ -3402,11 +3333,11 @@ func acceptOrder(w http.ResponseWriter, r *http.Request, orderID string) {
 		return
 	}
 	if !cocokKendaraan(o.Service, kendaraanDriver(driver.PhoneNumber)) {
-		writeJSONResponse(w, 403, map[string]string{"error": "Pesanan " + o.Service + " butuh kendaraan lain dari yang terdaftar di akun Anda"})
+		writeJSONResponse(w, 403, map[string]string{"error": "Pesanan " + o.Service + " butuh kendaraan lain dari yang terdaftar di akunmu"})
 		return
 	}
 	if !cocokKelas(o.Kelas, driver.PhoneNumber) {
-		writeJSONResponse(w, 403, map[string]string{"error": "Pesanan ini untuk mobil besar (maks 6 orang), sedangkan mobil Anda terdaftar sebagai mobil sedang. Hubungi admin kalau mobil Anda muat 6 orang."})
+		writeJSONResponse(w, 403, map[string]string{"error": "Pesanan ini untuk mobil besar (maks 6 orang), sedangkan mobilmu terdaftar sebagai mobil sedang. Hubungi admin kalau mobilmu muat 6 orang."})
 		return
 	}
 	now := time.Now().Format(time.RFC3339)
@@ -3473,9 +3404,9 @@ func klaimBergerbangSaldo(o Order, driverPhone, driverName, now string) (int, st
 	tagihan := tagihanAplikator(o.Komisi, o.BiayaJasa)
 	if !saldoCukupUntukKomisi(o.PaymentMethod, d.Balance, tertahan, tagihan) {
 		if tertahan > 0 {
-			return 402, fmt.Sprintf("Saldo Anda Rp%.0f, dan Rp%.0f sudah dipakai pesanan lain yang belum selesai. Setoran pesanan ini Rp%.0f — top up dulu.", d.Balance, tertahan, tagihan)
+			return 402, fmt.Sprintf("Saldomu Rp%.0f, dan Rp%.0f sudah dipakai pesanan lain yang belum selesai. Setoran pesanan ini Rp%.0f — isi saldo dulu.", d.Balance, tertahan, tagihan)
 		}
-		return 402, fmt.Sprintf("Saldo Anda Rp%.0f, kurang dari setoran pesanan ini Rp%.0f. Top up dulu untuk menerima pesanan tunai.", d.Balance, tagihan)
+		return 402, fmt.Sprintf("Saldomu Rp%.0f, kurang dari setoran pesanan ini Rp%.0f. Isi saldo dulu untuk menerima pesanan tunai.", d.Balance, tagihan)
 	}
 
 	menang, err := dbClaimOrder(o.ID, driverPhone, driverName, now)
@@ -4361,7 +4292,7 @@ func adminUsersHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, total, err := dbGetUsers(roleFilter, page, limit)
+	result, total, err := dbGetUsers(roleFilter, r.URL.Query().Get("q"), page, limit)
 	if err != nil {
 		galatServer(w, r, err)
 		return
@@ -4407,8 +4338,8 @@ func adminUserDetailHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONResponse(w, 404, map[string]string{"error": "User tidak ditemukan"})
 			return
 		}
-		result, _, _ := dbGetOrders("", phone, "", 0, 0)
-		driverOrders, _, _ := dbGetOrders(phone, "", "", 0, 0)
+		result, _, _ := dbGetOrders("", phone, "", "", 0, 0)
+		driverOrders, _, _ := dbGetOrders(phone, "", "", "", 0, 0)
 		result = append(result, driverOrders...)
 		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "user": u, "orders": result})
 		return
@@ -4517,11 +4448,11 @@ func adminUserDetailHandler(w http.ResponseWriter, r *http.Request) {
 			// tidak memeriksa status aktif, jadi driver tetap bisa menyelesaikannya.
 			if u.IsDriverActive {
 				log.Printf("Driver %s diaktifkan lagi oleh admin %s", phone, callerPhone(r))
-				notifikasiKe(phone, "Akun driver aktif lagi", "Anda sudah bisa menerima orderan lagi. Nyalakan tombol Online untuk mulai.", map[string]string{"tipe": "akun"})
+				notifikasiKe(phone, "Akun driver aktif lagi", "Kamu sudah bisa menerima orderan lagi. Nyalakan tombol Online untuk mulai.", map[string]string{"tipe": "akun"})
 			} else {
 				log.Printf("Driver %s dinonaktifkan oleh admin %s: %q", phone, callerPhone(r), alasan)
 				notifikasiKe(phone, "Akun driver dinonaktifkan",
-					"Anda tidak bisa menerima orderan sampai akun diaktifkan lagi. Alasan: "+alasan+". Hubungi admin BohAntar.", map[string]string{"tipe": "akun"})
+					"Kamu tidak bisa menerima orderan sampai akun diaktifkan lagi. Alasan: "+alasan+". Hubungi admin BohAntar.", map[string]string{"tipe": "akun"})
 			}
 		}
 		// Password hanya diganti bila field-nya benar-benar dikirim dan tidak kosong.
@@ -4570,7 +4501,7 @@ func adminOrdersHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, total, err := dbGetOrders(df, rf, sf, page, limit)
+	result, total, err := dbGetOrders(df, rf, sf, r.URL.Query().Get("q"), page, limit)
 	if err != nil {
 		galatServer(w, r, err)
 		return
@@ -4630,7 +4561,7 @@ func hapusAkunSendiri(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("Akun dihapus atas permintaan pemiliknya: %s (%s)", u.PhoneNumber, u.Role)
-	writeJSONResponse(w, 200, map[string]string{"status": "success", "message": "Akun Anda telah dihapus."})
+	writeJSONResponse(w, 200, map[string]string{"status": "success", "message": "Akunmu sudah dihapus."})
 }
 
 // hapusAkun menghapus satu akun beserta data pribadinya. Dipakai dua jalur:
@@ -5205,9 +5136,9 @@ func alasanDriverBelumBolehMasuk(phone, role string) string {
 	}
 	switch statusPengajuanDriver(phone) {
 	case "pending":
-		return "Pengajuan driver Anda masih ditinjau admin. Anda bisa masuk setelah disetujui."
+		return "Pengajuan drivermu masih ditinjau admin. Kamu bisa masuk setelah disetujui."
 	case "rejected":
-		return "Pengajuan driver Anda ditolak. Hubungi kantor BohAntar."
+		return "Pengajuan drivermu ditolak. Hubungi kantor BohAntar."
 	}
 	return ""
 }
@@ -5651,7 +5582,7 @@ func chatWebSocketHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if o.RiderPhone != sPhone && o.DriverPhone != sPhone && sRole != "admin" {
-		http.Error(w, "Anda bukan peserta pesanan ini", http.StatusForbidden)
+		http.Error(w, "Kamu bukan peserta pesanan ini", http.StatusForbidden)
 		return
 	}
 	sName := ""
@@ -7258,7 +7189,11 @@ var (
 // tidak dibalas 200, dan dua panggilan untuk invoice yang sama bisa datang
 // bersamaan. Hanya satu yang benar-benar mengubah baris, jadi satu pembayaran
 // tidak pernah menambah saldo dua kali. Pola yang sama dipakai QR setoran.
-func dbKreditTopUp(invoiceID string, dibayar float64) (phone string, jumlah float64, err error) {
+//
+// dariStatus: "PENDING" untuk webhook Xendit (QR lama), "MENUNGGU" untuk
+// persetujuan admin — admin tidak bisa melunasi QR Xendit, webhook tidak bisa
+// melunasi pengajuan manual.
+func dbKreditTopUp(invoiceID, dariStatus string, dibayar float64) (phone string, jumlah float64, err error) {
 	var tagihan float64
 	if err := db.QueryRow("SELECT phone_number, amount FROM topup_invoices WHERE id = ?", invoiceID).
 		Scan(&phone, &tagihan); err != nil {
@@ -7278,8 +7213,8 @@ func dbKreditTopUp(invoiceID string, dibayar float64) (phone string, jumlah floa
 	defer tx.Rollback()
 
 	res, err := tx.Exec(
-		"UPDATE topup_invoices SET status = 'PAID', paid_at = ? WHERE id = ? AND status = 'PENDING'",
-		waktuKeDB(time.Now().Format(time.RFC3339)), invoiceID,
+		"UPDATE topup_invoices SET status = 'PAID', paid_at = ? WHERE id = ? AND status = ?",
+		waktuKeDB(time.Now().Format(time.RFC3339)), invoiceID, dariStatus,
 	)
 	if err != nil {
 		return phone, 0, err
@@ -7301,7 +7236,7 @@ type barisTopUp struct {
 	Phone     string  `json:"phone_number"`
 	Nama      string  `json:"nama"`
 	Amount    float64 `json:"amount"`
-	Status    string  `json:"status"` // PENDING | PAID; QR-nya basi sejam setelah dibuat
+	Status    string  `json:"status"` // MENUNGGU | PAID | DITOLAK; PENDING = QR Xendit lama (basi sejam)
 	CreatedAt string  `json:"created_at"`
 	PaidAt    string  `json:"paid_at"`
 }
@@ -7325,9 +7260,12 @@ func adminTopUpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// ponytail: 1000 baris sebulan cukup untuk armada Sintang; tambah halaman kalau lewat.
+	// Bulannya bulan uang masuk (paid_at), bukan bulan pengajuan: pengajuan 31 Okt
+	// yang disetujui 1 Nov masuk hitungan November, tidak lenyap dari layar
+	// November begitu disetujui.
 	rows, err := db.Query(`
 		SELECT id, phone_number, amount, status, created_at, paid_at FROM topup_invoices
-		WHERE created_at >= ? AND created_at < DATE_ADD(?, INTERVAL 1 MONTH)
+		WHERE (COALESCE(paid_at, created_at) >= ? AND COALESCE(paid_at, created_at) < DATE_ADD(?, INTERVAL 1 MONTH)) OR status = 'MENUNGGU'
 		ORDER BY created_at DESC LIMIT 1000`, bulan+"-01", bulan+"-01")
 	if err != nil {
 		writeJSONResponse(w, 500, map[string]string{"error": "Gagal membaca riwayat top up"})
@@ -7380,7 +7318,7 @@ func adminTopUpHandler(w http.ResponseWriter, r *http.Request) {
 // bukan 200, dan mengulang invoice yang memang tidak ada tidak akan pernah
 // berhasil. Yang dibalas bukan 200 hanya yang pantas dicoba lagi.
 func kreditTopUp(w http.ResponseWriter, invoiceID string, dibayar float64) {
-	phone, jumlah, err := dbKreditTopUp(invoiceID, dibayar)
+	phone, jumlah, err := dbKreditTopUp(invoiceID, "PENDING", dibayar)
 	switch {
 	case errors.Is(err, errTopUpTakDitemukan):
 		log.Printf("Webhook top up: invoice %s tidak ada di topup_invoices, saldo tidak ditambah", invoiceID)

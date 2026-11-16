@@ -44,16 +44,17 @@ func TestDaftarPesananTidakDitolakDatabase(t *testing.T) {
 	bukaDBTes(t)
 
 	for _, k := range []struct {
-		nama                  string
-		driver, rider, status string
-		page, limit           int
+		nama                        string
+		driver, rider, status, cari string
+		page, limit                 int
 	}{
-		{"papan order driver", "", "", "pending", 0, 0},
-		{"riwayat penumpang", "", "+6289900000000", "", 0, 0},
-		{"riwayat driver", "+6289900000000", "", "", 0, 0},
-		{"daftar admin berhalaman", "", "", "", 1, 20},
+		{"papan order driver", "", "", "pending", "", 0, 0},
+		{"riwayat penumpang", "", "+6289900000000", "", "", 0, 0},
+		{"riwayat driver", "+6289900000000", "", "", "", 0, 0},
+		{"daftar admin berhalaman", "", "", "", "", 1, 20},
+		{"daftar admin dicari", "", "", "completed", "0812", 1, 20},
 	} {
-		if _, _, err := dbGetOrders(k.driver, k.rider, k.status, k.page, k.limit); err != nil {
+		if _, _, err := dbGetOrders(k.driver, k.rider, k.status, k.cari, k.page, k.limit); err != nil {
 			t.Errorf("%s ditolak database: %v", k.nama, err)
 		}
 	}

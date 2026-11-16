@@ -19,11 +19,23 @@ func TestDaftarPenggunaTerbaruDiAtas(t *testing.T) {
 		}
 	}
 
-	users, _, err := dbGetUsers("rider", 1, 2)
+	users, _, err := dbGetUsers("rider", "", 1, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(users) != 2 || users[0].PhoneNumber != baru || users[1].PhoneNumber != lama {
 		t.Fatalf("urutan salah, ingin %s lalu %s: %+v", baru, lama, users)
+	}
+
+	// Cari dari halaman 1 harus menemukan akun yang tampil di halaman 2,
+	// juga saat nomornya diketik "08xx".
+	for _, q := range []string{"0893" + akhir, "893" + akhir} {
+		users, total, err := dbGetUsers("rider", q, 1, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 1 || len(users) != 1 || users[0].PhoneNumber != lama {
+			t.Fatalf("cari %q: ingin hanya %s, dapat total %d %+v", q, lama, total, users)
+		}
 	}
 }

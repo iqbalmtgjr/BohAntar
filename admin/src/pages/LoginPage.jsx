@@ -27,7 +27,18 @@ export default function LoginPage({ onLogin, role }) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [resetPesan, setResetPesan] = useState('');
 
+  const kirimTautanReset = async () => {
+    if (!email.trim()) { setResetPesan('Tulis email akun Anda di kolom Email dulu.'); return; }
+    setResetPesan('Mengirim…');
+    try {
+      const res = await api.lupaPassword(email.trim());
+      setResetPesan(res.message || res.error || 'Gagal mengirim. Coba lagi.');
+    } catch {
+      setResetPesan('Gagal terhubung ke server. Coba lagi.');
+    }
+  };
 
   const handleFormSubmit = async (e) => {
     e.preventDefault();
@@ -283,15 +294,20 @@ export default function LoginPage({ onLogin, role }) {
                   {showPassword ? <EyeOff className="w-4.5 h-4.5" /> : <Eye className="w-4.5 h-4.5" />}
                 </button>
               </div>
-              {/* Password mitra dibuat sendiri saat mendaftar. Dua jalan
-                  pulih tanpa email/SMS: Google, atau admin yang menggantinya
-                  lewat halaman Pengguna. */}
+              {/* Tiga jalan pulih: tautan ke email (lupa_password.go), Google,
+                  atau admin yang menggantinya lewat halaman Pengguna. */}
               {role !== 'admin' && <details className="mt-2 text-xs text-slate-500">
                 <summary className="cursor-pointer font-semibold text-blue-600 text-right list-none">Lupa password?</summary>
                 <div className="mt-2 p-3 bg-slate-50 rounded-xl space-y-1.5 leading-relaxed">
-                  <p>Email akun Anda Gmail? Tekan <strong>Masuk dengan Google</strong> di bawah — tidak perlu password.</p>
+                  <p>Isi kolom Email di atas, lalu kami kirim tautan untuk membuat password baru.</p>
+                  <button type="button" onClick={kirimTautanReset} disabled={resetPesan === 'Mengirim…'}
+                    className="w-full py-2 rounded-lg bg-blue-600 text-white font-semibold disabled:opacity-60">
+                    Kirim tautan ke email saya
+                  </button>
+                  {resetPesan && <p role="status" className="font-semibold text-slate-700">{resetPesan}</p>}
+                  <p>Email akun Anda Gmail? Bisa juga tekan <strong>Masuk dengan Google</strong> di bawah — tidak perlu password.</p>
                   <p>
-                    Bukan Gmail?{' '}
+                    Email tidak masuk?{' '}
                     <a
                       href={`https://wa.me/628996979079?text=${encodeURIComponent(`Halo Admin BohAntar, saya lupa password akun mitra saya${email ? ` dengan email ${email}` : ''}. Mohon dibantu atur ulang.`)}`}
                       target="_blank" rel="noopener noreferrer"

@@ -260,6 +260,37 @@ func simpanVoucher(id string, v Voucher) error {
 	return err
 }
 
+// voucherPemakaiHandler: GET /api/voucher — voucher yang hari ini berlaku dan
+// kuota maupun jatah pemakai ini belum habis. Hanya untuk dipajang (kartu promo
+// beranda, tab Promo); yang benar-benar dipakai tetap dipilih pilihVoucher saat
+// memesan.
+func voucherPemakaiHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
+		return
+	}
+	phone, _ := extractPhone(r) // requireAuth sudah memastikan tokennya sah
+	hariIni := time.Now().Format("2006-01-02")
+	rows, err := db.Query("SELECT "+kolomVoucher+" FROM voucher WHERE aktif = 1"+
+		" AND (mulai IS NULL OR mulai <= ?) AND (selesai IS NULL OR selesai >= ?) ORDER BY created_at DESC", hariIni, hariIni)
+	var calon []Voucher
+	if err == nil {
+		calon, err = scanVoucher(rows)
+	}
+	if err != nil {
+		log.Printf("Voucher pemakai gagal dibaca: %v", err)
+		writeJSONResponse(w, 500, map[string]string{"error": "Gagal memuat promo"})
+		return
+	}
+	daftar := []Voucher{}
+	for _, v := range calon {
+		if voucherMasihAda(v, phone) {
+			daftar = append(daftar, v)
+		}
+	}
+	writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "voucher": daftar})
+}
+
 // adminVoucherHandler: GET (semua) dan POST (baru) /api/admin/voucher;
 // PUT dan DELETE /api/admin/voucher/{id}.
 func adminVoucherHandler(w http.ResponseWriter, r *http.Request) {

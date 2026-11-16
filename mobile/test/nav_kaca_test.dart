@@ -21,10 +21,10 @@ void main() {
             aktif: aktif,
             saatPilih: (i) => setState(() => aktif = i),
             item: const [
-              (ikon: Icons.home, label: 'A', lencana: 0),
-              (ikon: Icons.receipt_long, label: 'B', lencana: 0),
-              (ikon: Icons.chat_bubble, label: 'C', lencana: 0),
-              (ikon: Icons.person, label: 'D', lencana: 0),
+              (ikon: Icons.home, gambar: null, label: 'A', lencana: 0),
+              (ikon: Icons.receipt_long, gambar: null, label: 'B', lencana: 0),
+              (ikon: Icons.chat_bubble, gambar: null, label: 'C', lencana: 0),
+              (ikon: Icons.person, gambar: null, label: 'D', lencana: 0),
             ],
           ),
         );
