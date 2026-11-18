@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -17,6 +18,7 @@ func TestBannerBeranda(t *testing.T) {
 	if _, err := db.Exec(skemaBannerBeranda); err != nil {
 		t.Fatalf("tabel banner: %v", err)
 	}
+	migrasiSkema(kolomTargetBanner)
 	t.Cleanup(func() { db.Exec("DELETE FROM banner_beranda WHERE judul LIKE 'Uji banner%'") })
 
 	kirim := func(method, path string, b Banner) (int, Banner) {
@@ -58,13 +60,19 @@ func TestBannerBeranda(t *testing.T) {
 	}
 
 	_, kedua := kirim(http.MethodPost, "/api/admin/banner", Banner{Judul: "Uji banner kedua", Aktif: true, Urutan: 902})
-	_, pertama := kirim(http.MethodPost, "/api/admin/banner", Banner{Judul: "Uji banner pertama", Tujuan: "BohFood", URL: "https://dibuang.id", Aktif: true, Urutan: 901})
-	_, mati := kirim(http.MethodPost, "/api/admin/banner", Banner{Judul: "Uji banner mati", Urutan: 900})
+	_, pertama := kirim(http.MethodPost, "/api/admin/banner", Banner{Judul: "Uji banner pertama", Tujuan: "BohFood", Target: " fm-queen ", URL: "https://dibuang.id", Aktif: true, Urutan: 901})
+	_, mati := kirim(http.MethodPost, "/api/admin/banner", Banner{Judul: "Uji banner mati", Tujuan: "BohRide", Target: "dibuang", Urutan: 900})
 	if pertama.ID == "" || kedua.ID == "" || mati.ID == "" {
 		t.Fatal("banner yang sah gagal dibuat")
 	}
 	if pertama.URL != "" || pertama.Warna != "biru" {
 		t.Errorf("tautan untuk tujuan selain url harusnya dibuang dan warna bawaan biru, dapat %+v", pertama)
+	}
+	if pertama.Target != "fm-queen" || mati.Target != "" {
+		t.Errorf("target harusnya dirapikan untuk BohFood dan dibuang untuk BohRide, dapat %q dan %q", pertama.Target, mati.Target)
+	}
+	if daftar, _ := daftarBanner(false); !slices.ContainsFunc(daftar, func(b Banner) bool { return b.ID == pertama.ID && b.Target == "fm-queen" }) {
+		t.Error("target tidak terbaca balik dari database")
 	}
 	if got := publik(); got != "Uji banner pertama,Uji banner kedua" {
 		t.Fatalf("rute publik memuat %q, harusnya yang aktif saja, urut", got)

@@ -7,6 +7,7 @@ import ikonRide from "../assets/layanan/layanan_bohride.png";
 import ikonCar from "../assets/layanan/layanan_bohcar.png";
 import ikonFood from "../assets/layanan/layanan_bohfood.png";
 import ikonSend from "../assets/layanan/layanan_bohsend.png";
+import ikonRental from "../assets/layanan/layanan_bohrental.png";
 
 /* Banner beranda aplikasi: spanduk geser selebar layar.
    Banner tanpa gambar digambar aplikasi dari judul, keterangan, dan warna —
@@ -27,10 +28,37 @@ const TUJUAN = [
   ["BohCar", "BohCar"],
   ["BohFood", "BohFood"],
   ["BohSend", "BohSend"],
+  ["BohRental", "BohRental"],
   ["url", "Tautan (https://…)"],
 ];
-const IKON = { BohRide: ikonRide, BohCar: ikonCar, BohFood: ikonFood, BohSend: ikonSend };
-const KOSONG = { judul: "", keterangan: "", label_tombol: "", tujuan: "", url: "", warna: "biru", gambar_url: "", aktif: true, urutan: 0 };
+const IKON = { BohRide: ikonRide, BohCar: ikonCar, BohFood: ikonFood, BohSend: ikonSend, BohRental: ikonRental };
+const KOSONG = { judul: "", keterangan: "", label_tombol: "", tujuan: "", target: "", url: "", warna: "biru", gambar_url: "", aktif: true, urutan: 0 };
+
+/* Toko yang langsung dibuka banner: warung (target = id) atau mitra rental
+   (target = nama usaha, karena katalog aplikasi hanya membawa nama). Kosong =
+   halaman layanannya. Aplikasi build ≤16 mengabaikannya dan membuka halaman layanan. */
+function PilihToko({ tujuan, nilai, ubah }) {
+  const [daftar, setDaftar] = useState(null);
+  useEffect(() => {
+    setDaftar(null);
+    const muat = tujuan === "BohFood"
+      ? api.daftarWarung().then((r) => (r.merchants || []).map((m) => [m.id, m.restaurant_name]))
+      : api.katalogRental().then((r) => [...new Set((r.kendaraan || []).map((k) => k.mitra_nama).filter(Boolean))].map((n) => [n, n]));
+    muat.then(setDaftar).catch(() => setDaftar([]));
+  }, [tujuan]);
+  const ada = !nilai || daftar?.some(([v]) => v === nilai);
+  return (
+    <div className="input-group">
+      <label>{tujuan === "BohFood" ? "Langsung ke warung" : "Langsung ke mitra rental"}</label>
+      <select className="input" value={nilai} onChange={(e) => ubah(e.target.value)} disabled={!daftar}>
+        <option value="">{daftar ? `Halaman ${tujuan} (semua)` : "Memuat…"}</option>
+        {daftar?.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        {daftar && !ada && <option value={nilai}>{nilai} (tidak ditemukan)</option>}
+      </select>
+      {daftar && !ada && <div style={{ fontSize: 12, color: "var(--danger)", marginTop: 6 }}>Toko ini sudah tidak ada atau tidak aktif. Aplikasi akan membuka halaman {tujuan} saja.</div>}
+    </div>
+  );
+}
 
 // Sebanding dengan aplikasi: banner setinggi 200 dp selebar layar (±2:1 di HP
 // biasa). Kartu saldo yang dulu menutup bagian bawahnya dibuang 24 Okt 2026.
@@ -151,7 +179,7 @@ export default function BannerPage() {
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
                 <span className={`badge ${b.aktif ? "badge-success" : "badge-muted"}`}>{b.aktif ? "Tampil" : "Disembunyikan"}</span>
                 <span className="badge badge-muted">Urutan {b.urutan}</span>
-                {b.tujuan && <span className="badge badge-primary">→ {b.tujuan === "url" ? "Tautan" : b.tujuan}</span>}
+                {b.tujuan && <span className="badge badge-primary">→ {b.tujuan === "url" ? "Tautan" : b.tujuan}{b.target ? " · toko" : ""}</span>}
               </div>
               <div style={{ fontWeight: 700, marginTop: 8 }}>{b.judul}</div>
               <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
@@ -188,7 +216,7 @@ export default function BannerPage() {
               <div className="grid-2">
                 <div className="input-group">
                   <label>Saat diketuk, buka</label>
-                  <select className="input" value={form.tujuan} onChange={ubah("tujuan")}>
+                  <select className="input" value={form.tujuan} onChange={(e) => setForm({ ...form, tujuan: e.target.value, target: "" })}>
                     {TUJUAN.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                   </select>
                 </div>
@@ -197,6 +225,9 @@ export default function BannerPage() {
                   <input className="input" value={form.label_tombol} onChange={ubah("label_tombol")} maxLength={30} placeholder="Mis. Pesan makanan" disabled={!form.tujuan} />
                 </div>
               </div>
+              {(form.tujuan === "BohFood" || form.tujuan === "BohRental") && (
+                <PilihToko tujuan={form.tujuan} nilai={form.target || ""} ubah={(v) => setForm({ ...form, target: v })} />
+              )}
               {form.tujuan === "url" && (
                 <div className="input-group">
                   <label>Tautan</label>

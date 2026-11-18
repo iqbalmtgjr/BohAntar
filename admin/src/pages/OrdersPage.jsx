@@ -1,7 +1,131 @@
-import { useEffect, useState } from "react";
-import { Search, Package } from "lucide-react";
-import { api } from "../api";
+import { useEffect, useRef, useState } from "react";
+import { Search, Package, X } from "lucide-react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import { api, fileURL } from "../api";
 import Topbar from "../components/Topbar";
+
+const rp = (n) => "Rp " + Math.round(n || 0).toLocaleString("id-ID");
+const adaTitik = (lat, lng) => Number(lat) !== 0 || Number(lng) !== 0;
+
+// Jemput hijau, tujuan merah, garis lurus di antaranya (bukan rute jalan).
+function PetaPesanan({ o }) {
+  const wadah = useRef(null);
+  useEffect(() => {
+    const titik = [];
+    if (adaTitik(o.pickup_lat, o.pickup_lng)) titik.push([[o.pickup_lat, o.pickup_lng], "#16A34A", "Jemput: " + o.pickup]);
+    if (adaTitik(o.dropoff_lat, o.dropoff_lng)) titik.push([[o.dropoff_lat, o.dropoff_lng], "#DC2626", "Tujuan: " + o.dropoff]);
+    const m = L.map(wadah.current);
+    L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(m);
+    if (titik.length === 2) L.polyline(titik.map(t => t[0]), { color: "#4F46E5", weight: 3, dashArray: "6 6" }).addTo(m);
+    titik.forEach(([p, warna, label]) =>
+      L.circleMarker(p, { radius: 9, color: "#fff", weight: 2, fillColor: warna, fillOpacity: 1 }).bindTooltip(label).addTo(m));
+    if (titik.length) m.fitBounds(titik.map(t => t[0]), { padding: [40, 40], maxZoom: 16 });
+    else m.setView([0.0785, 111.4940], 13); // pusat Sintang
+    return () => m.remove();
+  }, [o]);
+  return <div ref={wadah} style={{ height: 280, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)" }} />;
+}
+
+function Baris({ label, children }) {
+  if (children === "" || children == null || children === false) return null;
+  return (
+    <div style={{ display: "flex", gap: 12, padding: "6px 0", borderBottom: "1px dashed var(--border)", fontSize: 13 }}>
+      <div style={{ width: 130, flexShrink: 0, color: "var(--text-muted)" }}>{label}</div>
+      <div style={{ flex: 1, color: "var(--text-primary)", wordBreak: "break-word" }}>{children}</div>
+    </div>
+  );
+}
+
+function DetailPesanan({ o, dilepas, onTutup }) {
+  useEffect(() => {
+    const esc = (e) => e.key === "Escape" && onTutup();
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onTutup]);
+  const gmaps = (lat, lng) => `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  const rute = adaTitik(o.pickup_lat, o.pickup_lng) && adaTitik(o.dropoff_lat, o.dropoff_lng)
+    ? `https://www.google.com/maps/dir/?api=1&origin=${o.pickup_lat},${o.pickup_lng}&destination=${o.dropoff_lat},${o.dropoff_lng}` : "";
+  const koordinat = (lat, lng) => adaTitik(lat, lng)
+    ? <a href={gmaps(lat, lng)} target="_blank" rel="noreferrer" style={{ fontSize: 11 }}>{Number(lat).toFixed(6)}, {Number(lng).toFixed(6)} ↗</a> : null;
+
+  return (
+    <div className="modal-overlay" onClick={onTutup}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 720, position: "relative" }} role="dialog" aria-modal="true">
+        <button className="filter-btn" onClick={onTutup} aria-label="Tutup" style={{ position: "absolute", top: 16, right: 16, padding: 6 }}><X size={16} /></button>
+        <h2>Pesanan #{o.id?.slice(-6)}</h2>
+        <p className="modal-desc" style={{ marginBottom: 16 }}>
+          <span className="badge badge-primary">{o.service}{o.kelas ? ` ${o.kelas}` : ""}</span>{" "}
+          <span className={`badge ${STATUS_BADGE[o.status] || "badge-muted"}`}>{STATUS_LABEL[o.status] || o.status}</span>{" "}
+          <span style={{ fontSize: 11 }}>{o.id}</span>
+        </p>
+
+        <PetaPesanan o={o} />
+        <div style={{ display: "flex", gap: 16, fontSize: 12, margin: "8px 0 16px", flexWrap: "wrap" }}>
+          <span><span style={{ color: "#16A34A" }}>●</span> Jemput</span>
+          <span><span style={{ color: "#DC2626" }}>●</span> Tujuan</span>
+          {rute && <a href={rute} target="_blank" rel="noreferrer" style={{ marginLeft: "auto" }}>Lihat rute di Google Maps ↗</a>}
+        </div>
+
+        <Baris label="Jemput"><div>{o.pickup}</div>{koordinat(o.pickup_lat, o.pickup_lng)}</Baris>
+        <Baris label="Tujuan"><div>{o.dropoff}</div>{koordinat(o.dropoff_lat, o.dropoff_lng)}</Baris>
+        <Baris label="Penumpang">{o.rider_name} · {o.rider_phone}</Baris>
+        <Baris label="Driver">{o.driver_name ? `${o.driver_name} · ${o.driver_phone}` : "—"}</Baris>
+        <Baris label="Penerima">{o.receiver_name && `${o.receiver_name}${o.receiver_phone ? " · " + o.receiver_phone : ""}`}</Baris>
+        <Baris label="Diterima oleh">{o.received_by}</Baris>
+        <Baris label="Dibuat">{new Date(o.created_at).toLocaleString("id-ID")}</Baris>
+        <Baris label="Terakhir diubah">{o.updated_at && new Date(o.updated_at).toLocaleString("id-ID")}</Baris>
+        <Baris label="Pembayaran">{o.payment_method === "cash" ? "Tunai" : "Saldo"}</Baris>
+
+        {o.merchant_name && <Baris label="Warung">{o.merchant_name}</Baris>}
+        {o.items?.length > 0 && (
+          <Baris label="Isi pesanan">
+            {o.items.map((it, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+                <span>{it.qty}× {it.name}{it.options?.length ? <span style={{ color: "var(--text-muted)" }}> ({it.options.map(x => x.name).join(", ")})</span> : null}</span>
+                <span>{rp((it.price + (it.options || []).reduce((s, x) => s + x.price, 0)) * it.qty)}</span>
+              </div>
+            ))}
+          </Baris>
+        )}
+        {o.package_type && (
+          <Baris label="Paket">
+            {o.package_type}{o.package_quantity ? ` · ${o.package_quantity} koli` : ""}{o.package_weight ? ` · ${o.package_weight}` : ""}
+            {o.insurance ? " · asuransi" : ""}{o.special_handling ? " · penanganan khusus" : ""}
+            {o.package_notes && <div style={{ color: "var(--text-muted)" }}>{o.package_notes}</div>}
+          </Baris>
+        )}
+
+        <Baris label="Ongkos">{rp(o.fare)}</Baris>
+        <Baris label="Biaya jasa">{o.biaya_jasa > 0 && rp(o.biaya_jasa)}</Baris>
+        <Baris label="Makanan">{o.food_total > 0 && rp(o.food_total)}</Baris>
+        <Baris label="Diskon voucher">{o.diskon > 0 && "− " + rp(o.diskon)}</Baris>
+        <Baris label="Dibayar penumpang"><b>{rp(o.fare + o.biaya_jasa + o.food_total - o.diskon)}</b></Baris>
+        <Baris label="Komisi aplikator">{rp(o.komisi)} <span style={{ color: "var(--text-muted)" }}>(driver terima {rp(o.fare - o.komisi)})</span></Baris>
+
+        <Baris label="Alasan batal">{o.alasan_batal}</Baris>
+        <Baris label="Batal ditolak">{o.tolak_batal}</Baris>
+        {dilepas?.length > 0 && (
+          <Baris label="Dilepas driver">
+            {dilepas.map((x, i) => <div key={i}>{x.driver}{x.alasan ? `: ${x.alasan}` : ""} <span style={{ color: "var(--text-muted)" }}>({new Date(x.waktu).toLocaleString("id-ID")})</span></div>)}
+          </Baris>
+        )}
+        <Baris label="Kasir Kasvo">{o.kasvo_pesanan_id > 0 && `#${o.kasvo_pesanan_id}`}</Baris>
+
+        {(o.pickup_photo_url || o.delivery_photo_url) && (
+          <div style={{ display: "flex", gap: 12, marginTop: 16, flexWrap: "wrap" }}>
+            {[["Foto saat diambil", o.pickup_photo_url], ["Foto saat diserahkan", o.delivery_photo_url]].filter(f => f[1]).map(([judul, url]) => (
+              <a key={judul} href={fileURL(url)} target="_blank" rel="noreferrer" style={{ fontSize: 12, textAlign: "center" }}>
+                <img src={fileURL(url)} alt={judul} style={{ width: 140, height: 140, objectFit: "cover", borderRadius: 10, border: "1px solid var(--border)", display: "block", marginBottom: 4 }} />
+                {judul}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const STATUS_BADGE = {
   pending: "badge-warning", accepted: "badge-info", picked_up: "badge-info",
@@ -23,6 +147,7 @@ export default function OrdersPage() {
   const [totalRecords, setTotalRecords] = useState(0);
   // Riwayat driver melepas pesanan, per id pesanan: [{driver, alasan, waktu}].
   const [dilepas, setDilepas] = useState({});
+  const [detail, setDetail] = useState(null);
 
   const load = (status = filter, p = page, l = limit) => {
     setLoading(true);
@@ -82,7 +207,7 @@ export default function OrdersPage() {
                     </td>
                   </tr>
                 ) : orders.map(o => (
-                  <tr key={o.id}>
+                  <tr key={o.id} onClick={() => setDetail(o)} style={{ cursor: "pointer" }} title="Klik untuk lihat detail">
                     <td data-label="ID"><span className="chip">#{o.id?.slice(-6)}</span></td>
                     <td data-label="Penumpang">
                       <div><div style={{ fontWeight: 600 }}>{o.rider_name}</div><div style={{ fontSize: 11, color: "var(--text-muted)" }}>{o.rider_phone}</div></div>
@@ -151,6 +276,7 @@ export default function OrdersPage() {
           </div>
         )}
       </div>
+      {detail && <DetailPesanan o={detail} dilepas={dilepas[detail.id]} onTutup={() => setDetail(null)} />}
     </>
   );
 }

@@ -16,7 +16,12 @@ import (
 // menekan Setujui/Tolak di dashboard #/topup. Env di run.sh:
 //
 //	TOPUP_TUJUAN       rekening tujuan, mis. "DANA Bisnis 0812xxxx a.n. ..." (wajib)
+//	TOPUP_QRIS         alamat gambar QRIS statis, mis. "/uploads/qris-topup.png"
+//	                   (18 Nov 2026). Kosong = halaman kembali ke petunjuk transfer.
 //	NOTIF_ADMIN_EMAIL  penerima email pengajuan (email.go)
+//
+// ponytail: QRIS statis, nominal diketik driver dan dicocokkan admin dengan
+// mata. QRIS dinamis (nominal terkunci, lunas otomatis) menunggu Duitku.
 
 // kirimEmailAdmin: pengajuan tetap tercatat dan tampil di dashboard walau
 // emailnya gagal, jadi galat cukup ke log.
@@ -24,7 +29,38 @@ func kirimEmailAdmin(judul, isi string) {
 	kirimEmail(getEnv("NOTIF_ADMIN_EMAIL", ""), judul, isi)
 }
 
-var halamanBayarTopUp = template.Must(template.New("bayar").Parse(`<!doctype html>
+// kodeUnikTopUp: kode 1–999 terkecil yang membuat nominal+kode belum dipakai
+// pengajuan MENUNGGU mana pun, supaya admin cukup mencari angka itu di riwayat
+// DANA (QRIS tidak punya berita transfer). Kode ikut masuk ke saldo.
+//
+// ponytail: dibaca lalu ditulis tanpa kunci; dua pengajuan di milidetik yang
+// sama bisa dapat total kembar, admin tetap bisa mencocokkan lewat jam & nama.
+func kodeUnikTopUp(nominal float64) (int, error) {
+	rows, err := db.Query("SELECT amount FROM topup_invoices WHERE status = 'MENUNGGU' AND amount > ? AND amount < ?", nominal, nominal+1000)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	dipakai := map[int]bool{}
+	for rows.Next() {
+		var a float64
+		if err := rows.Scan(&a); err != nil {
+			return 0, err
+		}
+		dipakai[int(a-nominal)] = true
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for kode := 1; kode <= 999; kode++ {
+		if !dipakai[kode] {
+			return kode, nil
+		}
+	}
+	return 0, errors.New("semua kode unik untuk nominal ini sedang dipakai")
+}
+
+var halamanBayarTopUp =template.Must(template.New("bayar").Parse(`<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Isi saldo BohAntar</title>
 <style>
@@ -35,12 +71,26 @@ body{font-family:system-ui,-apple-system,sans-serif;max-width:440px;margin:0 aut
 .status{display:inline-block;padding:4px 12px;border-radius:99px;font-size:13px;font-weight:700;background:#eceff1;color:#455a64}
 .MENUNGGU{background:#fff3cd;color:#7a5d00}.PAID{background:#d4edda;color:#1e6b34}.DITOLAK{background:#f8d7da;color:#842029}
 small{color:#5f6b7a}
+.qris{display:block;width:100%;max-width:320px;margin:8px auto;border-radius:8px}
+.tombol{display:block;text-align:center;background:#1565c0;color:#fff;text-decoration:none;font-weight:700;padding:12px;border-radius:12px;margin:12px 0 4px}
+ol{padding-left:20px;margin:8px 0}
 </style></head><body>
 <div class="kartu"><small>Isi saldo komisi</small><div class="nominal">{{.Nominal}}</div><span class="status {{.Status}}">{{.Label}}</span></div>
 {{if eq .Status "MENUNGGU"}}
+{{if .QRIS}}
+<div class="kartu"><small>Bayar lewat QRIS ke</small><div class="tujuan">{{.Tujuan}}</div>
+<img class="qris" src="{{.QRIS}}" alt="Kode QRIS BohAntar">
+<a class="tombol" href="{{.QRIS}}" download>Simpan gambar QRIS</a>
+<ol>
+<li>Simpan gambar QRIS di atas.</li>
+<li>Buka DANA, GoPay, OVO, ShopeePay, atau m-banking, pilih <b>Scan/Bayar</b>, lalu ambil gambar QRIS dari galeri.</li>
+<li>Ketik nominal tepat <b>{{.Nominal}}</b>, lalu bayar. Tiga angka terakhir adalah kode unik supaya pembayaranmu mudah dicari, dan ikut masuk ke saldomu.</li>
+</ol></div>
+{{else}}
 <div class="kartu"><small>Transfer tepat {{.Nominal}} ke</small><div class="tujuan">{{.Tujuan}}</div>
 <p>Tulis <b>{{.HP}}</b> di catatan/berita transfer supaya admin mudah mencocokkan.</p></div>
-<p><small>Sudah transfer? Kembali ke aplikasi BohAntar. Admin mengecek transfermu, saldo masuk setelah disetujui — ketuk "Cek saldo" untuk melihat.</small></p>
+{{end}}
+<p><small>Sudah bayar? Kembali ke aplikasi BohAntar. Admin mengecek pembayaranmu, saldo masuk setelah disetujui — ketuk "Cek saldo" untuk melihat.</small></p>
 {{end}}
 </body></html>`))
 
@@ -67,6 +117,7 @@ func topUpBayarHandler(w http.ResponseWriter, r *http.Request) {
 		"Status":  status,
 		"Label":   label,
 		"Tujuan":  getEnv("TOPUP_TUJUAN", ""),
+		"QRIS":    getEnv("TOPUP_QRIS", ""),
 		// Format 08xx: sebagian aplikasi bank menolak "+" di berita transfer.
 		"HP": "0" + strings.TrimPrefix(phone, "+62"),
 	})

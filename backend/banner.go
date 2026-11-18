@@ -21,12 +21,16 @@ type Banner struct {
 	Judul       string `json:"judul"`
 	Keterangan  string `json:"keterangan"`
 	LabelTombol string `json:"label_tombol"`
-	Tujuan      string `json:"tujuan"` // "" | BohRide | BohCar | BohFood | BohSend | url
-	URL         string `json:"url"`
-	Warna       string `json:"warna"`
-	GambarURL   string `json:"gambar_url"`
-	Aktif       bool   `json:"aktif"`
-	Urutan      int    `json:"urutan"`
+	Tujuan      string `json:"tujuan"` // "" | BohRide | BohCar | BohFood | BohSend | BohRental | url
+	// Toko yang langsung dibuka: id warung (BohFood) atau nama usaha mitra
+	// (BohRental — katalog tak membawa nomor pemiliknya, dan /api/banner publik).
+	// Kosong = halaman layanannya. App build ≤16 mengabaikannya dan membuka layanannya.
+	Target    string `json:"target"`
+	URL       string `json:"url"`
+	Warna     string `json:"warna"`
+	GambarURL string `json:"gambar_url"`
+	Aktif     bool   `json:"aktif"`
+	Urutan    int    `json:"urutan"`
 }
 
 const skemaBannerBeranda = `CREATE TABLE IF NOT EXISTS banner_beranda (
@@ -35,6 +39,7 @@ const skemaBannerBeranda = `CREATE TABLE IF NOT EXISTS banner_beranda (
 	keterangan VARCHAR(160) NOT NULL DEFAULT '',
 	label_tombol VARCHAR(30) NOT NULL DEFAULT '',
 	tujuan VARCHAR(10) NOT NULL DEFAULT '',
+	target VARCHAR(100) NOT NULL DEFAULT '',
 	url VARCHAR(300) NOT NULL DEFAULT '',
 	warna VARCHAR(10) NOT NULL DEFAULT 'biru',
 	gambar_url VARCHAR(300) NOT NULL DEFAULT '',
@@ -47,7 +52,10 @@ const skemaBannerBeranda = `CREATE TABLE IF NOT EXISTS banner_beranda (
 // Warna yang dikenal aplikasi (lihat bannerWarna di mobile banner_beranda.dart).
 var warnaBanner = map[string]bool{"biru": true, "oranye": true, "hijau": true, "ungu": true, "merah": true, "gelap": true}
 
-var tujuanBanner = map[string]bool{"": true, "BohRide": true, "BohCar": true, "BohFood": true, "BohSend": true, "url": true}
+var tujuanBanner = map[string]bool{"": true, "BohRide": true, "BohCar": true, "BohFood": true, "BohSend": true, "BohRental": true, "url": true}
+
+// Tabel yang lahir sebelum 18 Nov 2026 belum punya kolom target.
+const kolomTargetBanner = "ALTER TABLE banner_beranda ADD COLUMN target VARCHAR(100) NOT NULL DEFAULT '' AFTER tujuan"
 
 // siapkanBanner membuat tabelnya dan menanam banner bawaan — hanya saat tabel
 // itu baru lahir. Kalau ditanam setiap kali tabelnya kosong, banner yang sengaja
@@ -62,6 +70,7 @@ func siapkanBanner() {
 		log.Printf("Tabel banner_beranda gagal dibuat, banner beranda nonaktif: %v", err)
 		return
 	}
+	migrasiSkema(kolomTargetBanner)
 	if ada > 0 {
 		return
 	}
@@ -84,6 +93,7 @@ func periksaBanner(b *Banner) string {
 	b.Judul = strings.TrimSpace(b.Judul)
 	b.Keterangan = strings.TrimSpace(b.Keterangan)
 	b.LabelTombol = strings.TrimSpace(b.LabelTombol)
+	b.Target = strings.TrimSpace(b.Target)
 	b.URL = strings.TrimSpace(b.URL)
 	b.GambarURL = strings.TrimSpace(b.GambarURL)
 	if b.Warna == "" {
@@ -108,25 +118,30 @@ func periksaBanner(b *Banner) string {
 		return "Tautan gambar kepanjangan"
 	case b.Urutan < 0 || b.Urutan > 999:
 		return "Urutan 0–999"
+	case utf8.RuneCountInString(b.Target) > 100:
+		return "Nama toko kepanjangan"
 	}
 	if b.Tujuan != "url" {
 		b.URL = ""
+	}
+	if b.Tujuan != "BohFood" && b.Tujuan != "BohRental" {
+		b.Target = ""
 	}
 	return ""
 }
 
 func simpanBanner(id string, b Banner) error {
-	_, err := db.Exec(`INSERT INTO banner_beranda (id, judul, keterangan, label_tombol, tujuan, url, warna, gambar_url, aktif, urutan)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err := db.Exec(`INSERT INTO banner_beranda (id, judul, keterangan, label_tombol, tujuan, target, url, warna, gambar_url, aktif, urutan)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE judul = VALUES(judul), keterangan = VALUES(keterangan), label_tombol = VALUES(label_tombol),
-			tujuan = VALUES(tujuan), url = VALUES(url), warna = VALUES(warna), gambar_url = VALUES(gambar_url),
+			tujuan = VALUES(tujuan), target = VALUES(target), url = VALUES(url), warna = VALUES(warna), gambar_url = VALUES(gambar_url),
 			aktif = VALUES(aktif), urutan = VALUES(urutan)`,
-		id, b.Judul, b.Keterangan, b.LabelTombol, b.Tujuan, b.URL, b.Warna, b.GambarURL, b.Aktif, b.Urutan)
+		id, b.Judul, b.Keterangan, b.LabelTombol, b.Tujuan, b.Target, b.URL, b.Warna, b.GambarURL, b.Aktif, b.Urutan)
 	return err
 }
 
 func daftarBanner(hanyaAktif bool) ([]Banner, error) {
-	q := "SELECT id, judul, keterangan, label_tombol, tujuan, url, warna, gambar_url, aktif, urutan FROM banner_beranda"
+	q := "SELECT id, judul, keterangan, label_tombol, tujuan, target, url, warna, gambar_url, aktif, urutan FROM banner_beranda"
 	if hanyaAktif {
 		// ponytail: 10 cukup untuk karosel beranda; tak ada yang menggeser lebih jauh.
 		q += " WHERE aktif = 1 ORDER BY urutan, created_at LIMIT 10"
@@ -141,7 +156,7 @@ func daftarBanner(hanyaAktif bool) ([]Banner, error) {
 	daftar := []Banner{}
 	for rows.Next() {
 		var b Banner
-		if err := rows.Scan(&b.ID, &b.Judul, &b.Keterangan, &b.LabelTombol, &b.Tujuan, &b.URL, &b.Warna, &b.GambarURL, &b.Aktif, &b.Urutan); err != nil {
+		if err := rows.Scan(&b.ID, &b.Judul, &b.Keterangan, &b.LabelTombol, &b.Tujuan, &b.Target, &b.URL, &b.Warna, &b.GambarURL, &b.Aktif, &b.Urutan); err != nil {
 			return nil, err
 		}
 		daftar = append(daftar, b)

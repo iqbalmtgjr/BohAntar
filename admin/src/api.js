@@ -132,6 +132,7 @@ export const api = {
   estimasiTarif: (layanan, a, b, kelas = "") => json(`/tarif/estimasi?layanan=${layanan}&kelas=${kelas}&from_lat=${a.lat}&from_lng=${a.lng}&to_lat=${b.lat}&to_lng=${b.lng}`),
   daftarWarung: () => json(`/food/merchants`),
   menuWarung: (mid) => json(`/food/menus?merchant_id=${encodeURIComponent(mid)}`),
+  katalogRental: () => json(`/rental/katalog`),
   // Banner beranda aplikasi. Id ada = ubah, kosong = banner baru.
   getBanner: () => json(`/admin/banner`),
   simpanBanner: (b) => b.id

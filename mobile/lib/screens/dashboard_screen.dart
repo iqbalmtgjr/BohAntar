@@ -622,7 +622,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         );
         return;
       }
-      _tungguPembayaran(amount);
+      // Server menambah kode unik ke nominal; yang harus dibayar angka server.
+      _tungguPembayaran((res['amount'] as num?)?.toDouble() ?? amount);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -643,9 +644,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('Menunggu transfer'),
+          title: const Text('Menunggu pembayaran'),
           content: Text(
-            'Transfer ${_rupiah(amount)} sesuai petunjuk di halaman bayar. Saldo masuk setelah admin mengecek — ketuk "Cek saldo" untuk melihat.',
+            'Bayar ${_rupiah(amount)} lewat QRIS di halaman bayar. Saldo masuk setelah admin mengecek — ketuk "Cek saldo" untuk melihat.',
             style: const TextStyle(fontSize: 13),
           ),
           actions: [
@@ -1687,7 +1688,7 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         type: MaterialType.transparency,
         child: InkWell(
           borderRadius: BorderRadius.circular(24),
-          onTap: () => _bukaMenu(m, w),
+          onTap: () => _bukaWarung(w, menuAwal: m.id),
           child: Padding(
             padding: const EdgeInsets.all(10),
             child: Column(
@@ -1896,10 +1897,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     );
   }
 
-  void _bukaMenu(MenuMakanan m, Warung w) {
+  void _bukaWarung(Warung w, {String? menuAwal}) {
     Navigator.push<String>(
       context,
-      MaterialPageRoute(builder: (_) => FoodMenuScreen(warung: w, menuAwal: m.id, riderName: _namaPemesan, riderPhone: widget.phone)),
+      MaterialPageRoute(builder: (_) => FoodMenuScreen(warung: w, menuAwal: menuAwal, riderName: _namaPemesan, riderPhone: widget.phone)),
     ).then((orderId) {
       _fetchUserProfile();
       if (orderId != null && mounted) _lacakBohFood(orderId);
@@ -2044,7 +2045,41 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
       if (url != null && url.scheme == 'https') launchUrl(url, mode: LaunchMode.externalApplication);
       return;
     }
-    if (tujuan.isNotEmpty) _bukaLayanan(tujuan);
+    // Banner toko mitra (dashboard → Banner Beranda → "Langsung ke ...").
+    final target = (b['target'] ?? '').toString();
+    if (tujuan == 'BohFood' && target.isNotEmpty) {
+      _bukaWarungBanner(target);
+    } else if (tujuan == 'BohRental' && target.isNotEmpty) {
+      Navigator.push(context, MaterialPageRoute(builder: (_) => RentalScreen(myPhone: widget.phone, mitra: target)));
+    } else if (tujuan.isNotEmpty) {
+      _bukaLayanan(tujuan);
+    }
+  }
+
+  bool _memuatWarung = false; // ketukan ganda pada banner jangan membuka dua layar
+
+  /// Warung dicari dari daftar warung BohFood (tanpa posisi, seperti kartu menu
+  /// beranda). Warung yang sudah hilang/dicabut jatuh ke halaman BohFood.
+  Future<void> _bukaWarungBanner(String id) async {
+    if (_memuatWarung) return;
+    _memuatWarung = true;
+    try {
+      final daftar = await ApiService().getFoodMerchants();
+      final j = daftar.whereType<Map>().where((m) => m['id'] == id).firstOrNull;
+      if (!mounted) return;
+      if (j == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Warungnya sedang tidak tersedia. Coba warung lain di BohFood, ya.')),
+        );
+        _bukaBohFood();
+      } else {
+        _bukaWarung(Warung.dariJson(Map<String, dynamic>.from(j)));
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(pesanGalat(e))));
+    } finally {
+      _memuatWarung = false;
+    }
   }
 
   String get _namaPemesan => _userName.isNotEmpty ? _userName : widget.name;

@@ -261,3 +261,57 @@ func TestAdminTopUpPerBulan(t *testing.T) {
 		t.Fatalf("total lunas %.0f belum memuat 25.000", res.TotalLunas)
 	}
 }
+
+// Halaman bayar menampilkan QRIS bila TOPUP_QRIS diisi, dan kembali ke
+// petunjuk transfer bila kosong.
+func TestHalamanBayarTopUpQRIS(t *testing.T) {
+	bukaDBTes(t)
+	t.Setenv("TOPUP_TUJUAN", "DANA Bisnis uji")
+	id := invoiceTopUpUji(t, "+62800000401", 50000)
+	db.Exec("UPDATE topup_invoices SET status = 'MENUNGGU' WHERE id = ?", id)
+
+	buka := func() string {
+		w := httptest.NewRecorder()
+		topUpBayarHandler(w, httptest.NewRequest(http.MethodGet, "/api/topup/bayar/"+id, nil))
+		return w.Body.String()
+	}
+
+	t.Setenv("TOPUP_QRIS", "/uploads/qris-topup.png")
+	if h := buka(); !strings.Contains(h, `src="/uploads/qris-topup.png"`) || strings.Contains(h, "berita transfer") {
+		t.Fatalf("halaman QRIS salah:\n%s", h)
+	}
+	t.Setenv("TOPUP_QRIS", "")
+	if h := buka(); strings.Contains(h, "<img") || !strings.Contains(h, "berita transfer") {
+		t.Fatalf("halaman transfer salah:\n%s", h)
+	}
+}
+
+// Kode unik: total nominal+kode tidak boleh kembar dengan pengajuan MENUNGGU,
+// pengajuan yang sudah lunas tidak menghalangi, dan totalnya yang tersimpan
+// (jadi yang dikreditkan).
+func TestTopUpKodeUnik(t *testing.T) {
+	bukaDBTes(t)
+	t.Setenv("TOPUP_TUJUAN", "DANA uji")
+	t.Setenv("SMTP_HOST", "")
+	const phone = "+62800000402"
+	db.Exec("DELETE FROM topup_invoices WHERE status = 'MENUNGGU' AND amount > 77000 AND amount < 78000")
+	t.Cleanup(func() { db.Exec("DELETE FROM topup_invoices WHERE phone_number = ?", phone) })
+
+	menunggu := invoiceTopUpUji(t, "+62800000403", 77001)
+	db.Exec("UPDATE topup_invoices SET status = 'MENUNGGU' WHERE id = ?", menunggu)
+	invoiceTopUpUji(t, "+62800000403", 77002) // PENDING lama, tidak menghalangi
+	penggunaUji(t, phone)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/users/topup", strings.NewReader(`{"amount":77000}`))
+	r.Header.Set("Authorization", "Bearer "+mustToken(t, phone, "rider"))
+	topUpHandler(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"amount":77002`) {
+		t.Fatalf("balasan %d %s, harusnya amount 77002", w.Code, w.Body.String())
+	}
+	var tersimpan float64
+	db.QueryRow("SELECT amount FROM topup_invoices WHERE phone_number = ? AND status = 'MENUNGGU'", phone).Scan(&tersimpan)
+	if tersimpan != 77002 {
+		t.Fatalf("tersimpan %.0f, harusnya 77002", tersimpan)
+	}
+}

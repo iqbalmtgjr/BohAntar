@@ -2942,6 +2942,16 @@ func topUpHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Kode unik ikut tersimpan di amount, jadi dbKreditTopUp mengkreditkan
+	// nominal + kode tanpa perubahan apa pun.
+	kode, err := kodeUnikTopUp(nominal)
+	if err != nil {
+		log.Printf("Top up %s: kode unik gagal: %v", phone, err)
+		writeJSONResponse(w, 503, map[string]string{"error": "Isi saldo sedang ramai. Coba lagi sebentar, ya."})
+		return
+	}
+	nominal += float64(kode)
+
 	// Status MENUNGGU, bukan PENDING: PENDING milik QR Xendit lama yang basi
 	// sejam. Bedanya menjaga admin tidak menyetujui QR lama yang tak dibayar.
 	id := newID("topup")
@@ -2960,9 +2970,9 @@ func topUpHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	kirimEmailAdmin(
 		fmt.Sprintf("Pengajuan top up %s dari %s", formatRupiah(int64(nominal)), u.Name),
-		fmt.Sprintf("Driver %s (%s) mengajukan isi saldo komisi %s.\n\n"+
-			"Cek uang masuk ke %s, lalu setujui atau tolak di:\n%s/#/topup\n",
-			u.Name, phone, formatRupiah(int64(nominal)), tujuan, alamatPublik))
+		fmt.Sprintf("Driver %s (%s) mengajukan isi saldo komisi %s (sudah termasuk kode unik %03d).\n\n"+
+			"Cari uang masuk tepat %s di %s, lalu setujui atau tolak di:\n%s/#/topup\n",
+			u.Name, phone, formatRupiah(int64(nominal)), kode, formatRupiah(int64(nominal)), tujuan, alamatPublik))
 
 	writeJSONResponse(w, 200, map[string]interface{}{
 		"status":      "pending",

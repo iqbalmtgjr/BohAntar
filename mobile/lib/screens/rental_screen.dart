@@ -11,7 +11,11 @@ import 'package:mobile/widgets/food_widgets.dart' show GambarJaringan, PesanKoso
 /// pembayaran langsung ke mitra saat kendaraan diambil.
 class RentalScreen extends StatefulWidget {
   final String myPhone;
-  const RentalScreen({super.key, required this.myPhone});
+
+  /// Nama usaha mitra dari banner beranda: katalog hanya armada mitra itu
+  /// sampai chip-nya ditutup. Kosong = semua mitra.
+  final String mitra;
+  const RentalScreen({super.key, required this.myPhone, this.mitra = ''});
 
   @override
   State<RentalScreen> createState() => _RentalScreenState();
@@ -24,6 +28,7 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
   String? _galatKatalog;
   String? _galatSewa;
   String _jenis = 'semua'; // semua | car | motorcycle
+  late String _mitra = widget.mitra;
 
   static const _hari = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
   static const _bulan = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
@@ -141,7 +146,7 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final tampil = [
       for (final k in _katalog ?? const <Map<String, dynamic>>[])
-        if (_jenis == 'semua' || (k['vehicle_type'] ?? 'car') == _jenis) k,
+        if ((_jenis == 'semua' || (k['vehicle_type'] ?? 'car') == _jenis) && (_mitra.isEmpty || k['mitra_nama'] == _mitra)) k,
     ];
     return RefreshIndicator(
       onRefresh: _muatKatalog,
@@ -158,11 +163,31 @@ class _RentalScreenState extends State<RentalScreen> with SingleTickerProviderSt
               _chipJenis('Motor', 'motorcycle'),
             ],
           ),
+          if (_mitra.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: InputChip(
+                avatar: const Icon(Icons.storefront_outlined, size: 18),
+                label: Text(_mitra),
+                onDeleted: () => setState(() => _mitra = ''),
+                deleteButtonTooltipMessage: 'Lihat semua mitra',
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           if (_katalog == null && _galatKatalog == null)
             const Padding(padding: EdgeInsets.only(top: 80), child: Center(child: CircularProgressIndicator()))
           else if (_katalog == null)
             PesanKosong(ikon: Icons.wifi_off, judul: 'Kendaraan belum bisa dimuat', teks: _galatKatalog!, tombol: 'Coba lagi', saatTekan: _muatKatalog)
+          else if (tampil.isEmpty && _mitra.isNotEmpty)
+            PesanKosong(
+              ikon: Icons.car_rental,
+              judul: 'Armada mitra ini belum tersedia',
+              teks: '$_mitra belum memasang kendaraan yang bisa disewa. Lihat kendaraan mitra lain, yuk.',
+              tombol: 'Lihat semua mitra',
+              saatTekan: () => setState(() => _mitra = ''),
+            )
           else if (tampil.isEmpty)
             const PesanKosong(
               ikon: Icons.car_rental,
