@@ -75,6 +75,10 @@ func lupaPasswordHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 503, map[string]string{"error": "Atur ulang lewat email belum aktif. Pakai Google atau hubungi admin."})
 		return
 	}
+	if pesan := tolakTurnstile(r, false); pesan != "" {
+		writeJSONResponse(w, 403, map[string]string{"error": pesan})
+		return
+	}
 
 	ip := alamatPemanggil(r)
 	sejamLalu := waktuKeDB(time.Now().Add(-time.Hour).Format(time.RFC3339))

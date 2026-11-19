@@ -81,8 +81,10 @@ func kasvoOngkirHandler(w http.ResponseWriter, r *http.Request) {
 	lng, _ := strconv.ParseFloat(q.Get("lng"), 64)
 	if koordinatValid(lat, lng) {
 		t := ambilTarif("BohFood")
+		// Jangkauan tetap garis lurus dari toko; angka km yang dilihat kasir dan
+		// ongkirnya panjang jalan, sama dengan yang nanti ditagih kasvoKurirHandler.
 		km := jarakKM(m.Lat, m.Lng, lat, lng)
-		hasil["jarak_km"] = math.Round(km*10) / 10
+		hasil["jarak_km"] = math.Round(jarakTempuhMeter(m.Lat, m.Lng, lat, lng)/100) / 10
 		hasil["ongkir"] = hitungTarif(t, m.Lat, m.Lng, lat, lng)
 		hasil["biaya_jasa"] = t.BiayaJasa
 		if km > jarakAntarMaksKM {

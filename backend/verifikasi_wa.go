@@ -169,11 +169,12 @@ func verifikasiWAHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	kode := buatKodeVerifWA(phone)
 	writeJSONResponse(w, 200, map[string]interface{}{
-		"status": "success",
-		"wajib":  true,
-		"kode":   kode,
-		"wa":     getEnv("WA_NOMOR", ""),
-		"teks":   "Kode daftar BohAntar: " + kode,
+		"status":     "success",
+		"wajib":      true,
+		"kode":       kode,
+		"wa":         getEnv("WA_NOMOR", ""),
+		"teks":       "Kode daftar BohAntar: " + kode,
+		"bisa_email": emailVerifAktif(), // lembar WA menawarkan "pakai email" (verifikasi_email.go)
 	})
 }
 

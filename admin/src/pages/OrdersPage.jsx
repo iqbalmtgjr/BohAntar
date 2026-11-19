@@ -8,21 +8,46 @@ import Topbar from "../components/Topbar";
 const rp = (n) => "Rp " + Math.round(n || 0).toLocaleString("id-ID");
 const adaTitik = (lat, lng) => Number(lat) !== 0 || Number(lng) !== 0;
 
-// Jemput hijau, tujuan merah, garis lurus di antaranya (bukan rute jalan).
+// Polyline terkode presisi 5 (format OSRM/Google) → [[lat, lng], ...].
+function bongkarPolyline(s) {
+  const hasil = [];
+  let i = 0, lat = 0, lng = 0;
+  while (i < s.length) {
+    for (const k of [0, 1]) {
+      let b, geser = 0, nilai = 0;
+      do { b = s.charCodeAt(i++) - 63; nilai |= (b & 31) << geser; geser += 5; } while (b >= 32);
+      const d = nilai & 1 ? ~(nilai >> 1) : nilai >> 1;
+      if (k) lng += d; else lat += d;
+    }
+    hasil.push([lat / 1e5, lng / 1e5]);
+  }
+  return hasil;
+}
+
+// Jemput hijau, tujuan merah. Garis lurus putus-putus tampil dulu, lalu diganti
+// rute jalan dari OSRM; kalau rute gagal, garis lurusnya yang tetap.
 function PetaPesanan({ o }) {
   const wadah = useRef(null);
   useEffect(() => {
+    let hidup = true;
     const titik = [];
     if (adaTitik(o.pickup_lat, o.pickup_lng)) titik.push([[o.pickup_lat, o.pickup_lng], "#16A34A", "Jemput: " + o.pickup]);
     if (adaTitik(o.dropoff_lat, o.dropoff_lng)) titik.push([[o.dropoff_lat, o.dropoff_lng], "#DC2626", "Tujuan: " + o.dropoff]);
     const m = L.map(wadah.current);
     L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "© OpenStreetMap" }).addTo(m);
-    if (titik.length === 2) L.polyline(titik.map(t => t[0]), { color: "#4F46E5", weight: 3, dashArray: "6 6" }).addTo(m);
+    if (titik.length === 2) {
+      const garis = L.polyline(titik.map(t => t[0]), { color: "#4F46E5", weight: 3, dashArray: "6 6" }).addTo(m);
+      api.rute(o.pickup_lat, o.pickup_lng, o.dropoff_lat, o.dropoff_lng).then(r => {
+        if (!hidup || !r?.polyline) return;
+        garis.setLatLngs(bongkarPolyline(r.polyline)).setStyle({ dashArray: null, weight: 4 });
+        m.fitBounds(garis.getBounds(), { padding: [40, 40], maxZoom: 16 });
+      }).catch(() => {});
+    }
     titik.forEach(([p, warna, label]) =>
       L.circleMarker(p, { radius: 9, color: "#fff", weight: 2, fillColor: warna, fillOpacity: 1 }).bindTooltip(label).addTo(m));
     if (titik.length) m.fitBounds(titik.map(t => t[0]), { padding: [40, 40], maxZoom: 16 });
     else m.setView([0.0785, 111.4940], 13); // pusat Sintang
-    return () => m.remove();
+    return () => { hidup = false; m.remove(); };
   }, [o]);
   return <div ref={wadah} style={{ height: 280, borderRadius: 12, overflow: "hidden", border: "1px solid var(--border)" }} />;
 }
@@ -37,7 +62,7 @@ function Baris({ label, children }) {
   );
 }
 
-function DetailPesanan({ o, dilepas, onTutup }) {
+export function DetailPesanan({ o, dilepas, onTutup }) {
   useEffect(() => {
     const esc = (e) => e.key === "Escape" && onTutup();
     window.addEventListener("keydown", esc);

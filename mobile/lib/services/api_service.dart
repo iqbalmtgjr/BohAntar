@@ -144,6 +144,7 @@ class ApiService {
     required String role,
     required String password,
     String kodeWA = '',
+    String kodeEmail = '',
   }) async {
     final response = await klienHttp.post(
       Uri.parse('$baseUrl/api/auth/register'),
@@ -155,6 +156,7 @@ class ApiService {
         'role': role,
         'password': password,
         if (kodeWA.isNotEmpty) 'kode_wa': kodeWA,
+        if (kodeEmail.isNotEmpty) 'kode_email': kodeEmail,
       }),
     );
 
@@ -245,6 +247,26 @@ class ApiService {
       Uri.parse('$baseUrl/api/auth/verifikasi-wa').replace(queryParameters: {'kode': kode}),
     ));
     return data['terverifikasi'] == true;
+  }
+
+  /// Kirim kode 6 digit ke email pendaftar (backend/verifikasi_email.go).
+  /// false = server belum mewajibkan verifikasi email.
+  Future<bool> mintaKodeEmail(String email) async {
+    final data = _handleResponse(await klienHttp.post(
+      Uri.parse('$baseUrl/api/auth/verifikasi-email'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email}),
+    ));
+    return data['wajib'] == true;
+  }
+
+  /// Cek kode yang diketik; kode salah/kedaluwarsa dilempar sebagai galat.
+  Future<void> cekKodeEmail(String email, String kode) async {
+    _handleResponse(await klienHttp.post(
+      Uri.parse('$baseUrl/api/auth/verifikasi-email'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email, 'kode': kode}),
+    ));
   }
 
   // Lupa password: token Google membuktikan pemilik email akun, lalu password

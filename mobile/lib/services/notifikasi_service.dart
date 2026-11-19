@@ -164,7 +164,8 @@ class NotifikasiService {
         ));
         return;
       }
-      final o = (await ApiService().getOrderStatus(orderId))['order'] as Map?;
+      final status = await ApiService().getOrderStatus(orderId);
+      final o = status['order'] as Map?;
       if (saya == null || o == null) return;
       final nomorSaya = (saya['phone_number'] ?? '').toString();
       final sayaDriver = o['driver_phone'] == nomorSaya;
@@ -177,6 +178,8 @@ class NotifikasiService {
           myRole: sayaDriver ? 'driver' : 'rider',
           otherName: sayaDriver ? (o['rider_name'] ?? 'Penumpang').toString() : (namaDriver.isEmpty ? 'Driver' : namaDriver),
           otherPhone: ((sayaDriver ? o['rider_phone'] : o['driver_phone']) ?? '').toString(),
+          // `driver` hanya dikirim selama driver bertugas; sesudahnya huruf depan.
+          otherFoto: sayaDriver ? '' : ((status['driver'] as Map?)?['foto'] ?? '').toString(),
         ),
       ));
     } catch (e) {

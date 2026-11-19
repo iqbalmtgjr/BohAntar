@@ -297,7 +297,7 @@ func notifikasiDriverSiaga(o Order) {
 // pesananTerlantarSetelah: selama ini pesanan belum diambil driver, admin
 // dikabari — masih ada waktu menelepon driver atau mengalihkannya lewat pesanan
 // manual sebelum kedaluwarsa (batasPesananMenunggu).
-const pesananTerlantarSetelah = 3 * time.Minute
+const pesananTerlantarSetelah = 2 * time.Minute
 
 // pesananTerlantar: pesanan yang masih pending dan genap pesananTerlantarSetelah
 // di antara dari dan sampai. Dipanggil tiap menit dengan jendela yang
@@ -324,16 +324,18 @@ func pesananTerlantar(dari, sampai time.Time) ([]Order, error) {
 	return hasil, rows.Err()
 }
 
-// laporPesananTerlantar mengabari admin lewat dua jalur, masing-masing mati
+// laporPesananTerlantar mengabari admin lewat tiga jalur, masing-masing mati
 // kalau env-nya kosong:
 //   - NOTIF_ADMIN_HP (nomor dipisah koma): aplikasi BohAntar yang login dengan
 //     nomor itu — hanya Android;
 //   - TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID: chat atau grup Telegram, untuk
-//     admin yang HP-nya iPhone.
+//     admin yang HP-nya iPhone;
+//   - NOTIF_ADMIN_EMAIL + SMTP_* (email.go): email, sama dengan pengajuan top up.
 func laporPesananTerlantar(dari, sampai time.Time) {
 	penerima := strings.Split(getEnv("NOTIF_ADMIN_HP", ""), ",")
 	lewatApp := strings.TrimSpace(penerima[0]) != "" && fcmAktif()
-	if !lewatApp && !telegramAktif() {
+	lewatEmail := emailAktif() && getEnv("NOTIF_ADMIN_EMAIL", "") != ""
+	if !lewatApp && !telegramAktif() && !lewatEmail {
 		return
 	}
 	daftar, err := pesananTerlantar(dari, sampai)
@@ -346,6 +348,8 @@ func laporPesananTerlantar(dari, sampai time.Time) {
 		isi := fmt.Sprintf("%s → %s · pemesan %s %s. Sudah %.0f menit menunggu.",
 			o.PickupAddress, o.DropoffAddress, o.RiderName, o.RiderPhone, pesananTerlantarSetelah.Minutes())
 		kirimTelegram(judul + "\n" + isi)
+		kirimEmailAdmin(judul, isi+"\n\nNo. pesanan: "+o.ID+
+			"\nTelepon driver atau alihkan ke satu driver di menu Driver Online dashboard sebelum kedaluwarsa.")
 		if lewatApp {
 			for _, hp := range penerima {
 				notifikasiKe(normalizePhone(hp), judul, isi,

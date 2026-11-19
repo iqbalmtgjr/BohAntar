@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard, Users, ShoppingBag, BarChart3, UserPlus, FileText,
-  LogOut, CheckCircle, CreditCard, LayoutGrid, Percent, Wallet, Banknote, MapPin, GalleryHorizontal, Radio, TicketPercent, LogIn, QrCode
+  LogOut, CheckCircle, CreditCard, LayoutGrid, Percent, Wallet, Banknote, Gauge, GalleryHorizontal, Radio, TicketPercent, LogIn, QrCode
 } from "lucide-react";
 import logoB from "../assets/logo_b_icon.png";
 import ThemeToggle from "./ThemeToggle";
@@ -22,7 +22,7 @@ const navItems = [
   { to: "/users", icon: Users, label: "Pengguna", short: "Pengguna" },
   { to: "/orders", icon: ShoppingBag, label: "Pesanan", short: "Pesanan", center: true },
   { to: "/tarif", icon: Percent, label: "Tarif & Bagi Hasil", short: "Tarif", desktopOnly: true },
-  { to: "/peta", icon: MapPin, label: "Pemakaian Peta", short: "Peta", desktopOnly: true },
+  { to: "/kuota", icon: Gauge, label: "Kuota Layanan", short: "Kuota", desktopOnly: true },
   { to: "/banner", icon: GalleryHorizontal, label: "Banner Beranda", short: "Banner", desktopOnly: true },
   { to: "/voucher", icon: TicketPercent, label: "Voucher Diskon", short: "Voucher", desktopOnly: true },
   { section: "Driver" },

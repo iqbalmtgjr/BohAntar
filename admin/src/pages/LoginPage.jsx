@@ -5,6 +5,7 @@ import { Lock, Mail, ArrowRight, ArrowLeft, Bike, Eye, EyeOff } from 'lucide-rea
 import { motion } from 'motion/react';
 import { api } from '../api';
 import { Alert } from '../components/Feedback';
+import Turnstile from '../components/Turnstile';
 import logoImg from '../assets/logo.png';
 
 
@@ -28,15 +29,21 @@ export default function LoginPage({ onLogin, role }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [resetPesan, setResetPesan] = useState('');
+  // Token Turnstile sekali pakai: sesudah dikirim, putaran naik dan widget dibuat ulang.
+  const [ts, setTs] = useState('');
+  const [tsPutaran, setTsPutaran] = useState(0);
+  const tokenBaru = () => { setTs(''); setTsPutaran((p) => p + 1); };
 
   const kirimTautanReset = async () => {
     if (!email.trim()) { setResetPesan('Tulis email akun Anda di kolom Email dulu.'); return; }
     setResetPesan('Mengirim…');
     try {
-      const res = await api.lupaPassword(email.trim());
+      const res = await api.lupaPassword(email.trim(), ts);
       setResetPesan(res.message || res.error || 'Gagal mengirim. Coba lagi.');
     } catch {
       setResetPesan('Gagal terhubung ke server. Coba lagi.');
+    } finally {
+      tokenBaru();
     }
   };
 
@@ -45,7 +52,7 @@ export default function LoginPage({ onLogin, role }) {
     setLoading(true);
     setError('');
     try {
-      const res = await api.login(email, password);
+      const res = await api.login(email, password, ts);
       if (res.status === 'success') {
         const expectedRole = role === 'food' ? 'food_merchant' : role === 'rental' ? 'rental_partner' : 'admin';
         if (res.role !== expectedRole) {
@@ -67,6 +74,7 @@ export default function LoginPage({ onLogin, role }) {
       setError('Login gagal. Periksa kembali email dan password Anda.');
     } finally {
       setLoading(false);
+      tokenBaru();
     }
   };
 
@@ -321,6 +329,8 @@ export default function LoginPage({ onLogin, role }) {
             </div>
 
             <Alert type="error" style={{ marginBottom: 0 }}>{error}</Alert>
+
+            <Turnstile key={tsPutaran} onToken={setTs} />
 
             <button
               type="submit"

@@ -3478,7 +3478,9 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   Widget _barKecilDriver(bool isDark) {
     final o = _acceptedOrder!;
     final warna = _sudahDijemput ? Colors.green.shade700 : AppTheme.primaryBlue;
-    final alamat = _sudahDijemput ? '${o['dropoff'] ?? ''}' : _cleanPickupAddress(o['pickup']);
+    final tujuan = _pisahPatokan(o['dropoff']);
+    final alamat = _sudahDijemput ? tujuan.alamat : _cleanPickupAddress(o['pickup']);
+    final patokan = _sudahDijemput ? tujuan.patokan : '';
     final eta = teksEstimasi(_ruteAktif, _driverLatLng);
     return Semantics(
       button: true,
@@ -3514,9 +3516,19 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     ),
                     if (alamat.isNotEmpty)
                       Text(alamat, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
+                    if (patokan.isNotEmpty)
+                      Text('Patokan: $patokan', maxLines: 2, overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppTheme.teksBerwarna(context, Colors.amber.shade900))),
                   ],
                 ),
               ),
+              if (_tujuanAktif != null)
+                IconButton.filled(
+                  tooltip: 'Navigasi Google Maps',
+                  onPressed: _bukaNavigasi,
+                  style: IconButton.styleFrom(backgroundColor: warna, foregroundColor: Colors.white),
+                  icon: const Icon(Icons.navigation, size: 20),
+                ),
               const Icon(Icons.keyboard_arrow_up),
             ],
           ),
@@ -3986,6 +3998,46 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
   static String _labelJemput(Map<String, dynamic>? o) =>
       _makanan(o) ? 'Ambil di warung' : _kirimBarang(o) ? 'Ambil Barang' : 'Jemput Penumpang';
 
+  /// Checkout BohFood menempel patokan ke ujung alamat antar: "alamat (Patokan:
+  /// x)". Dipisah lagi di sini: di satu baris berellipsis patokannya selalu
+  /// terpotong, padahal itu yang dicari driver di gang. Pesanan lama ikut
+  /// terbaca karena formatnya tidak berubah.
+  static ({String alamat, String patokan}) _pisahPatokan(Object? dropoff) {
+    const tanda = ' (Patokan: ';
+    final teks = '${dropoff ?? ''}';
+    final i = teks.lastIndexOf(tanda);
+    if (i < 0 || !teks.endsWith(')')) return (alamat: teks, patokan: '');
+    return (alamat: teks.substring(0, i), patokan: teks.substring(i + tanda.length, teks.length - 1).trim());
+  }
+
+  /// Patokan dari pemesan, dipajang mencolok di panel pesanan berjalan.
+  Widget _kotakPatokan(String patokan) => Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(top: 10),
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Colors.amber.withValues(alpha: 0.16),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.amber.shade700.withValues(alpha: 0.6)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.push_pin_outlined, size: 16, color: AppTheme.teksBerwarna(context, Colors.amber.shade900)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text.rich(
+                TextSpan(children: [
+                  const TextSpan(text: 'Patokan: ', style: TextStyle(fontWeight: FontWeight.w800)),
+                  TextSpan(text: patokan),
+                ]),
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      );
+
   static String _labelTombolAmbil(Map<String, dynamic>? o) =>
       _makanan(o) ? 'MAKANAN SUDAH DIAMBIL' : _kirimBarang(o) ? 'AMBIL BARANG' : 'AMBIL PENUMPANG';
 
@@ -4090,6 +4142,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
     final kurirToko = ((o['kasvo_pengantaran_id'] as num?)?.toInt() ?? 0) > 0;
     // Penerima ikut disembunyikan sebelum diterima, sama seperti BohAntar.
     final hpPenerima = tampilkanCatatan ? (o['receiver_phone'] ?? '').toString().trim() : '';
+    // Sesudah diambil urusan warung selesai: daftar belanja jadi satu baris dan
+    // "Bayar ke warung" hilang, supaya yang tersisa untuk perjalanan ke
+    // pelanggan hanya tagihan dan catatannya.
+    final diambil = o['status'] == 'picked_up';
 
     return Container(
       margin: const EdgeInsets.only(top: 16),
@@ -4106,13 +4162,13 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               const Icon(Icons.restaurant, size: 16, color: Colors.orange),
               const SizedBox(width: 8),
               Expanded(
-                child: Text('${kurirToko ? 'Ambil di' : 'Beli di'} ${o['merchant_name'] ?? 'warung'}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                child: Text('${diambil ? 'Pesanan dari' : kurirToko ? 'Ambil di' : 'Beli di'} ${o['merchant_name'] ?? 'warung'}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               ),
             ],
           ),
           // Pesanan toko Kasvo sudah dikirim ke kasirnya. Tanpa pesan ini driver
           // memesan ulang di loket dan dapur memasak dua kali.
-          if (noKasir > 0)
+          if (noKasir > 0 && !diambil)
             Container(
               width: double.infinity,
               margin: const EdgeInsets.only(top: 8),
@@ -4126,6 +4182,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
               ),
             ),
           const SizedBox(height: 8),
+          if (diambil)
+            Text([for (final it in items) '${it['qty'] ?? 0}× ${it['name'] ?? ''}'].join(', '),
+                style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context)))
+          else
           for (final it in items)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 2),
@@ -4158,9 +4218,11 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
             ),
           const Divider(height: 16),
           if (kurirToko) ...[
-            Text('Makanan sudah dibayar pelanggan ke toko — kamu tidak membayar apa pun di kasir.',
-                style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context))),
-            const SizedBox(height: 6),
+            if (!diambil) ...[
+              Text('Makanan sudah dibayar pelanggan ke toko — kamu tidak membayar apa pun di kasir.',
+                  style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context))),
+              const SizedBox(height: 6),
+            ],
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -4197,6 +4259,21 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                   ],
                 ),
               ),
+          ] else if (diambil) ...[
+            if (tunai)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Tagih ke pelanggan', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                  Text(_rupiah(_tagihan(o)), style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15, color: Colors.orange.shade800)),
+                ],
+              ),
+            Text(
+              tunai
+                  ? 'Makanan + ongkir${biayaJasa > 0 ? ' + biaya jasa' : ''}${(o['diskon'] as num? ?? 0) > 0 ? ' − diskon' : ''}'
+                  : 'Sudah lunas: uang makanan + ongkir masuk saldo kamu setelah selesai',
+              style: TextStyle(fontSize: 11, color: AppTheme.teksRedup(context)),
+            ),
           ] else ...[
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -4221,6 +4298,28 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
         ],
       ),
     );
+  }
+
+  /// Petunjuk belok demi belok dari Google Maps ke titik berikutnya: warung atau
+  /// titik jemput sebelum diambil, tujuan sesudahnya. Peta di dalam app hanya
+  /// menggambar garis, tanpa belokan dan tanpa mengikuti posisi driver.
+  ///
+  /// mode=l (roda dua) untuk motor. HP tanpa aplikasi Google Maps, atau yang
+  /// menolak skema google.navigation, dibukakan versi web-nya.
+  Future<void> _bukaNavigasi() async {
+    final t = _tujuanAktif;
+    if (t == null) return;
+    final motor = _kendaraan != 'mobil';
+    final titik = '${t.latitude},${t.longitude}';
+    try {
+      if (await launchUrl(Uri.parse('google.navigation:q=$titik&mode=${motor ? 'l' : 'd'}'),
+          mode: LaunchMode.externalApplication)) {
+        return;
+      }
+    } catch (_) {}
+    final web = Uri.parse(
+        'https://www.google.com/maps/dir/?api=1&destination=$titik&travelmode=${motor ? 'two-wheeler' : 'driving'}');
+    if (!await launchUrl(web, mode: LaunchMode.externalApplication)) _beriTahu('Google Maps tidak bisa dibuka');
   }
 
   /// wa.me menuntut nomor internasional tanpa "+", jadi 08… diubah ke 628….
@@ -4356,6 +4455,8 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
     if (_acceptedOrder != null) {
       // 4. ACTIVE ORDER DRIVER PANEL
+      final tujuan = _pisahPatokan(_acceptedOrder!['dropoff']);
+      final eta = teksEstimasi(_ruteAktif, _driverLatLng);
       return Container(
         padding: EdgeInsets.fromLTRB(24, 24, 24, _ruangNav + 4),
         decoration: BoxDecoration(
@@ -4432,28 +4533,48 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     children: [
                       Text("📍 ${_labelJemput(_acceptedOrder)}: ${_cleanPickupAddress(_acceptedOrder!['pickup'])}", overflow: TextOverflow.ellipsis, maxLines: 2, style: const TextStyle(fontSize: 12)),
                       const SizedBox(height: 12),
-                      Text("🏁 Antar ke: ${_acceptedOrder!['dropoff']}", overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                      // Dulu satu baris: alamat panjang dan patokan di ujungnya
+                      // terpotong jadi "Baning Kota, Sintan…".
+                      Text("🏁 Antar ke: ${tujuan.alamat}", overflow: TextOverflow.ellipsis, maxLines: 3,
+                          style: TextStyle(fontSize: 12, fontWeight: _sudahDijemput ? FontWeight.w700 : FontWeight.normal)),
+                      // Sebelum diambil cukup satu baris: kotak penuh membuat
+                      // panel BohFood setinggi layar dan menabrak tombol atas.
+                      if (tujuan.patokan.isNotEmpty && !_sudahDijemput)
+                        Text('Patokan: ${tujuan.patokan}', maxLines: 1, overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12, color: AppTheme.teksRedup(context))),
                     ],
                   ),
                 )
               ],
             ),
-            _detailBarang(_acceptedOrder!, tampilkanCatatan: true),
-            if (teksEstimasi(_ruteAktif, _driverLatLng) case final eta?) ...[
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  const Icon(Icons.schedule, size: 16, color: AppTheme.primaryBlue),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '${_arahBerikut(_acceptedOrder)}: $eta',
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            if (tujuan.patokan.isNotEmpty && _sudahDijemput) _kotakPatokan(tujuan.patokan),
+            // Arah berikutnya + Navigasi, di atas rincian barang/makanan supaya
+            // tidak tenggelam di bawah kotak belanja BohFood.
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                const Icon(Icons.schedule, size: 16, color: AppTheme.primaryBlue),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    eta == null ? _arahBerikut(_acceptedOrder) : '${_arahBerikut(_acceptedOrder)}: $eta',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                ),
+                if (_tujuanAktif != null)
+                  FilledButton.icon(
+                    onPressed: _bukaNavigasi,
+                    icon: const Icon(Icons.navigation, size: 16),
+                    label: const Text('Navigasi', style: TextStyle(fontWeight: FontWeight.bold)),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _sudahDijemput ? Colors.green.shade700 : AppTheme.primaryBlue,
+                      foregroundColor: Colors.white,
+                      visualDensity: VisualDensity.compact,
                     ),
                   ),
-                ],
-              ),
-            ],
+              ],
+            ),
+            _detailBarang(_acceptedOrder!, tampilkanCatatan: true),
             const SizedBox(height: 16),
             // Chat & Call buttons
             Row(
@@ -4514,10 +4635,13 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
 
                 if (!isPickedUp) {
                   try {
-                    // Barang difoto saat diambil: satu-satunya bukti kondisi
-                    // awalnya kalau nanti ada sengketa.
+                    // Barang BohSend difoto saat diambil: satu-satunya bukti
+                    // kondisi awalnya kalau nanti ada sengketa. BohFood tidak
+                    // (19 Nov 2026): makanan dibeli driver sendiri di warung,
+                    // fotonya cuma menahan driver dan menumpuk di disk VPS —
+                    // sama seperti langkah selesainya yang sudah tanpa foto.
                     String? foto;
-                    if (_kirimBarang(_acceptedOrder)) {
+                    if (_kirimBarang(_acceptedOrder) && !_makanan(_acceptedOrder)) {
                       foto = await _unggahFotoBukti('Foto barang saat diambil');
                       if (foto == null) return;
                     }
@@ -4526,6 +4650,10 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                     if (res['status'] == 'success') {
                       setState(() {
                         _acceptedOrder = res['order'];
+                        // Panel penuh menutupi rute ke tujuan (kamera di tengah
+                        // layar). Diciutkan: rute, arah, patokan, dan Navigasi
+                        // terlihat; ketuk bar untuk tombol Selesai.
+                        _panelKecil = true;
                       });
                       // Rute pindah: dari posisi driver ke tujuan penumpang.
                       _setupDriverOrderRouting();
@@ -4747,9 +4875,12 @@ class _DashboardScreenState extends State<DashboardScreen> with TickerProviderSt
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                       ),
                       const SizedBox(height: 22),
+                      // Patokan baru tampil sesudah diterima; di sini cukup
+                      // alamatnya, dua baris supaya kelurahannya terbaca.
                       Text(
-                        '🏁 Tujuan: ${_currentIncomingOrder!['dropoff']}',
+                        '🏁 Tujuan: ${_pisahPatokan(_currentIncomingOrder!['dropoff']).alamat}',
                         overflow: TextOverflow.ellipsis,
+                        maxLines: 2,
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                       ),
                     ],

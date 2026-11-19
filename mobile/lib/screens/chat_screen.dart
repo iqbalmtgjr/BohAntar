@@ -1,7 +1,31 @@
 import 'package:flutter/material.dart';
+import 'package:mobile/models/food.dart' show urlGambar;
 import 'package:mobile/services/chat_service.dart';
 import 'package:mobile/theme.dart';
 import 'package:url_launcher/url_launcher.dart';
+
+/// Lawan bicara di chat: selfie driver kalau sudah dipasang, huruf depan
+/// namanya kalau belum (penumpang tidak punya foto). Huruf yang sama tetap
+/// tampil selagi foto dimuat atau gagal dimuat.
+class AvatarLawan extends StatelessWidget {
+  final String nama;
+  final String foto;
+  final double radius;
+  const AvatarLawan({super.key, required this.nama, this.foto = '', this.radius = 18});
+
+  @override
+  Widget build(BuildContext context) => CircleAvatar(
+        radius: radius,
+        backgroundColor: AppTheme.primaryBlue.withValues(alpha: 0.12),
+        // Dikecilkan saat diurai: foto wajah aslinya selebar 1.600 px.
+        foregroundImage: foto.isEmpty ? null : ResizeImage(NetworkImage(urlGambar(foto)), width: (radius * 6).round()),
+        onForegroundImageError: foto.isEmpty ? null : (_, _) {},
+        child: Text(
+          nama.isNotEmpty ? nama[0].toUpperCase() : '?',
+          style: TextStyle(fontSize: radius * 0.75, fontWeight: FontWeight.bold, color: AppTheme.teksBerwarna(context, AppTheme.primaryBlue)),
+        ),
+      );
+}
 
 class ChatScreen extends StatefulWidget {
   final String orderID;
@@ -10,6 +34,7 @@ class ChatScreen extends StatefulWidget {
   final String myRole;
   final String otherName;
   final String otherPhone;
+  final String otherFoto; // selfie driver; kosong = huruf depan nama
 
   const ChatScreen({
     super.key,
@@ -19,6 +44,7 @@ class ChatScreen extends StatefulWidget {
     required this.myRole,
     required this.otherName,
     required this.otherPhone,
+    this.otherFoto = '',
   });
 
   @override
@@ -124,20 +150,7 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
         ),
         title: Row(
           children: [
-            CircleAvatar(
-              radius: 18,
-              backgroundColor: AppTheme.primaryBlue.withOpacity(0.12),
-              child: Text(
-                widget.otherName.isNotEmpty
-                    ? widget.otherName[0].toUpperCase()
-                    : '?',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.primaryBlue,
-                ),
-              ),
-            ),
+            AvatarLawan(nama: widget.otherName, foto: widget.otherFoto),
             const SizedBox(width: 10),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -223,7 +236,8 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
                     itemBuilder: (context, i) {
                       final msg = _messages[i];
                       final isMe = msg.senderPhone == widget.myPhone;
-                      return ChatBubble(msg: msg, isMe: isMe);
+                      // Foto hanya untuk pesan lawan bicara itu sendiri, bukan admin yang ikut menulis.
+                      return ChatBubble(msg: msg, isMe: isMe, foto: msg.senderPhone == widget.otherPhone ? widget.otherFoto : '');
                     },
                   ),
           ),
@@ -303,8 +317,9 @@ class _ChatScreenState extends State<ChatScreen> with WidgetsBindingObserver {
 class ChatBubble extends StatelessWidget {
   final ChatMessage msg;
   final bool isMe;
+  final String foto; // selfie pengirim kalau ia driver pesanan ini
 
-  const ChatBubble({super.key, required this.msg, required this.isMe});
+  const ChatBubble({super.key, required this.msg, required this.isMe, this.foto = ''});
 
   @override
   Widget build(BuildContext context) {
@@ -318,20 +333,7 @@ class ChatBubble extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (!isMe) ...[
-            CircleAvatar(
-              radius: 14,
-              backgroundColor: AppTheme.primaryBlue.withOpacity(0.12),
-              child: Text(
-                msg.senderName.isNotEmpty
-                    ? msg.senderName[0].toUpperCase()
-                    : '?',
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: AppTheme.primaryBlue,
-                ),
-              ),
-            ),
+            AvatarLawan(nama: msg.senderName, foto: foto, radius: 14),
             const SizedBox(width: 6),
           ],
           Flexible(

@@ -22,7 +22,7 @@ const UsersPage = lazy(() => import("./pages/UsersPage"));
 const OrdersPage = lazy(() => import("./pages/OrdersPage"));
 const AnalyticsPage = lazy(() => import("./pages/AnalyticsPage"));
 const TarifPage = lazy(() => import("./pages/TarifPage"));
-const PetaPage = lazy(() => import("./pages/PetaPage"));
+const KuotaPage = lazy(() => import("./pages/KuotaPage"));
 const DriverOnlinePage = lazy(() => import("./pages/DriverOnlinePage"));
 const BannerPage = lazy(() => import("./pages/BannerPage"));
 const VoucherPage = lazy(() => import("./pages/VoucherPage"));
@@ -237,7 +237,7 @@ export default function App() {
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/tarif" element={<TarifPage />} />
-        <Route path="/peta" element={<PetaPage />} />
+        <Route path="/kuota" element={<KuotaPage />} />
         <Route path="/driver-online" element={<DriverOnlinePage />} />
         <Route path="/banner" element={<BannerPage />} />
         <Route path="/voucher" element={<VoucherPage />} />

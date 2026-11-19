@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -251,10 +252,10 @@ type warungPemesan struct {
 	Buka    bool    `json:"is_open"`
 	Lat     float64 `json:"lat"`
 	Lng     float64 `json:"lng"`
-	JarakKM float64 `json:"jarak_km"` // -1 kalau pemesan tidak mengirim posisinya
-	// Ongkir kalau diantar ke posisi pemesan sekarang. Rumus dan jaraknya
-	// sama dengan /api/tarif/estimasi, jadi angkanya sama dengan yang nanti
-	// ditagih. 0 kalau posisinya tidak diketahui.
+	JarakKM float64 `json:"jarak_km"` // panjang jalan; -1 kalau pemesan tidak mengirim posisinya
+	// Ongkir ke posisi pemesan sekarang, dari jarak yang sama dengan JarakKM.
+	// 0 kalau posisinya tidak diketahui. Yang ditagih tetap dihitung ulang saat
+	// checkout ke titik antar yang dipilih pemesan.
 	Ongkir    float64 `json:"ongkir"`
 	InfoBuka  string  `json:"info_buka"`  // selama tutup, mis. "Buka lagi besok 07.00"
 	CocokMenu string  `json:"cocok_menu"` // menu yang cocok dengan pencarian ?q=
@@ -301,14 +302,25 @@ func foodMerchantsHandler(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		x.JarakKM = -1
-		if adaPosisi {
-			x.JarakKM = jarakKM(lat, lng, x.Lat, x.Lng)
-			x.Ongkir = hitungOngkos(tarif, x.JarakKM*1000)
-		}
 		if x.kasvo != "" {
 			uuids = append(uuids, x.kasvo)
 		}
 		daftar = append(daftar, x)
+	}
+	// Panjang jalan, bukan garis lurus (19 Nov 2026): angka di kartu warung
+	// harus sama dengan "Ongkir (x km)" di checkout. Posisi pemesan dibulatkan
+	// ke 4 desimal (±11 m) supaya geser GPS kecil dan halaman etalase
+	// berikutnya memakai simpanan, bukan bertanya ke OSRM lagi.
+	if adaPosisi {
+		asal := make([][2]float64, len(daftar))
+		for i, x := range daftar {
+			asal[i] = [2]float64{x.Lat, x.Lng}
+		}
+		meter := jarakTempuhKe(asal, math.Round(lat*1e4)/1e4, math.Round(lng*1e4)/1e4)
+		for i := range daftar {
+			daftar[i].JarakKM = meter[i] / 1000
+			daftar[i].Ongkir = hitungOngkos(tarif, meter[i])
+		}
 	}
 	// Jam buka toko Kasvo diatur di Kasvo; satu panggilan untuk semuanya.
 	if len(uuids) > 0 {

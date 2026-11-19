@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// Jendela tiap menit bersambung: pesanan yang menunggu 3 menit dilaporkan
+// Jendela tiap menit bersambung: pesanan yang menunggu pesananTerlantarSetelah dilaporkan
 // tepat sekali, dan yang sudah diambil driver tidak dilaporkan sama sekali.
 func TestPesananTerlantarDilaporkanSekali(t *testing.T) {
 	bukaDBTes(t)
@@ -16,9 +16,9 @@ func TestPesananTerlantarDilaporkanSekali(t *testing.T) {
 		db.Exec("UPDATE orders SET created_at = ? WHERE id = ?", sekarang.Add(-umur), id)
 		return id
 	}
-	lama := buat("+62895", "pending", 3*time.Minute+30*time.Second)
-	baru := buat("+62894", "pending", 2*time.Minute+30*time.Second)
-	diambil := buat("+62893", "accepted", 3*time.Minute+30*time.Second)
+	lama := buat("+62895", "pending", pesananTerlantarSetelah+30*time.Second)
+	baru := buat("+62894", "pending", pesananTerlantarSetelah-30*time.Second)
+	diambil := buat("+62893", "accepted", pesananTerlantarSetelah+30*time.Second)
 
 	milikTes := func(dari, sampai time.Time) (ids []string) {
 		daftar, err := pesananTerlantar(dari, sampai)

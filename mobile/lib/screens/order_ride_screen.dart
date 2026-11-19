@@ -2594,6 +2594,7 @@ class _OrderRideScreenState extends State<OrderRideScreen> with TickerProviderSt
                         myRole: 'rider',
                         otherName: _driverName.isNotEmpty ? _driverName : "Driver",
                         otherPhone: _driverPhone,
+                        otherFoto: _driverFoto,
                       )));
                     }
                   },

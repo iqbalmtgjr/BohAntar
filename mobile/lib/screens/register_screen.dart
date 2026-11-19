@@ -61,15 +61,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
     try {
       final phone = _phone;
-      final kodeWA = await verifikasiNomorWA(context, phone);
-      if (kodeWA == null) return; // lembar verifikasi ditutup
+      final email = _emailController.text.trim();
+      final kode = await verifikasiPendaftaran(context, phone, email);
+      if (kode == null) return; // lembar verifikasi ditutup
       final response = await ApiService().register(
         phoneNumber: phone,
         name: _nameController.text.trim(),
-        email: _emailController.text.trim(),
+        email: email,
         role: _role,
         password: _passwordController.text,
-        kodeWA: kodeWA,
+        kodeWA: kode.wa,
+        kodeEmail: kode.email,
       );
 
       if (response['status'] == 'success') {

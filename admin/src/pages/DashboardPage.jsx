@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Users, ShoppingBag, Bike, Clock, CheckCircle, XCircle, DollarSign, Wallet, Eye, EyeOff } from "lucide-react";
+import { Users, ShoppingBag, Bike, Clock, CheckCircle, XCircle, DollarSign, Wallet, Eye, EyeOff, UserCheck, Navigation } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from "recharts";
 import { api } from "../api";
 import Topbar from "../components/Topbar";
 import { ALL_MENU } from "../components/Sidebar";
-
-const COLORS = ["var(--primary)", "var(--success)", "var(--warning)", "var(--danger)"];
 
 export default function DashboardPage() {
   const [analytics, setAnalytics] = useState(null);
@@ -20,10 +18,13 @@ export default function DashboardPage() {
   if (loading) return (<><Topbar title="Dashboard" /><div className="loading-overlay"><div className="spinner"/><p>Memuat data...</p></div></>);
 
   const a = analytics || {};
+  // Urut perjalanan pesanan; dipakai strip mobile, kartu desktop, dan pie.
   const statusData = [
-    { name: "Selesai", value: a.completed_orders || 0 },
-    { name: "Dibatalkan", value: a.cancelled_orders || 0 },
-    { name: "Pending", value: a.pending_orders || 0 },
+    { name: "Pending", short: "Pending", value: a.pending_orders || 0, icon: Clock, color: "var(--warning)", bg: "var(--warning-glow)" },
+    { name: "Diambil Driver", short: "Diambil", value: a.accepted_orders || 0, icon: UserCheck, color: "var(--info)", bg: "var(--info-glow)" },
+    { name: "Dalam Perjalanan", short: "Di Jalan", value: a.picked_up_orders || 0, icon: Navigation, color: "var(--primary)", bg: "var(--primary-glow)" },
+    { name: "Selesai", short: "Selesai", value: a.completed_orders || 0, icon: CheckCircle, color: "var(--success)", bg: "var(--success-glow)" },
+    { name: "Dibatalkan", short: "Batal", value: a.cancelled_orders || 0, icon: XCircle, color: "var(--danger)", bg: "var(--danger-glow)" },
   ];
   const driverData = (a.driver_stats || []).slice(0, 6).map(d => ({
     name: d.driver_name?.split(" ")[0] || "?",
@@ -162,15 +163,11 @@ export default function DashboardPage() {
 
           {/* Status pesanan sekilas, menggantikan 8 kartu statistik versi desktop */}
           <div className="card" style={{ marginBottom: 22, padding: 14, borderRadius: 18 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
-              {[
-                { label: "Selesai", value: a.completed_orders || 0, color: "var(--success)" },
-                { label: "Pending", value: a.pending_orders || 0, color: "var(--warning)" },
-                { label: "Dibatalkan", value: a.cancelled_orders || 0, color: "var(--danger)" }
-              ].map(s => (
-                <div key={s.label} style={{ textAlign: "center" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4 }}>
+              {statusData.map(s => (
+                <div key={s.name} style={{ textAlign: "center", minWidth: 0 }}>
                   <div style={{ fontSize: 18, fontWeight: 800, color: s.color, lineHeight: 1.2 }}>{s.value}</div>
-                  <div style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-muted)", marginTop: 2 }}>{s.label}</div>
+                  <div style={{ fontSize: 10.5, fontWeight: 600, color: "var(--text-muted)", marginTop: 2, whiteSpace: "nowrap" }}>{s.short}</div>
                 </div>
               ))}
             </div>
@@ -206,10 +203,8 @@ export default function DashboardPage() {
             { label: "Total Pesanan", value: a.total_orders || 0, icon: ShoppingBag, color: "var(--success)", bg: "var(--success-glow)" },
             { label: "Total Driver", value: a.total_drivers || 0, icon: Bike, color: "var(--warning)", bg: "var(--warning-glow)" },
             { label: "Pendapatan Kami (bersih) →", value: fmtShort(a.pendapatan_kami), title: `Komisi + biaya jasa − diskon voucher + potongan QR mitra. Ongkos kotor: ${fmt(a.total_revenue)}`, icon: DollarSign, color: "var(--info)", bg: "var(--info-glow)", to: "/komisi" },
-            { label: "Pesanan Selesai", value: a.completed_orders || 0, icon: CheckCircle, color: "var(--success)", bg: "var(--success-glow)" },
-            { label: "Pesanan Pending", value: a.pending_orders || 0, icon: Clock, color: "var(--warning)", bg: "var(--warning-glow)" },
-            { label: "Pesanan Dibatalkan", value: a.cancelled_orders || 0, icon: XCircle, color: "var(--danger)", bg: "var(--danger-glow)" },
             { label: "Total Penumpang", value: a.total_riders || 0, icon: Users, color: "var(--info)", bg: "var(--info-glow)" },
+            ...statusData.map(s => ({ ...s, label: "Pesanan " + s.name })),
           ].map((s, i) => {
             const Kartu = s.to ? Link : "div";
             return (
@@ -237,8 +232,9 @@ export default function DashboardPage() {
             <div className="card-title">Distribusi Status Pesanan</div>
             <ResponsiveContainer width="100%" height={220}>
               <PieChart>
-                <Pie data={statusData} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({name,value})=>`${name}: ${value}`}>
-                  {statusData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+                {/* Irisan nol dibuang: labelnya menumpuk di satu titik. Angka nol tetap ada di kartu. */}
+                <Pie data={statusData.filter(s => s.value)} cx="50%" cy="50%" outerRadius={80} dataKey="value" label={({name,value})=>`${name}: ${value}`}>
+                  {statusData.filter(s => s.value).map(s => <Cell key={s.name} fill={s.color} />)}
                 </Pie>
                 <Legend />
                 <Tooltip contentStyle={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-primary)" }} />

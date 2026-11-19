@@ -357,7 +357,8 @@ type RegisterInput struct {
 	Email       string `json:"email"`
 	Role        string `json:"role"`
 	Password    string `json:"password"`
-	KodeWA      string `json:"kode_wa"` // verifikasi_wa.go
+	KodeWA      string `json:"kode_wa"`    // verifikasi_wa.go
+	KodeEmail   string `json:"kode_email"` // verifikasi_email.go
 }
 type TopUpInput struct {
 	Amount float64 `json:"amount"`
@@ -492,6 +493,7 @@ func main() {
 	// mux.HandleFunc("/api/auth/verify-otp", verifyOTPHandler)
 	mux.HandleFunc("/api/auth/register", registerHandler)
 	mux.HandleFunc("/api/auth/verifikasi-wa", verifikasiWAHandler)
+	mux.HandleFunc("/api/auth/verifikasi-email", verifikasiEmailHandler) // verifikasi_email.go
 	mux.HandleFunc("/api/webhook/whatsapp", waWebhookHandler)
 	mux.HandleFunc("/api/auth/google", googleLoginHandler)
 	mux.HandleFunc("/api/auth/reset-password-google", resetPasswordGoogleHandler)
@@ -563,7 +565,7 @@ func main() {
 	mux.HandleFunc("/api/admin/analytics", admin(adminAnalyticsHandler))
 	mux.HandleFunc("/api/admin/tarif", admin(adminTarifHandler))
 	mux.HandleFunc("/api/admin/tarif/contoh", admin(adminTarifContohHandler))
-	mux.HandleFunc("/api/admin/peta/pemakaian", admin(adminPemakaianPetaHandler))
+	mux.HandleFunc("/api/admin/kuota", admin(adminKuotaHandler))
 	mux.HandleFunc("/api/admin/driver-online", admin(adminDriverOnlineHandler))
 	mux.HandleFunc("/api/admin/pesanan-manual", admin(adminPesananManualHandler))
 	mux.HandleFunc("/api/admin/pesanan-tujukan", admin(adminTujukanPesananHandler))
@@ -603,6 +605,7 @@ func main() {
 	// Pendaftaran diajukan calon mitra/driver sendiri, jadi tetap publik.
 	mux.HandleFunc("/api/admin/drivers/register", adminDriverRegisterHandler)
 	mux.HandleFunc("/api/partner/register", partnerRegisterHandler)
+	mux.HandleFunc("/api/turnstile", turnstileHandler) // turnstile.go
 	mux.HandleFunc("/ws/chat/", chatWebSocketHandler)
 	mux.HandleFunc("/api/chat/", chatHistoryHandler)
 	mux.HandleFunc("/api/chats", daftarChatHandler)
@@ -1792,12 +1795,22 @@ func dbCancelOrder(orderID string, statusBoleh []string, updatedAt string) (bool
 	return n == 1, err
 }
 
-func dbGetOrders(driver, rider, status, cari string, page, limit int) ([]Order, int, error) {
+func dbGetOrders(driver, rider, status, cari, dari, sampai string, page, limit int) ([]Order, int, error) {
 	where := " WHERE 1=1"
 	var args []interface{}
 	if driver != "" {
 		where += " AND driver_phone = ?"
 		args = append(args, driver)
+	}
+	// Rentang sama persis dengan adminKomisiHandler, supaya rincian pesanan
+	// seorang driver selalu cocok dengan angka di baris laporannya.
+	if dari != "" {
+		where += " AND created_at >= ?"
+		args = append(args, dari)
+	}
+	if sampai != "" {
+		where += " AND created_at < DATE_ADD(?, INTERVAL 1 DAY)"
+		args = append(args, sampai)
 	}
 	if rider != "" {
 		where += " AND rider_phone = ?"
@@ -1909,7 +1922,7 @@ func bacaHalaman(r *http.Request, maks int) (page, limit int, diminta bool) {
 }
 
 func dbGetPendingOrders() ([]Order, error) {
-	res, _, err := dbGetOrders("", "", "pending", "", 0, 0)
+	res, _, err := dbGetOrders("", "", "pending", "", "", "", 0, 0)
 	return res, err
 }
 
@@ -2166,7 +2179,6 @@ func dbGetAnalyticsData() (map[string]interface{}, error) {
 	completedOrders := byStatus["completed"]
 	cancelledOrders := byStatus["cancelled"]
 	pendingOrders := byStatus["pending"]
-	ongoingOrders := byStatus["accepted"] + byStatus["picked_up"]
 
 	// total_revenue = ongkos kotor (sebagian besar milik driver). Pendapatan
 	// BohAntar dihitung dengan rumus yang sama seperti adminKomisiHandler:
@@ -2213,7 +2225,8 @@ func dbGetAnalyticsData() (map[string]interface{}, error) {
 		"completed_orders": completedOrders,
 		"cancelled_orders": cancelledOrders,
 		"pending_orders":   pendingOrders,
-		"ongoing_orders":   ongoingOrders,
+		"accepted_orders":  byStatus["accepted"],  // diambil driver, menuju jemput
+		"picked_up_orders": byStatus["picked_up"], // dalam perjalanan
 		"total_revenue":    totalRevenue,
 		"pendapatan_kami":  pendapatanKami,
 		"total_users":      totalUsers,
@@ -2229,7 +2242,7 @@ func enableCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Turnstile")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
@@ -2379,7 +2392,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSONResponse(w, 429, map[string]string{"error": pesanKuotaDaftar})
 		return
 	}
-	if pesan := cekVerifWA(input.KodeWA, input.PhoneNumber); pesan != "" {
+	if pesan := cekVerifDaftar(input.KodeWA, input.PhoneNumber, input.KodeEmail, input.Email); pesan != "" {
 		writeJSONResponse(w, 400, map[string]string{"error": pesan})
 		return
 	}
@@ -2406,6 +2419,7 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	habiskanVerifWA(input.KodeWA)
+	habiskanVerifEmail(input.Email)
 	catatPendaftaran(ip)
 	// Tidak ada alamat bawaan. Dulu setiap akun baru lahir dengan alamat contoh
 	// di Pontianak, padahal layanannya di Sintang — dan baris itulah yang jadi
@@ -3042,8 +3056,8 @@ func createOrderHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// ponytail: daftar utuh hanya untuk APK lama; buang setelah MIN_APP_BUILD >= 4.
-		result, _, _ := dbGetOrders("", phone, "", "", 0, 0)
-		driverOrders, _, _ := dbGetOrders(phone, "", "", "", 0, 0)
+		result, _, _ := dbGetOrders("", phone, "", "", "", "", 0, 0)
+		driverOrders, _, _ := dbGetOrders(phone, "", "", "", "", "", 0, 0)
 		result = append(result, driverOrders...)
 		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "orders": result})
 		return
@@ -4348,8 +4362,8 @@ func adminUserDetailHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONResponse(w, 404, map[string]string{"error": "User tidak ditemukan"})
 			return
 		}
-		result, _, _ := dbGetOrders("", phone, "", "", 0, 0)
-		driverOrders, _, _ := dbGetOrders(phone, "", "", "", 0, 0)
+		result, _, _ := dbGetOrders("", phone, "", "", "", "", 0, 0)
+		driverOrders, _, _ := dbGetOrders(phone, "", "", "", "", "", 0, 0)
 		result = append(result, driverOrders...)
 		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "user": u, "orders": result})
 		return
@@ -4511,7 +4525,15 @@ func adminOrdersHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, total, err := dbGetOrders(df, rf, sf, r.URL.Query().Get("q"), page, limit)
+	dari, sampai := r.URL.Query().Get("from"), r.URL.Query().Get("to")
+	for _, d := range []string{dari, sampai} {
+		if _, err := time.Parse("2006-01-02", d); d != "" && err != nil {
+			writeJSONResponse(w, 400, map[string]string{"error": "Tanggal harus berformat YYYY-MM-DD"})
+			return
+		}
+	}
+
+	result, total, err := dbGetOrders(df, rf, sf, r.URL.Query().Get("q"), dari, sampai, page, limit)
 	if err != nil {
 		galatServer(w, r, err)
 		return
@@ -5297,6 +5319,10 @@ func partnerRegisterHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	catatGagalLogin(rem)
+	if pesan := tolakTurnstile(r, true); pesan != "" { // hanya dipakai dashboard web
+		writeJSONResponse(w, 403, map[string]string{"error": pesan})
+		return
+	}
 	// Password dibaca di luar struct PartnerApplication supaya tidak pernah ikut
 	// terkirim di JSON daftar pengajuan.
 	var in struct {
@@ -5504,6 +5530,7 @@ type RingkasanChat struct {
 	LawanNama     string `json:"lawan_nama"`
 	LawanPeran    string `json:"lawan_peran"` // "driver" | "penumpang"
 	LawanPhone    string `json:"lawan_phone"`
+	LawanFoto     string `json:"lawan_foto"` // selfie driver (/uploads/...), "" untuk penumpang atau driver tanpa foto
 	PesanTerakhir string `json:"pesan_terakhir"`
 	DariSaya      bool   `json:"dari_saya"`
 	Waktu         string `json:"waktu"`
@@ -5549,6 +5576,9 @@ func daftarChatHandler(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	daftar := []RingkasanChat{}
 	total := 0
+	// ponytail: satu kueri per driver berbeda, bukan JOIN users — collation
+	// tabel di produksi MariaDB tidak seragam (galat 1267). Paling banyak 50.
+	foto := map[string]string{}
 	for rows.Next() {
 		var c RingkasanChat
 		var riderPhone, riderName, driverPhone, driverName, pengirim string
@@ -5559,6 +5589,10 @@ func daftarChatHandler(w http.ResponseWriter, r *http.Request) {
 		c.DariSaya = pengirim == phone
 		if phone == riderPhone {
 			c.LawanPeran, c.LawanPhone, c.LawanNama = "driver", driverPhone, driverName
+			if _, ada := foto[driverPhone]; !ada && driverPhone != "" {
+				foto[driverPhone] = fotoWajah(driverPhone)
+			}
+			c.LawanFoto = foto[driverPhone]
 		} else {
 			c.LawanPeran, c.LawanPhone, c.LawanNama = "penumpang", riderPhone, riderName
 		}
@@ -6868,6 +6902,10 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	ip := alamatPemanggil(r)
 	if terlaluSeringGagal(ip) {
 		writeJSONResponse(w, 429, map[string]string{"error": "Terlalu banyak percobaan masuk yang gagal. Coba lagi 15 menit lagi."})
+		return
+	}
+	if pesan := tolakTurnstile(r, false); pesan != "" {
+		writeJSONResponse(w, 403, map[string]string{"error": pesan})
 		return
 	}
 	u, hash, found := dbFindUserByEmail(strings.ToLower(strings.TrimSpace(input.Email)))

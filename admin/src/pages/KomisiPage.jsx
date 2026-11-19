@@ -2,6 +2,57 @@ import { useEffect, useState } from "react";
 import { Wallet, Percent, Banknote, Smartphone, Receipt, AlertTriangle, QrCode, CheckCircle, X } from "lucide-react";
 import { api } from "../api";
 import Topbar from "../components/Topbar";
+import { DetailPesanan } from "./OrdersPage";
+
+// Pesanan selesai seorang driver di rentang laporan; klik satu → detail lengkap.
+function RincianDriver({ v, from, to, onTutup }) {
+  const [res, setRes] = useState(null);
+  const [detail, setDetail] = useState(null);
+  useEffect(() => {
+    // ponytail: 200 pesanan pertama saja; tambah halaman kalau ada driver melewatinya sebulan.
+    api.getOrders({ driver: v.driver_phone, status: "completed", from, to, limit: 200 }).then(setRes);
+  }, [v, from, to]);
+  const orders = res?.orders || [];
+
+  return (
+    <>
+    <div className="modal-overlay" onClick={onTutup}>
+      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 820, position: "relative" }} role="dialog" aria-modal="true">
+        <button className="filter-btn" onClick={onTutup} aria-label="Tutup" style={{ position: "absolute", top: 16, right: 16, padding: 6 }}><X size={16} /></button>
+        <h2>{v.driver_name || v.driver_phone}</h2>
+        <p className="modal-desc" style={{ marginBottom: 16 }}>{v.order_count} pesanan selesai · {from} s/d {to} · klik pesanan untuk detail</p>
+        {!res ? <div className="loading-overlay"><div className="spinner" /></div> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%" }}>
+              <thead><tr><th>Pesanan</th><th>Layanan</th><th>Bayar</th><th>Ongkos</th><th>Komisi</th><th>Biaya Jasa</th><th>Diskon</th><th>Bagian Kami</th><th>Bagian Driver</th></tr></thead>
+              <tbody>
+                {orders.map(o => (
+                  <tr key={o.id} onClick={() => setDetail(o)} style={{ cursor: "pointer" }} title="Klik untuk lihat detail">
+                    <td data-label="Pesanan">
+                      <span className="chip">#{o.id?.slice(-6)}</span>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{new Date(o.created_at).toLocaleString("id-ID")}</div>
+                    </td>
+                    <td data-label="Layanan"><span className="badge badge-primary">{o.service}{o.kelas ? ` ${o.kelas}` : ""}</span></td>
+                    <td data-label="Bayar">{o.payment_method === "cash" ? "Tunai" : "Saldo"}</td>
+                    <td data-label="Ongkos">{rp(o.fare)}</td>
+                    <td data-label="Komisi" style={{ color: "var(--success)" }}>{rp(o.komisi)}</td>
+                    <td data-label="Biaya Jasa" style={{ color: "var(--success)" }}>{rp(o.biaya_jasa)}</td>
+                    <td data-label="Diskon" style={{ color: o.diskon > 0 ? "var(--danger)" : "var(--text-muted)" }}>{o.diskon > 0 ? "− " + rp(o.diskon) : "—"}</td>
+                    <td data-label="Bagian Kami" style={{ color: "var(--success)", fontWeight: 700 }}>{rp(o.komisi + o.biaya_jasa - o.diskon)}</td>
+                    <td data-label="Bagian Driver" style={{ color: "var(--text-secondary)" }}>{rp(o.fare - o.komisi)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {res.total > orders.length && <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 8 }}>Menampilkan {orders.length} dari {res.total} pesanan.</p>}
+          </div>
+        )}
+      </div>
+    </div>
+    {detail && <DetailPesanan o={detail} dilepas={res?.dilepas?.[detail.id]} onTutup={() => setDetail(null)} />}
+    </>
+  );
+}
 
 const rp = (n) => "Rp " + Math.round(n || 0).toLocaleString("id-ID");
 // Diformat dari komponen lokal, bukan toISOString: di WIB tanggal 1 pukul 00.00
@@ -23,6 +74,7 @@ export default function KomisiPage() {
   const [loading, setLoading] = useState(true);
   const [[from, to], setRentang] = useState(RENTANG[0][1]());
   const [setoran, setSetoran] = useState(null); // { driver, nominal, id, qr, lunas }
+  const [rincian, setRincian] = useState(null); // baris driver yang diklik
 
   const load = (f, t) => {
     setLoading(true);
@@ -76,6 +128,9 @@ export default function KomisiPage() {
   const d = data || {};
   const drivers = d.drivers || [];
   const tagihan = d.tagihan_qr || [];
+  // Potongan order tunai diambil dari saldo komisi yang sudah di-top up driver;
+  // yang benar-benar belum disetor hanya saldo yang jatuh di bawah nol.
+  const utangDriver = drivers.reduce((n, v) => n + Math.max(0, -v.saldo_driver), 0);
   const kartu = [
     { label: "Pendapatan Kami", value: rp(d.total_pendapatan), icon: Wallet, color: "var(--success)", bg: "var(--success-glow)" },
     { label: "Dari Komisi", value: rp(d.total_komisi), icon: Percent, color: "var(--success)", bg: "var(--success-glow)" },
@@ -138,19 +193,19 @@ export default function KomisiPage() {
                 <ul style={{ margin: "4px 0 0 18px" }}>
                   <li>Ongkos kotor {rp(d.total_ongkos)} − komisi {rp(d.total_komisi)} = <b>bagian driver {rp((d.total_ongkos || 0) - (d.total_komisi || 0))}</b></li>
                   <li>Komisi {rp(d.total_komisi)} + biaya jasa {rp(d.total_biaya_jasa)} + potongan QR mitra {rp(d.total_komisi_tagihan)} − diskon {rp(d.total_diskon)} = <b style={{ color: "var(--success)" }}>Pendapatan Kami {rp(d.total_pendapatan)}</b></li>
-                  <li>Dari jumlah itu, {rp(d.komisi_wallet)} sudah masuk lewat saldo komisi, {rp(d.komisi_tunai)} masih di tangan driver (order tunai) sampai disetor.</li>
+                  <li>Dari jumlah itu, {rp(d.komisi_tunai)} berasal dari order tunai: penumpang membayar ke driver, lalu bagian kami langsung dipotong dari saldo komisi driver (hasil top up). Yang belum disetor hanya saldo driver yang minus: <b>{rp(utangDriver)}</b>.</li>
                 </ul>
               </div>
             </details>
 
             {/* Tunai belum tentu jadi uang: penumpang membayar ke driver, komisinya
                 cuma memotong saldo driver sampai ia menyetor. */}
-            {d.komisi_tunai > 0 && (
+            {utangDriver > 0 && (
               <div className="card" style={{ marginBottom: 24, display: "flex", gap: 10, alignItems: "flex-start", borderColor: "var(--warning)" }}>
                 <AlertTriangle size={18} style={{ color: "var(--warning)", flexShrink: 0, marginTop: 2 }} />
                 <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
-                  {rp(d.komisi_tunai)} berasal dari order tunai — uangnya diterima driver, komisi dan biaya jasanya dipotong dari saldo driver.
-                  Saldo minus di tabel berarti uang itu belum disetor ke kami.
+                  {rp(utangDriver)} belum disetor: saldo komisi sebagian driver sudah minus karena potongan order tunai melebihi top up mereka.
+                  Tekan "Terima setoran" di baris driver itu saat uangnya diterima.
                 </div>
               </div>
             )}
@@ -158,7 +213,7 @@ export default function KomisiPage() {
             <div className="card">
               <div className="table-header"><h3>{drivers.length} driver · {d.total_order || 0} pesanan selesai</h3></div>
               <table style={{ width: "100%" }}>
-                <thead><tr><th>Driver</th><th>Pesanan</th><th>Ongkos Kotor</th><th>Bagian Driver</th><th>Komisi</th><th>Biaya Jasa</th><th>Belum Disetor</th><th>Saldo Driver</th><th>Setoran</th></tr></thead>
+                <thead><tr><th>Driver</th><th>Pesanan</th><th>Ongkos Kotor</th><th>Bagian Driver</th><th>Komisi</th><th>Biaya Jasa</th><th title="Bagian kami dari order tunai, dipotong otomatis dari saldo komisi driver">Dipotong dari Saldo</th><th>Saldo Driver</th><th>Setoran</th></tr></thead>
                 <tbody>
                   {drivers.length === 0 ? (
                     <tr><td colSpan={9}>
@@ -171,7 +226,7 @@ export default function KomisiPage() {
                       </div>
                     </td></tr>
                   ) : drivers.map(v => (
-                    <tr key={v.driver_phone}>
+                    <tr key={v.driver_phone} onClick={() => setRincian(v)} style={{ cursor: "pointer" }} title="Klik untuk lihat pesanannya">
                       <td data-label="Driver">
                         <div className="user-cell">
                           <div className="user-avatar" style={{ background: "rgba(37,99,235,0.1)", color: "#3B82F6" }}>{v.driver_name?.[0] || "?"}</div>
@@ -183,11 +238,11 @@ export default function KomisiPage() {
                       <td data-label="Bagian Driver" style={{ color: "var(--text-secondary)" }}>{rp(v.total_ongkos - v.komisi)}</td>
                       <td data-label="Komisi" style={{ color: "var(--success)", fontWeight: 700 }}>{rp(v.komisi)}</td>
                       <td data-label="Biaya Jasa" style={{ color: "var(--success)" }}>{rp(v.biaya_jasa)}</td>
-                      <td data-label="Belum Disetor" style={{ color: v.komisi_tunai > 0 ? "var(--warning)" : "var(--text-muted)" }}>{rp(v.komisi_tunai)}</td>
+                      <td data-label="Dipotong dari Saldo" style={{ color: "var(--text-secondary)" }}>{rp(v.komisi_tunai)}</td>
                       <td data-label="Saldo Driver" style={{ color: v.saldo_driver < 0 ? "var(--danger)" : "var(--text-secondary)", fontWeight: v.saldo_driver < 0 ? 700 : 400 }}>{rp(v.saldo_driver)}</td>
                       <td data-label="Setoran">
                         {v.saldo_driver < 0 ? (
-                          <button className="btn" style={{ fontSize: 12, padding: "6px 10px" }} onClick={() => mulaiSetoran(v)}>
+                          <button className="btn" style={{ fontSize: 12, padding: "6px 10px" }} onClick={(e) => { e.stopPropagation(); mulaiSetoran(v); }}>
                             <QrCode size={14} /> Terima setoran
                           </button>
                         ) : (
@@ -228,6 +283,8 @@ export default function KomisiPage() {
             )}
           </>
         )}
+
+        {rincian && <RincianDriver v={rincian} from={from} to={to} onTutup={() => setRincian(null)} />}
 
         {setoran && (
           <div

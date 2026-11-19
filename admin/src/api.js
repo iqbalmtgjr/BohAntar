@@ -52,7 +52,9 @@ const json = (path, opts) => authFetch(`${BASE}${path}`, opts).then(r => r.json(
 
 // Backend mengembalikan "/uploads/xxx"; BASE berakhiran "/api" yang harus dilepas.
 export const fileURL = (path) => (path ? BASE.replace(/\/api$/, "") + path : "");
-const post = (path, data) => json(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+const post = (path, data, headers = {}) => json(path, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(data) });
+// Token Cloudflare Turnstile dari components/Turnstile.jsx (backend/turnstile.go).
+const turnstile = (token) => (token ? { "X-Turnstile": token } : {});
 
 // Foto dari HP bisa 3–5 MB dan 4000 px, padahal paling lebar tampil selebar
 // layar HP. Dikecilkan di browser (kanvas) sebelum dikirim: unggahnya cepat,
@@ -93,13 +95,15 @@ export const api = {
   // QR-nya digambar server dan endpointnya butuh token admin, jadi tidak bisa
   // dipasang langsung sebagai src <img>; diambil sebagai blob lalu jadi objectURL.
   qrSetoran: (id) => authFetch(`${BASE}/admin/setoran/qr/${id}`).then(r => r.blob()).then(b => URL.createObjectURL(b)),
+  // Rute jalan OSRM yang sama dengan app (backend/maps.go mapsRouteHandler).
+  rute: (fLat, fLng, tLat, tLng) => json(`/maps/route?from_lat=${fLat}&from_lng=${fLng}&to_lat=${tLat}&to_lng=${tLng}`),
   getAnalytics: () => json(`/admin/analytics`),
   getTarif: () => json(`/admin/tarif`),
   saveTarif: (data) => json(`/admin/tarif`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
   // Pratinjau untuk angka yang belum disimpan. Rumusnya ada di backend supaya
   // kolom contoh di halaman tarif tidak pernah menghitung versinya sendiri.
   contohTarif: (data) => post(`/admin/tarif/contoh`, data),
-  getPemakaianPeta: () => json(`/admin/peta/pemakaian`),
+  getKuota: () => json(`/admin/kuota`),
   // Kelola menu warung BohFood (backend/menu_warung.go). Balasan galat
   // membawa `error`; menu yang disimpan dikembalikan apa adanya.
   getMenuSemua: (mid) => json(`/food/menus?merchant_id=${mid}&semua=1`),
@@ -157,7 +161,7 @@ export const api = {
   rejectDriver: (id) => json(`/admin/drivers/${id}/reject`, { method: "POST" }),
   kelasMobilDriver: (id, kelas) => post(`/admin/drivers/${id}/kelas-mobil`, { kelas_mobil: kelas }),
   deleteUser: (phone) => json(`/admin/users/${phone.replace("+", "")}`, { method: "DELETE" }),
-  registerPartner: (data) => post(`/partner/register`, data),
+  registerPartner: (data, ts) => post(`/partner/register`, data, turnstile(ts)),
   getPartnerApplications: (params = {}) => {
     const q = new URLSearchParams(params).toString();
     return json(`/admin/partner-applications${q ? "?" + q : ""}`);
@@ -167,8 +171,8 @@ export const api = {
   webPushLangganan: (sub) => post(`/webpush/langganan`, sub),
   approvePartner: (id) => json(`/admin/partner-applications/${id}/approve`, { method: "POST" }),
   rejectPartner: (id) => json(`/admin/partner-applications/${id}/reject`, { method: "POST" }),
-  login: (email, password) => post(`/auth/login`, { email, password }),
-  lupaPassword: (email) => post(`/auth/lupa-password`, { email }),
+  login: (email, password, ts) => post(`/auth/login`, { email, password }, turnstile(ts)),
+  lupaPassword: (email, ts) => post(`/auth/lupa-password`, { email }, turnstile(ts)),
   googleLogin: (idToken, nonce, extra = {}) => post(`/auth/google`, { id_token: idToken, nonce, ...extra }),
   updateUser: (phone, data) => json(`/admin/users/${phone.replace("+", "")}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) }),
   // Tanpa parameter phone: backend memakai identitas pemanggil dari token.

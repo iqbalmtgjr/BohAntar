@@ -19,6 +19,11 @@ func TestDaftarChatDanLencana(t *testing.T) {
 	penggunaUji(t, penumpang)
 	penggunaUji(t, driver)
 	migrasiSkema("ALTER TABLE chat_messages ADD COLUMN dibaca TINYINT(1) NOT NULL DEFAULT 1")
+	migrasiFotoWajah()
+	// Selfie driver tampil di tab Chat penumpang (19 Nov 2026).
+	if _, err := db.Exec("UPDATE users SET foto_wajah = '/uploads/f-wajah-uji.jpg' WHERE phone_number = ?", driver); err != nil {
+		t.Fatalf("foto uji: %v", err)
+	}
 
 	oid := newID("test")
 	now := time.Now()
@@ -57,10 +62,11 @@ func TestDaftarChatDanLencana(t *testing.T) {
 	}
 
 	c, total := daftar(penumpang, "rider")
-	if c.BelumDibaca != 2 || total != 2 || c.LawanPeran != "driver" || c.LawanNama != "Pak Uji" || !c.DariSaya || c.PesanTerakhir != "Iya, tunggu" {
+	if c.BelumDibaca != 2 || total != 2 || c.LawanPeran != "driver" || c.LawanNama != "Pak Uji" || !c.DariSaya || c.PesanTerakhir != "Iya, tunggu" ||
+		c.LawanFoto != "/uploads/f-wajah-uji.jpg" {
 		t.Fatalf("penumpang sebelum membuka chat: %+v total %d", c, total)
 	}
-	if c, _ := daftar(driver, "driver"); c.BelumDibaca != 1 || c.LawanPeran != "penumpang" || c.DariSaya {
+	if c, _ := daftar(driver, "driver"); c.BelumDibaca != 1 || c.LawanPeran != "penumpang" || c.DariSaya || c.LawanFoto != "" {
 		t.Fatalf("driver: %+v", c)
 	}
 

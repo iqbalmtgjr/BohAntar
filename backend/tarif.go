@@ -194,12 +194,10 @@ func tarifMasukAkal(t tarifLayanan) (string, bool) {
 	return "", true
 }
 
-// jarakKM mengembalikan jarak lingkaran besar antara dua titik dalam kilometer.
-//
-// ponytail: garis lurus, bukan panjang jalan sungguhan. Selisihnya diserap
-// per_km yang bisa diatur super admin — mengalikan jarak dengan 1,3 sama saja
-// dengan menaikkan per_km 30%, jadi tidak perlu knob kedua. Ganti fungsi ini
-// dengan jarak dari server rute sendiri begitu ada yang boleh dipakai produksi.
+// jarakKM mengembalikan jarak lingkaran besar (garis lurus) antara dua titik
+// dalam kilometer. Untuk batas wilayah, jangkauan antar, dan urutan papan
+// order — bukan untuk ongkos atau jarak yang dibaca orang: itu panjang jalan
+// (jarakTempuhMeter, jarakTempuhKe).
 func jarakKM(lat1, lng1, lat2, lng2 float64) float64 {
 	const radiusBumiKM = 6371.0
 	const rad = math.Pi / 180
@@ -262,11 +260,11 @@ func hitungOngkos(t tarifLayanan, meter float64) float64 {
 	return float64((ongkos + kelipatan/2) / kelipatan * kelipatan)
 }
 
-// hitungTarif adalah hitungOngkos untuk dua titik koordinat: jaraknya garis
-// lurus, bukan panjang jalan. Dipakai saat pesanan dibuat, jadi jarak yang
-// sama harus dipakai juga oleh estimasi di aplikasi — lihat tarifEstimasiHandler.
+// hitungTarif adalah hitungOngkos untuk dua titik koordinat, dengan panjang
+// jalan (jarakTempuhMeter). Dipakai saat pesanan dibuat, jadi jarak yang sama
+// harus dipakai juga oleh estimasi di aplikasi — lihat tarifEstimasiHandler.
 func hitungTarif(t tarifLayanan, pickupLat, pickupLng, dropoffLat, dropoffLng float64) float64 {
-	return hitungOngkos(t, jarakKM(pickupLat, pickupLng, dropoffLat, dropoffLng)*1000)
+	return hitungOngkos(t, jarakTempuhMeter(pickupLat, pickupLng, dropoffLat, dropoffLng))
 }
 
 // bagiPembayaran menentukan perpindahan saldo saat pesanan ditutup: berapa yang
@@ -384,7 +382,7 @@ func tarifEstimasiHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	layanan := r.URL.Query().Get("layanan")
-	rincian := hitungRincian(ambilTarif(barisTarif(layanan, r.URL.Query().Get("kelas"))), jarakKM(fLat, fLng, tLat, tLng)*1000)
+	rincian := hitungRincian(ambilTarif(barisTarif(layanan, r.URL.Query().Get("kelas"))), jarakTempuhMeter(fLat, fLng, tLat, tLng))
 	// Pratinjau voucher yang akan terpakai otomatis. BohFood mengirim
 	// subtotal keranjangnya supaya syarat min. belanja ikut terhitung; angka
 	// yang mengikat tetap dihitung ulang dari menu saat pesanan dibuat.
@@ -427,7 +425,14 @@ func tarifPublikHandler(w http.ResponseWriter, r *http.Request) {
 			writeJSONResponse(w, 400, map[string]string{"error": pesanLuarWilayah})
 			return
 		}
-		rincian := hitungRincian(ambilTarif(r.URL.Query().Get("layanan")), jarakKM(fLat, fLng, tLat, tLng)*1000)
+		// Tiap pasangan baru memanggil OSRM demo. Tanpa rem, satu skrip di
+		// halaman tanpa login bisa membuat IP VPS diblokir dan semua ongkos
+		// jatuh ke cadangan garis lurus. Jatahnya sama dengan cari alamat.
+		if jatahCariPublikHabis(alamatPemanggil(r)) {
+			writeJSONResponse(w, 429, map[string]string{"error": "Terlalu banyak permintaan. Coba lagi beberapa menit lagi."})
+			return
+		}
+		rincian := hitungRincian(ambilTarif(r.URL.Query().Get("layanan")), jarakTempuhMeter(fLat, fLng, tLat, tLng))
 		writeJSONResponse(w, 200, map[string]interface{}{"status": "success", "km": rincian.KM, "total": rincian.Total})
 		return
 	}

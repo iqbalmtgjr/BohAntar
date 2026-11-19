@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -54,7 +55,6 @@ const (
 	urlPlaceDetails = "https://places.googleapis.com/v1/places/"
 	urlPhotonRevers = "https://photon.komoot.io/reverse"
 	urlPhotonCari   = "https://photon.komoot.io/api/"
-	urlOSRMRoute    = "https://router.project-osrm.org/route/v1/driving/"
 
 	// Saran Photon membawa koordinatnya sendiri di dalam place_id, jadi
 	// /api/maps/place tidak perlu bertanya ke mana pun untuk menukarnya.
@@ -87,6 +87,9 @@ func dalamWilayahLayanan(lat, lng float64) bool {
 const pesanLuarWilayah = "BohAntar baru melayani wilayah Sintang. Titik jemput dan tujuan harus di dalam Sintang."
 
 var mapsClient = &http.Client{Timeout: 12 * time.Second}
+
+// Variabel, bukan konstanta, hanya supaya tes ongkos bisa menunjuk OSRM tiruan.
+var urlOSRMRoute = "https://router.project-osrm.org/route/v1/driving/"
 
 func mapsAPIKey() string { return getEnv("GOOGLE_MAPS_API_KEY", "") }
 
@@ -155,20 +158,6 @@ func pesanJatahGoogle() bool {
 		}
 	})
 	return boleh
-}
-
-// adminPemakaianPetaHandler: GET /api/admin/peta/pemakaian
-func adminPemakaianPetaHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeJSONResponse(w, 405, map[string]string{"error": "Method not allowed"})
-		return
-	}
-	writeJSONResponse(w, 200, map[string]interface{}{
-		"status":       "success",
-		"pemakaian":    catatPlaces(nil),
-		"batas_harian": batasHarianPlaces(),
-		"kunci_google": mapsAPIKey() != "",
-	})
 }
 
 // mapsSiap menolak permintaan lebih awal kalau kunci belum dipasang, supaya
@@ -667,6 +656,10 @@ func mapsRouteHandler(w http.ResponseWriter, r *http.Request) {
 	encoded, _ := m["geometry"].(string)
 	jarak, _ := m["distance"].(float64)
 	detik, _ := m["duration"].(float64)
+	// OSRM menghitung mobil di jalan kosong: ukur 19 Nov 2026 di Sintang
+	// 54–73 km/jam di jalan kota, jadi "± 6 menit" untuk 7,6 km. Waktunya
+	// dibatasi tidak lebih cepat dari rata-rata kecepatanKotaKmJam.
+	detik = max(detik, jarak/(kecepatanKotaKmJam/3.6))
 
 	writeJSONResponse(w, 200, map[string]interface{}{
 		"status":     "success",
@@ -674,4 +667,186 @@ func mapsRouteHandler(w http.ResponseWriter, r *http.Request) {
 		"distance_m": jarak,
 		"duration":   fmt.Sprintf("%.0fs", detik), // bentuk "930s", sama seperti sebelumnya
 	})
+}
+
+// kecepatanKotaKmJam: rata-rata motor di dalam kota Sintang untuk perkiraan
+// waktu tempuh (rincian ongkos, panel driver, lacak driver). Semua versi app
+// memakai durasi dari mapsRouteHandler, jadi angka ini berlaku tanpa AAB.
+//
+// ponytail: tebakan, belum dicocokkan dengan perjalanan sungguhan. Knob
+// kalibrasi: bandingkan "± N menit" dengan lama beberapa perjalanan driver,
+// lalu naikkan kalau app terlalu lambat, turunkan kalau terlalu cepat.
+const kecepatanKotaKmJam = 30.0
+
+// ---------- JARAK TEMPUH (DASAR ONGKOS) ----------
+
+// faktorJalanCadangan dipakai hanya kalau OSRM tidak menjawab. Ukur 19 Nov
+// 2026 di 17 pasangan tempat di Sintang: panjang jalan 1,13–8× garis lurus,
+// nilai tengahnya 1,64×. Angka 1,5 sedikit di bawah nilai tengah supaya
+// penumpang tidak kemahalan selama layanan rute mati.
+const faktorJalanCadangan = 1.5
+
+// Taksiran yang sudah dilihat penumpang harus sama dengan ongkos saat
+// pesanannya dibuat beberapa menit kemudian, walau OSRM keburu mati atau data
+// petanya diperbarui di antaranya. Jadi jarak per pasangan koordinat disimpan.
+const umurJarakTempuh = 30 * time.Minute
+
+type jarakTersimpan struct {
+	meter float64
+	kapan time.Time
+}
+
+var (
+	muJarakTempuh    sync.Mutex
+	cacheJarakTempuh = map[string]jarakTersimpan{}
+)
+
+// jarakTempuhMeter adalah panjang jalan dari jemput ke tujuan, dasar semua
+// ongkos sejak 19 Nov 2026. Sebelumnya garis lurus, padahal Sintang terbelah
+// Sungai Kapuas dan Melawi: Pusat → Mengkurai 2,95 km lurus, 8,59 km lewat
+// jembatan, dan driver dibayar tarif dasar untuk 8,6 km.
+//
+// Hasilnya tidak pernah di bawah garis lurus. OSRM menempelkan titik ke jalan
+// terdekat, jadi dua titik yang jauh dari jalan bisa menghasilkan rute lebih
+// pendek dari jarak sebenarnya.
+//
+// ponytail: profil mobil di server demo OSRM (lihat mapsRouteHandler), jadi
+// gang yang hanya bisa dilewati motor kadang diputar dan angkanya sedikit di
+// atas Google mode motor. Simpanan cukup map yang dikosongkan saat penuh.
+// Kalau OSRM demo mulai menolak, pasang OSRM sendiri di VPS dengan profil motor.
+func jarakTempuhMeter(fLat, fLng, tLat, tLng float64) float64 {
+	kunci := kunciJarak(fLat, fLng, tLat, tLng)
+	if m, ada := ambilJarak(kunci); ada {
+		return m
+	}
+	meter, err := jarakOSRM(fLat, fLng, tLat, tLng)
+	if err != nil {
+		log.Printf("jarak tempuh: %v; pakai garis lurus × %.1f", err, faktorJalanCadangan)
+	}
+	return simpanJarak(kunci, meter, err == nil, jarakKM(fLat, fLng, tLat, tLng)*1000)
+}
+
+// jarakTempuhKe adalah jarakTempuhMeter untuk banyak titik asal ke satu
+// tujuan: daftar warung BohFood ke posisi pemesan. Yang belum tersimpan
+// ditanyakan sekaligus lewat layanan "table" OSRM, bukan satu panggilan per
+// warung. Arahnya warung → pemesan, sama dengan ongkir saat checkout.
+func jarakTempuhKe(asal [][2]float64, tLat, tLng float64) []float64 {
+	hasil := make([]float64, len(asal))
+	var kurang []int
+	for i, a := range asal {
+		if m, ada := ambilJarak(kunciJarak(a[0], a[1], tLat, tLng)); ada {
+			hasil[i] = m
+		} else {
+			kurang = append(kurang, i)
+		}
+	}
+	for len(kurang) > 0 {
+		// Server demo OSRM menolak tabel lebih dari 100 titik; satu dipakai pemesan.
+		n := min(len(kurang), 99)
+		bagian := kurang[:n]
+		kurang = kurang[n:]
+		meter, err := tabelOSRM(asal, bagian, tLat, tLng)
+		if err != nil {
+			log.Printf("jarak tempuh warung: %v; pakai garis lurus × %.1f", err, faktorJalanCadangan)
+		}
+		for k, i := range bagian {
+			m, asli := 0.0, err == nil && meter[k] > 0
+			if asli {
+				m = meter[k]
+			}
+			hasil[i] = simpanJarak(kunciJarak(asal[i][0], asal[i][1], tLat, tLng), m, asli, jarakKM(asal[i][0], asal[i][1], tLat, tLng)*1000)
+		}
+	}
+	return hasil
+}
+
+func kunciJarak(fLat, fLng, tLat, tLng float64) string {
+	return fmt.Sprintf("%.6f,%.6f;%.6f,%.6f", fLat, fLng, tLat, tLng)
+}
+
+func ambilJarak(kunci string) (float64, bool) {
+	muJarakTempuh.Lock()
+	defer muJarakTempuh.Unlock()
+	j, ada := cacheJarakTempuh[kunci]
+	return j.meter, ada && time.Since(j.kapan) < umurJarakTempuh
+}
+
+// simpanJarak menerapkan dua aturan jarak tempuh lalu menyimpannya: OSRM gagal
+// (asli false) jatuh ke garis lurus × cadangan, dan hasilnya tidak pernah di
+// bawah garis lurus.
+func simpanJarak(kunci string, meter float64, asli bool, lurus float64) float64 {
+	if !asli {
+		meter = lurus * faktorJalanCadangan
+	}
+	meter = max(meter, lurus)
+	muJarakTempuh.Lock()
+	defer muJarakTempuh.Unlock()
+	if len(cacheJarakTempuh) >= 5000 {
+		cacheJarakTempuh = map[string]jarakTersimpan{}
+	}
+	cacheJarakTempuh[kunci] = jarakTersimpan{meter, time.Now()}
+	return meter
+}
+
+// mintaOSRM: batas waktunya lebih pendek dari mapsClient karena pesanan dan
+// daftar warung menunggu jawabannya; terlambat berarti cadangan.
+func mintaOSRM(endpoint string) (map[string]interface{}, error) {
+	ctx, batal := context.WithTimeout(context.Background(), 5*time.Second)
+	defer batal()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	hasil, err := kirimPermintaan(req)
+	if err != nil {
+		return nil, err
+	}
+	if kode, _ := hasil["code"].(string); kode != "Ok" {
+		return nil, fmt.Errorf("OSRM menjawab %v", hasil["code"])
+	}
+	return hasil, nil
+}
+
+// jarakOSRM: satu rute tanpa geometri.
+func jarakOSRM(fLat, fLng, tLat, tLng float64) (float64, error) {
+	hasil, err := mintaOSRM(fmt.Sprintf("%s%f,%f;%f,%f?overview=false", urlOSRMRoute, fLng, fLat, tLng, tLat))
+	if err != nil {
+		return 0, err
+	}
+	rute, _ := hasil["routes"].([]interface{})
+	if len(rute) == 0 {
+		return 0, fmt.Errorf("OSRM tidak menemukan rute")
+	}
+	m, _ := rute[0].(map[string]interface{})
+	jarak, _ := m["distance"].(float64)
+	return jarak, nil
+}
+
+// tabelOSRM: jarak dari asal[pilih...] ke satu tujuan. Titik 0 tujuannya,
+// sisanya sumber. Sel null (tak ada jalan) jadi 0 dan jatuh ke cadangan.
+// Alamat tabelnya diturunkan dari urlOSRMRoute supaya OSRM sendiri nanti cukup
+// diganti di satu tempat.
+func tabelOSRM(asal [][2]float64, pilih []int, tLat, tLng float64) ([]float64, error) {
+	titik := []string{fmt.Sprintf("%f,%f", tLng, tLat)}
+	sumber := make([]string, len(pilih))
+	for k, i := range pilih {
+		titik = append(titik, fmt.Sprintf("%f,%f", asal[i][1], asal[i][0]))
+		sumber[k] = strconv.Itoa(k + 1)
+	}
+	hasil, err := mintaOSRM(fmt.Sprintf("%s%s?sources=%s&destinations=0&annotations=distance",
+		strings.Replace(urlOSRMRoute, "/route/", "/table/", 1), strings.Join(titik, ";"), strings.Join(sumber, ";")))
+	if err != nil {
+		return nil, err
+	}
+	baris, _ := hasil["distances"].([]interface{})
+	if len(baris) != len(pilih) {
+		return nil, fmt.Errorf("tabel OSRM berisi %d baris, diminta %d", len(baris), len(pilih))
+	}
+	meter := make([]float64, len(pilih))
+	for k, b := range baris {
+		if sel, _ := b.([]interface{}); len(sel) > 0 {
+			meter[k], _ = sel[0].(float64)
+		}
+	}
+	return meter, nil
 }

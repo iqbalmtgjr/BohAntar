@@ -3,6 +3,7 @@ import { Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft, ArrowRight, CheckCircle, User, Building2 } from "lucide-react";
 import { api } from "../api";
 import { Alert } from "../components/Feedback";
+import Turnstile from "../components/Turnstile";
 import { motion } from "motion/react";
 import logoImg from "../assets/logo.png";
 
@@ -28,6 +29,9 @@ export default function PartnerRegisterPage() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState("");
+  // Token Turnstile sekali pakai: sesudah dikirim, putaran naik dan widget dibuat ulang.
+  const [ts, setTs] = useState("");
+  const [tsPutaran, setTsPutaran] = useState(0);
 
   const set = (key, value) => {
     setForm((f) => ({ ...f, [key]: value }));
@@ -61,7 +65,7 @@ export default function PartnerRegisterPage() {
         business_name: form.business_name,
         address: form.address,
         notes: form.notes,
-      });
+      }, ts);
 
       if (res.status === "success") {
         setSuccess(true);
@@ -74,6 +78,8 @@ export default function PartnerRegisterPage() {
       setError("Terjadi kesalahan koneksi ke server.");
     } finally {
       setLoading(false);
+      setTs("");
+      setTsPutaran((p) => p + 1);
     }
   };
 
@@ -308,6 +314,8 @@ export default function PartnerRegisterPage() {
                     </div>
                   </div>
                 </div>
+
+                <Turnstile key={tsPutaran} onToken={setTs} />
 
                 <div className="pt-6 border-t border-slate-100 flex flex-col md:flex-row gap-4 items-center justify-between">
                   <p className="text-xs text-slate-400 text-center md:text-left leading-relaxed">

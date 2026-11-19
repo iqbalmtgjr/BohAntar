@@ -67,6 +67,7 @@ class _DaftarChatState extends State<DaftarChat> {
           myRole: lawanDriver ? 'rider' : 'driver',
           otherName: _nama(c),
           otherPhone: (c['lawan_phone'] ?? '').toString(),
+          otherFoto: (c['lawan_foto'] ?? '').toString(),
         ),
       ),
     );
@@ -103,18 +104,11 @@ class _DaftarChatState extends State<DaftarChat> {
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         child: Row(
           children: [
-            // Inisial lawan bicara, dengan ikon layanan pesanannya di pojok.
+            // Foto driver (atau inisial), dengan ikon layanan pesanannya di pojok.
             Stack(
               clipBehavior: Clip.none,
               children: [
-                CircleAvatar(
-                  radius: 24,
-                  backgroundColor: AppTheme.primaryBlue.withValues(alpha: 0.12),
-                  child: Text(
-                    nama[0].toUpperCase(),
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppTheme.teksBerwarna(context, AppTheme.primaryBlue)),
-                  ),
-                ),
+                AvatarLawan(nama: nama, foto: (c['lawan_foto'] ?? '').toString(), radius: 24),
                 Positioned(
                   right: -3,
                   bottom: -3,

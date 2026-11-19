@@ -2,10 +2,77 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
+	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 )
+
+// Ongkos sejak 19 Nov 2026 memakai panjang jalan. Yang tidak boleh diam-diam
+// rusak: angka OSRM dipakai apa adanya, taksiran yang sudah dilihat penumpang
+// tidak berubah walau OSRM mati sebelum pesanannya dibuat, OSRM mati jatuh ke
+// garis lurus × cadangan, dan hasilnya tidak pernah di bawah garis lurus.
+func TestJarakTempuh(t *testing.T) {
+	jarak, mati := 5000.0, false
+	var tabel []string // isi parameter sources tiap panggilan tabel
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if mati {
+			w.WriteHeader(500)
+			w.Write([]byte(`{"code":"Error"}`))
+			return
+		}
+		if strings.Contains(r.URL.Path, "/table/") {
+			// RawQuery: Query() Go membuang pasangan bertitik koma, OSRM tidak.
+			tabel = append(tabel, r.URL.RawQuery)
+			w.Write([]byte(`{"code":"Ok","distances":[[4000],[null]]}`))
+			return
+		}
+		fmt.Fprintf(w, `{"code":"Ok","routes":[{"distance":%v}]}`, jarak)
+	}))
+	defer srv.Close()
+	asli := urlOSRMRoute
+	urlOSRMRoute = srv.URL + "/route/v1/driving/" // bentuk asli; tabel diturunkan darinya
+	defer func() { urlOSRMRoute = asli }()
+	muJarakTempuh.Lock()
+	cacheJarakTempuh = map[string]jarakTersimpan{}
+	muJarakTempuh.Unlock()
+
+	// Pusat → Kapuas Kiri Hulu: 0,43 km lurus, 3,47 km lewat jembatan.
+	if got := jarakTempuhMeter(0.0785, 111.494, 0.0823323, 111.4935028); got != 5000 {
+		t.Fatalf("dapat %v m, mau 5000 dari OSRM", got)
+	}
+	mati = true
+	if got := jarakTempuhMeter(0.0785, 111.494, 0.0823323, 111.4935028); got != 5000 {
+		t.Fatalf("OSRM mati sesudah taksiran: dapat %v m, harus tetap 5000 dari simpanan", got)
+	}
+	lurus := jarakKM(0.0785, 111.494, 0.0859272, 111.4685619) * 1000
+	if got := jarakTempuhMeter(0.0785, 111.494, 0.0859272, 111.4685619); math.Abs(got-lurus*faktorJalanCadangan) > 0.01 {
+		t.Fatalf("OSRM mati: dapat %v m, mau garis lurus × %v = %v", got, faktorJalanCadangan, lurus*faktorJalanCadangan)
+	}
+	mati, jarak = false, 10
+	lurus = jarakKM(0.0785, 111.494, 0.0642123, 111.5135137) * 1000
+	if got := jarakTempuhMeter(0.0785, 111.494, 0.0642123, 111.5135137); got != lurus {
+		t.Fatalf("OSRM 10 m untuk %v m garis lurus: dapat %v, mau garis lurus", lurus, got)
+	}
+
+	// Daftar warung BohFood: satu panggilan tabel untuk yang belum tersimpan
+	// (warung ketiga sudah tersimpan dari baris di atas), sel null jatuh ke
+	// cadangan, dan daftar yang dibuka lagi tidak bertanya ke OSRM.
+	asal := [][2]float64{{0.0823639, 111.4843075}, {0.0649813, 111.4950579}, {0.0785, 111.494}}
+	lurusNull := jarakKM(asal[1][0], asal[1][1], 0.0642123, 111.5135137) * 1000
+	for putaran := 1; putaran <= 2; putaran++ {
+		got := jarakTempuhKe(asal, 0.0642123, 111.5135137)
+		if got[0] != 4000 || math.Abs(got[1]-lurusNull*faktorJalanCadangan) > 0.01 || got[2] != lurus {
+			t.Fatalf("putaran %d: dapat %v, mau [4000 %v %v]", putaran, got, lurusNull*faktorJalanCadangan, lurus)
+		}
+	}
+	if len(tabel) != 1 || tabel[0] != "sources=1;2&destinations=0&annotations=distance" {
+		t.Fatalf("panggilan tabel %q, mau satu panggilan berisi dua warung yang belum tersimpan", tabel)
+	}
+}
 
 // Dua hal yang paling gampang salah setelah pindah dari Google ke OSRM/Photon,
 // dan dua-duanya diam-diam: urutan koordinat OSRM (bujur dulu, bukan lintang)
@@ -44,6 +111,11 @@ func TestRuteOSRMMasukAkal(t *testing.T) {
 	// sekali — dan jarak yang salah langsung jadi tarif yang salah.
 	if balasan.Jarak < 3000 || balasan.Jarak > 9000 {
 		t.Fatalf("jarak %v m tidak masuk akal untuk dua titik di Sintang", balasan.Jarak)
+	}
+	// Waktu mobil-di-jalan-kosong OSRM dibatasi ke kecepatan kota.
+	detik, _ := strconv.ParseFloat(strings.TrimSuffix(balasan.Durasi, "s"), 64)
+	if lambat := balasan.Jarak / (kecepatanKotaKmJam / 3.6); detik < lambat-1 {
+		t.Errorf("durasi %vs untuk %v m lebih cepat dari %v km/jam", detik, balasan.Jarak, kecepatanKotaKmJam)
 	}
 }
 
@@ -197,7 +269,7 @@ func TestTarifPublikDariKoordinat(t *testing.T) {
 		return w.Code, b
 	}
 	kode, b := tanya("from_lat=0.0785&from_lng=111.494&to_lat=0.06&to_lng=111.51")
-	mau := hitungRincian(ambilTarif("BohRide"), jarakKM(0.0785, 111.494, 0.06, 111.51)*1000)
+	mau := hitungRincian(ambilTarif("BohRide"), jarakTempuhMeter(0.0785, 111.494, 0.06, 111.51))
 	if kode != 200 || b["total"] != mau.Total || b["km"] != mau.KM {
 		t.Errorf("dalam Sintang: kode %d, total %v km %v; mau 200, %v, %v", kode, b["total"], b["km"], mau.Total, mau.KM)
 	}
